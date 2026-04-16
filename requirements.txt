@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+qdrant-client
+langchain
+langchain-groq
+langchain-community
+sentence-transformers
+python-dotenv
