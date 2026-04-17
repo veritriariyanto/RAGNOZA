@@ -5,6 +5,7 @@ from app.database.qdrant import qdrant_db  # Import manager Qdrant kita
 from app.services.rag_logic import llm
 from app.models.uud import UUDArticle
 from app.services.ingestion import run_ingestion_upload
+from app.services.ask_service import get_answer_from_rag
 
 # Create tables in Postgres (Laragon) if they don't exist
 Base.metadata.create_all(bind=engine)
@@ -49,21 +50,29 @@ async def ingest_document(
     result = run_ingestion_upload(contents, db, collection_name)
     
     return result
+
+@app.get("/collections")
+async def list_collections():
+    """Melihat daftar knowledge base yang sudah di-ingest"""
+    from app.database.qdrant import qdrant_db
+    collections = qdrant_db.client.get_collections().collections
+    return {"available_collections": [c.name for c in collections]}
+
 @app.post("/ask")
-async def ask_question(prompt: str, db: Session = Depends(get_db)):
-    # 1. TODO: Implementasi similarity search ke Qdrant
-    # docs = qdrant_db.search_relevance(prompt)
-    
-    # 2. Invoke LLM (Groq Llama 3 70B)
-    response = llm.invoke(prompt)
-    
-    # 3. TODO: Simpan riwayat pertanyaan ke PostgreSQL (db) untuk audit trail
-    
-    return {
-        "question": prompt, 
-        "answer": response.content,
-        "source_documents": [] # Placeholder untuk hasil retrieve nanti
-    }
+async def ask_question(
+    prompt: str, 
+    collection_name: str # User WAJIB memasukkan nama koleksi di sini
+):
+    """
+    Endpoint ini memungkinkan user memilih collection mana 
+    yang ingin dijadikan sumber pengetahuan.
+    """
+    try:
+        # Data 'collection_name' dari user diteruskan ke service
+        result = get_answer_from_rag(prompt, collection_name)
+        return result
+    except Exception as e:
+        return {"error": f"Gagal mengambil data dari koleksi {collection_name}: {str(e)}"}
 
 if __name__ == "__main__":
     import uvicorn
