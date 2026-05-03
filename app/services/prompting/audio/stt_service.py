@@ -5,6 +5,7 @@ import asyncio
 
 class STTService:
     MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+    TIMEOUT_SECONDS = 30
 
     STT_CONTEXT_PROMPT = (
         "Transkripsi resmi Undang-Undang Dasar Negara Republik Indonesia 1945. "
@@ -13,7 +14,7 @@ class STTService:
         "Mahkamah Konstitusi, DPR, MPR, dan Yudikatif."
     )
 
-    async def validate_audio(self, audio_bytes: bytes):
+    def validate_audio(self, audio_bytes: bytes):
         """Fungsi khusus untuk mengecek kelayakan audio sebelum di-transcribe"""
         size_mb = len(audio_bytes) / (1024 * 1024)
         
@@ -27,12 +28,14 @@ class STTService:
         """Menggunakan Groq Whisper v3"""
         print("[System] Memulai proses transkripsi via Whisper Large v3")
         try:
-            # Groq butuh tuple (nama_file, content)
-            transcription = groq_client.audio.transcriptions.create(
-                file=(filename, audio_bytes),
-                model="whisper-large-v3",
-                prompt=STTService.STT_CONTEXT_PROMPT,
-                response_format="text"
+            # Jalankan call sinkron di thread agar timeout asyncio tetap efektif.
+            transcription = await asyncio.to_thread(
+                lambda: groq_client.audio.transcriptions.create(
+                    file=(filename, audio_bytes),
+                    model="whisper-large-v3",
+                    prompt=STTService.STT_CONTEXT_PROMPT,
+                    response_format="text"
+                )
             )
             print("[System] Transkripsi Whisper Berhasil!")
             return transcription
@@ -46,11 +49,13 @@ class STTService:
         try:
             # ElevenLabs butuh file-like object
             audio_stream = io.BytesIO(audio_bytes)
-            response = el_client.speech_to_text.convert(
-                file=audio_stream,
-                model_id="scribe_v1",
-                language_code="id",
-                tag_and_track=True,
+            response = await asyncio.to_thread(
+                lambda: el_client.speech_to_text.convert(
+                    file=audio_stream,
+                    model_id="scribe_v1",
+                    language_code="id",
+                    tag_and_track=True,
+                )
             )
             print("[System] Transkripsi ElevenLabs Berhasil!")
             return response.text
@@ -58,33 +63,30 @@ class STTService:
             raise Exception(f"ElevenLabs Error: {str(e)}")
 
     async def transcribe(self, audio_bytes: bytes, provider: str = "whisper", filename: str | None = None) -> str:
-        await self.validate_audio(audio_bytes)
+        self.validate_audio(audio_bytes)
 
         provider = (provider or "").lower()
-        
-        TIMEOUT_SECONDS = 60 
 
         try:
             if provider == "whisper":
                 if not filename:
                     raise ValueError("'filename' is required when using whisper provider")
-                # Bungkus pemanggilan fungsi dengan wait_for
                 return await asyncio.wait_for(
                     self.transcribe_with_whisper(audio_bytes, filename), 
-                    timeout=TIMEOUT_SECONDS
+                    timeout=self.TIMEOUT_SECONDS
                 )
             
             elif provider == "elevenlabs":
                 return await asyncio.wait_for(
                     self.transcribe_with_elevenlabs(audio_bytes), 
-                    timeout=TIMEOUT_SECONDS
+                    timeout=self.TIMEOUT_SECONDS
                 )
             
             else:
                 raise ValueError(f"Unknown STT provider: {provider}")
 
         except asyncio.TimeoutError:
-            print(f"[Error] Transkripsi dibatalkan karena melebihi {TIMEOUT_SECONDS} detik")
+            print(f"[Error] Transkripsi dibatalkan karena melebihi {self.TIMEOUT_SECONDS} detik")
             raise HTTPException(
                 status_code=504, 
                 detail="Proses terlalu lama (Timeout). Silakan periksa koneksi atau coba file yang lebih pendek."

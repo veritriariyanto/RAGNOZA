@@ -21,7 +21,6 @@ async def process_stt(
         
     return {
         "transcription": text,
-        "provider": provider,  # 
-        "model_used": "scribe_v1" if provider == "elevenlabs" else "whisper-large-v3",
-        "transcription": text
+        "provider": provider,
+        "model_used": "scribe_v1" if provider == "elevenlabs" else "whisper-large-v3"
     }
