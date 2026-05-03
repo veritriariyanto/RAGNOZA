@@ -9,9 +9,11 @@ class Settings(BaseSettings):
     PGDATABASE: str
     PGUSER: str
     PGPASSWORD: str
+    PGSSLMODE: str
 
     #vektor database
     QDRANT_HOST: str
+    QDRANT_PORT: int
     
     # AI Services
     GROQ_API_KEY: str

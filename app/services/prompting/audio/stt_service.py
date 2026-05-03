@@ -3,28 +3,28 @@ from app.core.stt_provider import groq_client, el_client
 
 class STTService:
     @staticmethod
-    async def transcribe_with_whisper(audio_file: bytes, filename: str):
-        """Transkripsi menggunakan Groq Whisper (Cepat & Akurat)"""
+    async def transcribe_with_whisper(audio_bytes: bytes, filename: str) -> str:
+        """Menggunakan Groq Whisper v3"""
         try:
-            # Groq mengharapkan file-like object
+            # Groq butuh tuple (nama_file, content)
             transcription = groq_client.audio.transcriptions.create(
-                file=(filename, audio_file),
+                file=(filename, audio_bytes),
                 model="whisper-large-v3",
                 response_format="text"
             )
             return transcription
         except Exception as e:
-            raise Exception(f"Whisper Error: {str(e)}")
+            raise Exception(f"Groq Whisper Error: {str(e)}")
 
     @staticmethod
-    async def transcribe_with_elevenlabs(audio_file: bytes):
-        """Transkripsi menggunakan ElevenLabs STT"""
+    async def transcribe_with_elevenlabs(audio_bytes: bytes) -> str:
+        """Menggunakan ElevenLabs Scribe v1"""
         try:
-            # Konversi bytes ke file-like object untuk ElevenLabs
-            audio_io = io.BytesIO(audio_file)
+            # ElevenLabs butuh file-like object
+            audio_stream = io.BytesIO(audio_bytes)
             response = el_client.speech_to_text.convert(
-                file=audio_io,
-                model_id="scribe_v1", # Model terbaru ElevenLabs
+                file=audio_stream,
+                model_id="scribe_v1",
             )
             return response.text
         except Exception as e:

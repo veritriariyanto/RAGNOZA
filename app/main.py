@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from app.core.postgres import engine, Base
 from app.core.qdrant import qdrant_db
-from app.routes import api_router
+from app.routes.routes import api_router
 
 # Create tables in Postgres (Laragon) if they don't exist
 Base.metadata.create_all(bind=engine)
