@@ -5,7 +5,7 @@ from app.services.prompting.audio.stt_service import STTService
 router = APIRouter()
 stt_service = STTService()
 
-@router.post("/cek koneksi") # Pastikan menggunakan @router, bukan @app
+@router.post("/test-koneksi")
 async def transcribe():
     return {"status": "ok"}
 
