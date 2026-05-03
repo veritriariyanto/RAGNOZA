@@ -5,10 +5,6 @@ from app.services.prompting.audio.stt_service import STTService
 router = APIRouter()
 stt_service = STTService()
 
-@router.post("/ping")
-async def test_connection():
-    return {"status": "ok"}
-
 @router.post("/process")
 async def process_stt(
     file: UploadFile = File(...),
@@ -16,13 +12,16 @@ async def process_stt(
 ):
     audio_data = await file.read()
     
-    # Use the compatibility wrapper to route to the right provider
-    text = await stt_service.transcribe(audio_data, provider=provider, filename=file.filename)
+    # Langsung panggil service. Validasi 5MB sudah otomatis berjalan di dalamnya.
+    text = await stt_service.transcribe(
+        audio_bytes=audio_data, 
+        provider=provider, 
+        filename=file.filename
+    )
         
     return {
-        "module": "prompting/audio",
         "transcription": text,
-        "provider": provider,
+        "provider": provider,  # 
         "model_used": "scribe_v1" if provider == "elevenlabs" else "whisper-large-v3",
         "transcription": text
     }

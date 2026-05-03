@@ -1,7 +1,19 @@
 import io
 from app.core.stt_provider import groq_client, el_client
+from fastapi import HTTPException
 
 class STTService:
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+
+    async def validate_audio(self, audio_bytes: bytes):
+        """Fungsi khusus untuk mengecek kelayakan audio sebelum di-transcribe"""
+        size_mb = len(audio_bytes) / (1024 * 1024)
+        
+        if len(audio_bytes) > self.MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File terlalu besar! Maksimal 5 MB. File Anda: {size_mb:.2f} MB"
+            )
     @staticmethod
     async def transcribe_with_whisper(audio_bytes: bytes, filename: str) -> str:
         """Menggunakan Groq Whisper v3"""
@@ -36,10 +48,12 @@ class STTService:
 
     async def transcribe(self, audio_bytes: bytes, provider: str = "whisper", filename: str | None = None) -> str:
         """Compatibility wrapper that routes to the proper provider implementation.
-
         - provider: 'whisper' or 'elevenlabs'
         - filename: required for whisper-based providers
         """
+        await self.validate_audio(audio_bytes)
+
+
         provider = (provider or "").lower()
         if provider == "whisper":
             if not filename:
