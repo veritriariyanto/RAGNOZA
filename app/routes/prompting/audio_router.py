@@ -5,8 +5,8 @@ from app.services.prompting.audio.stt_service import STTService
 router = APIRouter()
 stt_service = STTService()
 
-@router.post("/test-koneksi")
-async def transcribe():
+@router.post("/ping")
+async def test_connection():
     return {"status": "ok"}
 
 @router.post("/process")
@@ -16,12 +16,13 @@ async def process_stt(
 ):
     audio_data = await file.read()
     
-    if provider == "whisper":
-        text = await stt_service.transcribe_with_whisper(audio_data, file.filename)
-    else:
-        text = await stt_service.transcribe_with_elevenlabs(audio_data)
+    # Use the compatibility wrapper to route to the right provider
+    text = await stt_service.transcribe(audio_data, provider=provider, filename=file.filename)
         
     return {
         "module": "prompting/audio",
+        "transcription": text,
+        "provider": provider,
+        "model_used": "scribe_v1" if provider == "elevenlabs" else "whisper-large-v3",
         "transcription": text
     }
