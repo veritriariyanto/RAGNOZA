@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Text
-from app.database.postgres import Base
+from app.core.postgres import Base
 
 class UUDArticle(Base):
     __tablename__ = "uud_articles"

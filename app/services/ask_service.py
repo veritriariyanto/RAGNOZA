@@ -1,4 +1,4 @@
-from app.database.qdrant import qdrant_db
+from app.core.qdrant import qdrant_db
 from app.services.rag_logic import llm, embeddings
 
 def get_answer_from_rag(prompt: str, collection_name: str):

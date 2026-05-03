@@ -2,8 +2,8 @@ import re
 import io
 from pypdf import PdfReader
 from sqlalchemy.orm import Session
-from app.models.uud import UUDArticle
-from app.database.qdrant import qdrant_db
+from app.database.migration.uud import UUDArticle
+from app.core.qdrant import qdrant_db
 from app.services.rag_logic import embeddings
 
 def run_ingestion_upload(file_contents: bytes, db: Session, collection_name: str):
