@@ -5,6 +5,13 @@ from fastapi import HTTPException
 class STTService:
     MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
+    STT_CONTEXT_PROMPT = (
+        "Transkripsi resmi Undang-Undang Dasar Negara Republik Indonesia 1945. "
+        "Gunakan ejaan resmi PUEBI. Pastikan istilah hukum ditulis dengan benar: "
+        "UUD 1945, Amandemen, Konstitusi, Pasal, Ayat, Preambule, "
+        "Mahkamah Konstitusi, DPR, MPR, dan Yudikatif."
+    )
+
     async def validate_audio(self, audio_bytes: bytes):
         """Fungsi khusus untuk mengecek kelayakan audio sebelum di-transcribe"""
         size_mb = len(audio_bytes) / (1024 * 1024)
@@ -23,6 +30,7 @@ class STTService:
             transcription = groq_client.audio.transcriptions.create(
                 file=(filename, audio_bytes),
                 model="whisper-large-v3",
+                prompt=STTService.STT_CONTEXT_PROMPT,
                 response_format="text"
             )
             print("[System] Transkripsi Whisper Berhasil!")
@@ -40,6 +48,8 @@ class STTService:
             response = el_client.speech_to_text.convert(
                 file=audio_stream,
                 model_id="scribe_v1",
+                language_code="id",
+                tag_and_track=True,
             )
             print("[System] Transkripsi ElevenLabs Berhasil!")
             return response.text
