@@ -4,7 +4,7 @@ from fastapi import HTTPException
 import asyncio
 
 class STTService:
-    MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
+    MAX_FILE_SIZE = 5 * 1024 * 1024
     TIMEOUT_SECONDS = 30
 
     STT_CONTEXT_PROMPT = (
