@@ -1,5 +1,6 @@
 from app.core.qdrant import qdrant_db
-from app.services.rag_logic import llm, embeddings
+from app.core.embeddings import embeddings
+from app.core.llm_provider import llm
 
 def get_answer_from_rag(prompt: str, collection_name: str):
     # 1. Ubah pertanyaan user menjadi vektor

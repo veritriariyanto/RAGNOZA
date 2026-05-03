@@ -4,7 +4,7 @@ from pypdf import PdfReader
 from sqlalchemy.orm import Session
 from app.database.migration.uud import UUDArticle
 from app.core.qdrant import qdrant_db
-from app.services.rag_logic import embeddings
+from app.core.embeddings import embeddings
 
 def run_ingestion_upload(file_contents: bytes, db: Session, collection_name: str):
     # 1. Pastikan koleksi target sudah ada di Qdrant

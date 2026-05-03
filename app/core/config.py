@@ -9,11 +9,14 @@ class Settings(BaseSettings):
     PGDATABASE: str
     PGUSER: str
     PGPASSWORD: str
+
+    #vektor database
+    QDRANT_HOST: str
     
     # AI Services
     GROQ_API_KEY: str
-    QDRANT_HOST: str
-    
+    ELEVENLABS_API_KEY: str
+
     class Config:
         env_file = ".env"
 
