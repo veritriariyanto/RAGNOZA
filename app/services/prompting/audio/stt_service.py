@@ -1,6 +1,7 @@
 import io
 from app.core.stt_provider import groq_client, el_client
 from fastapi import HTTPException
+import asyncio
 
 class STTService:
     MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
@@ -57,19 +58,34 @@ class STTService:
             raise Exception(f"ElevenLabs Error: {str(e)}")
 
     async def transcribe(self, audio_bytes: bytes, provider: str = "whisper", filename: str | None = None) -> str:
-        """Compatibility wrapper that routes to the proper provider implementation.
-        - provider: 'whisper' or 'elevenlabs'
-        - filename: required for whisper-based providers
-        """
         await self.validate_audio(audio_bytes)
 
-
         provider = (provider or "").lower()
-        if provider == "whisper":
-            if not filename:
-                raise ValueError("'filename' is required when using whisper provider")
-            return await self.transcribe_with_whisper(audio_bytes, filename)
-        elif provider == "elevenlabs":
-            return await self.transcribe_with_elevenlabs(audio_bytes)
-        else:
-            raise ValueError(f"Unknown STT provider: {provider}")
+        
+        TIMEOUT_SECONDS = 60 
+
+        try:
+            if provider == "whisper":
+                if not filename:
+                    raise ValueError("'filename' is required when using whisper provider")
+                # Bungkus pemanggilan fungsi dengan wait_for
+                return await asyncio.wait_for(
+                    self.transcribe_with_whisper(audio_bytes, filename), 
+                    timeout=TIMEOUT_SECONDS
+                )
+            
+            elif provider == "elevenlabs":
+                return await asyncio.wait_for(
+                    self.transcribe_with_elevenlabs(audio_bytes), 
+                    timeout=TIMEOUT_SECONDS
+                )
+            
+            else:
+                raise ValueError(f"Unknown STT provider: {provider}")
+
+        except asyncio.TimeoutError:
+            print(f"[Error] Transkripsi dibatalkan karena melebihi {TIMEOUT_SECONDS} detik")
+            raise HTTPException(
+                status_code=504, 
+                detail="Proses terlalu lama (Timeout). Silakan periksa koneksi atau coba file yang lebih pendek."
+            )
