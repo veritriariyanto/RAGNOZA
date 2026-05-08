@@ -54,7 +54,6 @@ class STTService:
                     file=audio_stream,
                     model_id="scribe_v1",
                     language_code="id",
-                    tag_and_track=True,
                 )
             )
             print("[System] Transkripsi ElevenLabs Berhasil!")
