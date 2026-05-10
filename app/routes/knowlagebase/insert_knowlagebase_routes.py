@@ -135,45 +135,17 @@ async def get_kb_stats(base_name: str):
 
 @router.get("/info/{base_name}", response_model=Dict)
 async def get_kb_info(base_name: str):
+    """
+    Mendapatkan informasi detail dari sebuah Knowledge Base.
+    """
     try:
-        formatted_name = base_name.lower().strip().replace(" ", "_")
-        parent_col = f"{formatted_name}_parent"
+        # ✅ Route hanya delegasi ke service
+        info = await kb_service.get_kb_info(base_name)
+        return info
         
-        from qdrant_client.http import models
-        scroll_filter = models.Filter(
-            must=[
-                models.FieldCondition(key="section_type", match=models.MatchValue(value="pembukaan"))
-            ]
-        )
-        
-        # ✅ AsyncQdrantClient.scroll() mengembalikan TUPLE (points, next_offset)
-        # WAJIB: pakai `await` + unpack tuple
-        points, next_offset = await kb_service.db.scroll(
-            collection_name=parent_col,
-            limit=1,
-            with_payload=True,
-            with_vectors=False,
-            scroll_filter=scroll_filter
-        )
-        
-        if not points:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"Knowledge base '{base_name}' tidak ditemukan."
-            )
-        
-        # Akses payload dari point pertama
-        payload = points[0].payload
-        
-        return {
-            "name": formatted_name,
-            "document_id": payload.get("document_id"),
-            "uu_number": payload.get("uu_number"),
-            "tahun": payload.get("tahun"),
-            "judul_uu": payload.get("judul_uu"),
-            "created_at": payload.get("created_at")
-        }
-        
+    except ValueError as e:
+        # Handle "not found" dari service
+        raise HTTPException(status_code=404, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:
@@ -223,83 +195,3 @@ async def delete_kb(base_name: str):
             status_code=500, 
             detail=f"Gagal menghapus KB: {str(e)}"
         )
-
-@router.post("/search/{base_name}")
-async def search_kb(
-    base_name: str,
-    query: str = Form(...),
-    section_type: str = Form(None),
-    pasal_type: str = Form(None),
-    limit: int = Form(5)
-):
-    try:
-        formatted_name = base_name.lower().strip().replace(" ", "_")
-        child_col = f"{formatted_name}_child"
-        parent_col = f"{formatted_name}_parent"
-        
-        # Build filter
-        filter_conditions = []
-        
-        if section_type:
-            filter_conditions.append(
-                models.FieldCondition(key="section_type", match=models.MatchValue(value=section_type))
-            )
-        if pasal_type:
-            filter_conditions.append(
-                models.FieldCondition(key="pasal_type", match=models.MatchValue(value=pasal_type))
-            )
-        
-        query_filter = models.Filter(must=filter_conditions) if filter_conditions else None
-        
-        # ✅ 1. Embedding dipindah ke thread terpisah (CPU-bound)
-        query_vector = await asyncio.to_thread(kb_service.embeddings.embed_query, query)
-        
-        # ✅ 2. Tambahkan `await` untuk AsyncQdrantClient
-        search_response = await kb_service.db.query_points(
-            collection_name=child_col,
-            query=query_vector,
-            limit=limit,
-            query_filter=query_filter,
-            with_payload=True
-        )
-        
-        results = []
-        for hit in search_response.points:
-            parent_id = hit.payload.get("parent_id")
-            
-            # ✅ 3. `retrieve` juga harus di-`await`
-            parent = await kb_service.db.retrieve(
-                collection_name=parent_col,
-                ids=[parent_id],
-                with_payload=True,
-                with_vectors=False
-            )
-            
-            parent_data = parent[0].payload if parent else {}
-            
-            results.append({
-                "score": hit.score,
-                "child": {
-                    "content": hit.payload.get("content"),
-                    "raw_text": hit.payload.get("raw_text"),
-                    "type": hit.payload.get("type"),
-                    "reference_label": hit.payload.get("reference_label"),
-                    "keyword_tags": hit.payload.get("keyword_tags", [])
-                },
-                "parent": {
-                    "content": parent_data.get("content"),
-                    "reference_label": parent_data.get("reference_label"),
-                    "pasal_nomor": parent_data.get("pasal_nomor")
-                }
-            })
-            
-        return {
-            "query": query,
-            "total_results": len(results),
-            "results": results
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal melakukan pencarian: {str(e)}")
