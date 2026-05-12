@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RAGNOZA - AI Legal Assistant</title>
+
+  <!-- Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.14.0/dist/tabler-icons.min.css">
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="/static/css/variables.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/chat.css">
+  <link rel="stylesheet" href="/static/css/knowledgebase.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════
+     NAVBAR
+════════════════════════════════════════ -->
+<nav class="navbar">
+  <div class="nav-logo"><i class="ti ti-scale"></i></div>
+  <div class="nav-brand">
+    <h1>RAGNOZA</h1>
+    <p>AI Legal Assistant - UUD 1945</p>
+  </div>
+  <div class="nav-right">
+    <button class="nav-btn" id="themeToggle" title="Toggle tema">
+      <i class="ti ti-moon" id="themeIcon"></i>
+    </button>
+    <div class="nav-avatar">A</div>
+    <span class="nav-user">Admin</span>
+    <i class="ti ti-chevron-down" style="font-size:12px;color:var(--text-ter)"></i>
+  </div>
+</nav>
+
+<div class="app-body">
+
+  <!-- ═══════════════════════════════════════
+       SIDEBAR
+  ════════════════════════════════════════ -->
+  <aside class="sidebar">
+    <div class="search-box">
+      <i class="ti ti-search" style="font-size:13px;color:var(--text-ter)"></i>
+      <input id="searchInput" placeholder="Cari riwayat atau pertanyaan...">
+    </div>
+
+    <button class="new-chat-btn" onclick="newChat()">
+      <i class="ti ti-plus" style="font-size:14px"></i> New Chat
+    </button>
+
+    <div id="historyList"></div>
+
+    <div class="sidebar-bottom">
+      <div class="stat-card">
+        <div class="stat-icon"><i class="ti ti-clock"></i></div>
+        <div>
+          <p style="font-size:10px;color:var(--text-ter)">Total Session</p>
+          <p class="stat-num" id="sessionCount">0</p>
+          <p style="font-size:10px;color:var(--text-ter)">Session tersimpan</p>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ═══════════════════════════════════════
+       MAIN CONTENT
+  ════════════════════════════════════════ -->
+  <main class="main">
+
+    <!-- TABS -->
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('kb', this)">
+        <i class="ti ti-database"></i> Knowledgebase
+      </div>
+      <div class="tab" onclick="switchTab('gen', this)">
+        <i class="ti ti-sparkles"></i> Generate
+      </div>
+      <div class="tab" onclick="switchTab('eval', this)">
+        <i class="ti ti-chart-bar"></i> Evaluasi
+      </div>
+    </div>
+
+    <!-- ───────────────────────────────────
+         TAB 1: KNOWLEDGEBASE
+    ──────────────────────────────────── -->
+    <div class="tab-content active" id="tab-kb">
+      <div class="kb-page">
+        <div class="kb-inner">
+
+          <!-- Header -->
+          <div class="kb-header">
+            <div class="kb-header-icon"><i class="ti ti-database"></i></div>
+            <div>
+              <h3>Knowledge Base Manager</h3>
+              <p>Upload dan kelola dokumen PDF yang akan digunakan sebagai sumber jawaban AI.</p>
+            </div>
+            <div class="kb-header-right">
+              <button class="danger-btn" onclick="confirmReset()">
+                <i class="ti ti-refresh-alert" style="font-size:13px"></i> Reset Collection
+              </button>
+            </div>
+          </div>
+
+          <!-- Stats -->
+          <div class="kb-stats">
+            <div class="kb-stat">
+              <div class="kb-stat-icon purple"><i class="ti ti-file-text"></i></div>
+              <div>
+                <div class="kb-stat-val" id="stat-segments">—</div>
+                <div class="kb-stat-lbl">Total Segmen</div>
+              </div>
+            </div>
+            <div class="kb-stat">
+              <div class="kb-stat-icon green"><i class="ti ti-vector"></i></div>
+              <div>
+                <div class="kb-stat-val" id="stat-vectors">—</div>
+                <div class="kb-stat-lbl">Vector di Qdrant</div>
+              </div>
+            </div>
+            <div class="kb-stat">
+              <div class="kb-stat-icon orange"><i class="ti ti-database"></i></div>
+              <div>
+                <div class="kb-stat-val" id="stat-collection">—</div>
+                <div class="kb-stat-lbl">Active Collection</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Upload Card -->
+          <div class="kb-upload-card">
+            <div class="kb-card-head">
+              <i class="ti ti-upload"></i> Upload Dokumen PDF
+            </div>
+            <div class="kb-card-body">
+
+              <!-- Drop Zone -->
+              <div class="drop-zone" id="dropZone"
+                onclick="document.getElementById('pdfFile').click()"
+                ondragover="handleDragOver(event)"
+                ondragleave="handleDragLeave(event)"
+                ondrop="handleDrop(event)">
+                <i class="ti ti-file-type-pdf"></i>
+                <h4>Seret &amp; lepas file PDF di sini</h4>
+                <p>atau <span class="browse-link">pilih file dari komputer</span></p>
+                <p style="margin-top:6px;font-size:10px;color:var(--text-ter)">Maks. 20MB · Format: PDF</p>
+              </div>
+
+              <!-- File Preview (hidden by default) -->
+              <div class="file-preview" id="filePreview" style="display:none">
+                <i class="ti ti-file-type-pdf"></i>
+                <div style="flex:1;min-width:0">
+                  <div class="file-preview-name" id="fileName">—</div>
+                  <div class="file-preview-size" id="fileSize">—</div>
+                </div>
+                <button class="file-preview-remove" onclick="clearFile()" title="Hapus file">
+                  <i class="ti ti-x"></i>
+                </button>
+              </div>
+
+              <!-- Config Row -->
+              <div class="upload-config">
+                <label>
+                  <i class="ti ti-database" style="font-size:13px;vertical-align:-2px"></i>
+                  Collection:
+                </label>
+                <select id="kbCollection">
+                  <option value="uud_articles">UUD Articles</option>
+                  <option value="uud_amandemen">UUD Amandemen</option>
+                  <option value="custom">Custom Collection</option>
+                </select>
+                <button class="upload-btn" id="uploadBtn" onclick="uploadPdf()" disabled>
+                  <i class="ti ti-upload" style="font-size:14px"></i> Mulai Upload
+                </button>
+              </div>
+
+              <!-- Progress Bar (hidden by default) -->
+              <div class="upload-progress" id="uploadProgress" style="display:none">
+                <div class="progress-label">
+                  <span id="progressLabel">Mengindeks dokumen...</span>
+                  <span id="progressPct">0%</span>
+                </div>
+                <div class="progress-track">
+                  <div class="progress-fill" id="progressFill"></div>
+                </div>
+              </div>
+
+              <!-- Upload Result (hidden by default) -->
+              <div id="uploadResult" style="display:none"></div>
+
+            </div>
+          </div>
+
+          <!-- Document List -->
+          <div class="kb-doc-card">
+            <div class="kb-card-head">
+              <i class="ti ti-list"></i> Daftar Dokumen Terindeks
+              <span id="docCount"
+                style="margin-left:auto;font-size:11px;font-weight:400;color:var(--text-sec)">
+                Memuat...
+              </span>
+            </div>
+            <div class="kb-doc-toolbar">
+              <div class="doc-search">
+                <i class="ti ti-search" style="font-size:13px;color:var(--text-ter)"></i>
+                <input id="docSearch" placeholder="Cari pasal atau bab..."
+                  oninput="filterDocs(this.value)">
+              </div>
+              <button class="refresh-btn" onclick="loadDocuments()">
+                <i class="ti ti-refresh" style="font-size:13px"></i> Refresh
+              </button>
+            </div>
+            <div id="docTableWrap">
+              <div class="doc-loading">
+                <i class="ti ti-loader-2" style="font-size:16px"></i> Memuat dokumen...
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div><!-- /tab-kb -->
+
+    <!-- ───────────────────────────────────
+         TAB 2: GENERATE (Chat)
+    ──────────────────────────────────── -->
+    <div class="tab-content" id="tab-gen">
+      <div class="chat-area">
+
+        <!-- Chat Header -->
+        <div class="chat-header">
+          <div class="chat-header-icon"><i class="ti ti-scale"></i></div>
+          <div>
+            <h3>Chat dengan AI Legal Assistant</h3>
+            <p>Jawaban dihasilkan berdasarkan knowledge base yang Anda upload.</p>
+          </div>
+          <button class="clear-btn" onclick="clearChat()">
+            <i class="ti ti-trash" style="font-size:13px"></i> Clear Chat
+          </button>
+        </div>
+
+        <!-- Messages -->
+        <div class="messages" id="messages"></div>
+
+        <!-- Input Area -->
+        <div class="input-area">
+          <div class="collection-row">
+            <label>
+              <i class="ti ti-database" style="font-size:13px;vertical-align:-2px"></i>
+              Collection:
+            </label>
+            <select class="collection-select" id="collectionSelect">
+              <option value="uud_articles">UUD Articles</option>
+              <option value="uud_amandemen">UUD Amandemen</option>
+              <option value="custom">Custom Collection</option>
+            </select>
+          </div>
+
+          <div class="input-row">
+            <textarea class="chat-input" id="chatInput" rows="1"
+              placeholder="Ketik pertanyaan Anda di sini..."
+              onkeydown="handleKey(event)"
+              oninput="autoResize(this)"></textarea>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()" title="Kirim">
+              <i class="ti ti-send"></i>
+            </button>
+          </div>
+
+          <div class="audio-row">
+            <button class="audio-btn" onclick="uploadAudio()">
+              <i class="ti ti-music"></i> Upload Audio
+            </button>
+            <button class="audio-btn rec" id="recordBtn" onclick="toggleRecord()">
+              <i class="ti ti-microphone" id="recordIcon"></i>
+              <span id="recordLabel">Record Audio</span>
+            </button>
+          </div>
+
+          <div class="audio-hint">
+            <i class="ti ti-info-circle" style="font-size:12px"></i>
+            Audio akan diubah menjadi teks menggunakan STT, lalu diproses untuk mencari jawaban.
+          </div>
+        </div>
+
+      </div>
+    </div><!-- /tab-gen -->
+
+    <!-- ───────────────────────────────────
+         TAB 3: EVALUASI
+    ──────────────────────────────────── -->
+    <div class="tab-content" id="tab-eval">
+      <div class="page-placeholder">
+        <i class="ti ti-chart-bar"></i>
+        <p>Halaman Evaluasi</p>
+        <small style="font-size:12px">Fitur RAGAS sedang dalam pengembangan</small>
+      </div>
+    </div><!-- /tab-eval -->
+
+  </main><!-- /main -->
+
+  <!-- ═══════════════════════════════════════
+       SOURCE PANEL (kanan, buka saat klik referensi)
+  ════════════════════════════════════════ -->
+  <aside class="source-panel hidden" id="sourcePanel">
+    <div class="source-header">
+      <h4>Detail Sumber</h4>
+      <button class="source-close" onclick="closeSourcePanel()">
+        <i class="ti ti-x"></i>
+      </button>
+    </div>
+
+    <div>
+      <div class="source-title" id="sp-title">—</div>
+      <div style="margin-top:6px">
+        <span class="source-badge" id="sp-bab">—</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Similarity Score</div>
+      <div class="score-row">
+        <span>Score</span>
+        <strong id="sp-score">—</strong>
+      </div>
+      <div class="score-full">
+        <div class="score-fill-full" id="sp-bar" style="width:0%"></div>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Isi Teks (Konteks)</div>
+      <div class="context-box" id="sp-context">—</div>
+    </div>
+
+    <div>
+      <div class="section-label">Metadata</div>
+      <table class="meta-table" id="sp-meta"></table>
+    </div>
+
+    <button class="doc-btn">
+      <i class="ti ti-external-link" style="font-size:13px"></i>
+      Lihat di Dokumen Asli
+    </button>
+
+    <div class="tips-box">
+      <i class="ti ti-bulb"></i>
+      <span>Pastikan pertanyaan Anda terkait dengan knowledge base yang diupload
+        untuk mendapatkan hasil yang akurat.</span>
+    </div>
+  </aside>
+
+</div><!-- /app-body -->
+
+<!-- Toast notification -->
+<div class="toast" id="toast"></div>
+
+<!-- Hidden file inputs -->
+<input type="file" id="audioFile" accept="audio/*"
+  style="display:none" onchange="handleAudioFile(event)">
+<input type="file" id="pdfFile" accept="application/pdf"
+  style="display:none" onchange="handlePdfSelect(event)">
+
+<!-- ═══════════════════════════════════════
+     JS — urutan penting: app.js dulu (state & helpers),
+     lalu chat.js dan knowledgebase.js
+════════════════════════════════════════ -->
+<script src="/js/app.js"></script>
+<script src="/js/chat.js"></script>
+<script src="/js/knowledgebase.js"></script>
+
+</body>
+</html>

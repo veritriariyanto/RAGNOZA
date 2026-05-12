@@ -1,28 +1,30 @@
 from fastapi import FastAPI
-from app.core.postgres import engine, Base
-from app.core.qdrant import qdrant_db
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+
 from app.routes.routes import api_router
+from app.routes.prompting.rag_router import router as rag_router
 
-# Create tables in Postgres (Laragon) if they don't exist
-Base.metadata.create_all(bind=engine)
+app = FastAPI(title="RAGNOZA API")
 
-app = FastAPI(title="AI RAG UUD Decision Support")
-app.include_router(api_router)
+# ── CORS ──────────────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.on_event("startup")
-async def startup_event():
-    """
-    Event ini berjalan saat server dimulai.
-    Memastikan koleksi di Qdrant sudah dibuat sebelum ada request masuk.
-    """
-    try:
-        # Inisialisasi koleksi Qdrant (384 sesuai dimensi all-MiniLM-L6-v2)
-        qdrant_db.init_collection(collection_name="uud_articles", vector_size=384)
-        print("✅ Berhasil memvalidasi koneksi PostgreSQL dan Qdrant.")
-    except Exception as e:
-        print(f"❌ Terjadi kesalahan saat startup: {e}")
+# ── STATIC FILES ───────────────────────────────────────────────────────────────
+app.mount("/static", StaticFiles(directory="frontend/static"), name="static")
+app.mount("/js",     StaticFiles(directory="frontend/js"),     name="js")
 
-if __name__ == "__main__":
-    import uvicorn
-    # Menggunakan port 8000 sebagai standar FastAPI
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+# ── API ROUTERS ────────────────────────────────────────────────────────────────
+app.include_router(api_router, prefix="/api/v1")
+app.include_router(rag_router)
+
+# ── FRONTEND ───────────────────────────────────────────────────────────────────
+@app.get("/")
+async def root():
+    return FileResponse("frontend/index.html")
