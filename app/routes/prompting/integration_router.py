@@ -78,7 +78,8 @@ async def process_audio_rag(
                     "context_preview": result.retrieved_context[:500] + "..." if len(result.retrieved_context) > 500 else result.retrieved_context,
                     "sources_count": len(result.source_details)
                 },
-                "generated_material": result.final_material.model_dump() if result.final_material else None
+                "generated_material": result.final_material.model_dump() if result.final_material else None,
+                "fallback_message": result.fallback_message 
             }
         }
 

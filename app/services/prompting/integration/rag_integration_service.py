@@ -65,12 +65,15 @@ class RAGIntegrationService:
             # Tahap 5: GENERATE MATERIAL (Langkah Final)
             # Menggunakan context dari Qdrant + instruksi asli pengguna
             final_material = None
+            fallback_message = None
             if len(contexts) > 0:
                 material_payload = MaterialRequest(
                     context_text=f"KONTEKS HUKUM:\n{combined_context}\n\nFAKTA/TRANSKRIPSI:\n{repaired_text}",
                     style=style
                 )
                 final_material = await self.material_service.generate_legal_material(material_payload)
+            else:
+                fallback_message = "Maaf, jawaban tidak dapat dibuat karena tidak ada referensi hukum yang cocok."
 
             return RAGIntegrationResponse(
                 raw_transcribe=raw_transcribe,
@@ -79,6 +82,7 @@ class RAGIntegrationService:
                 retrieved_context=combined_context,
                 source_details=kb_results.get("results", []),
                 final_material=final_material,
+                 fallback_message=fallback_message,
                 has_context=len(contexts) > 0
             )
 

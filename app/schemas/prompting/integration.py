@@ -10,4 +10,6 @@ class RAGIntegrationResponse(BaseModel):
     source_details: List[Any]
     # Tambahkan field untuk hasil akhir generate material
     final_material: Optional[MaterialResponse] = None
+    fallback_message: Optional[str] = None
     has_context: bool
+    

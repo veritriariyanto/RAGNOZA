@@ -218,7 +218,8 @@ class QdrantStorage:
             query=query_vector,
             limit=limit,
             query_filter=query_filter,
-            with_payload=True
+            with_payload=True,
+            score_threshold=0.7
         )
         
         if not search_response.points:
@@ -233,9 +234,12 @@ class QdrantStorage:
             with_vectors=False
         )
         parent_map = {p.id: p.payload for p in parents}
-        
+        if not search_response.points:
+            return {"query": query, "total_results": 0, "results": [], "message": "No relevant context found above accuracy threshold."}
+
         results = []
         for hit in search_response.points:
+            
             parent_id = hit.payload.get("parent_id")
             parent_data = parent_map.get(parent_id, {})
             
