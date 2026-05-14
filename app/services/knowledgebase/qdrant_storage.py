@@ -219,7 +219,7 @@ class QdrantStorage:
             limit=limit,
             query_filter=query_filter,
             with_payload=True,
-            score_threshold=0.7
+            score_threshold=0.6
         )
         
         if not search_response.points:
@@ -239,7 +239,7 @@ class QdrantStorage:
 
         results = []
         for hit in search_response.points:
-            
+
             parent_id = hit.payload.get("parent_id")
             parent_data = parent_map.get(parent_id, {})
             
