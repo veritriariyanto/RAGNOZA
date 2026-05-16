@@ -15,7 +15,7 @@ def ask_rag(prompt, collection_name="uud_articles"):
     print("PAYLOAD:", payload)
 
     response = requests.post(
-        f"{BASE_URL}/prompting/rag/ask",
+        f"{BASE_URL}/api/v1/prompting/rag/ask",
         json=payload
     )
 
