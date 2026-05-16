@@ -9,34 +9,36 @@ logger = logging.getLogger(__name__)
 class MaterialGeneratorService:
     def __init__(self):
         self.engine = llm
-        # Parser otomatis mengenali struktur dari MaterialResponse
+        # Parser otomatis mengenali struktur baru dari MaterialResponse (SPK)
         self.json_parser = JsonOutputParser(pydantic_object=MaterialResponse)
 
     async def generate_legal_material(self, data: MaterialRequest) -> MaterialResponse:
         """
-        Menghasilkan materi edukasi hukum dengan pemisahan instruksi logika dan format.
+        Menghasilkan rekomendasi keputusan hukum berdasarkan analisis UU (SPK).
         """
         
-        # 1. System Prompt: Fokus pada "Otak" / Peran / Logika Hukum
+        # 1. System Prompt: Mengunci peran & gaya bahasa formal secara internal
         system_prompt = (
-            "Anda adalah Spesialis Konten Hukum senior di Indonesia. "
-            "Tugas Anda adalah menyusun materi edukasi yang akurat, terstruktur, "
-            "dan mudah dipahami berdasarkan fakta hukum yang diberikan. "
-            "Gunakan terminologi hukum yang tepat dan patuhi PUEBI."
+            "Anda adalah Sistem Penunjang Keputusan (SPK) Hukum Senior di Indonesia. "
+            "Tugas Anda adalah menganalisis skenario tindakan pengguna secara objektif dan ketat "
+            "berdasarkan konteks dokumen hukum yang diberikan. "
+            "Sampaikan hasil analisis dengan gaya bahasa yang formal, tegas, lugas, dan patuhi PUEBI. "
+            "Tentukan status keputusan dengan jelas dan hitung skor kepatuhannya (1-100). "
+            "Jangan pernah melakukan halusinasi pasal. Jika tidak diatur di teks sumber, katakan data tidak memadai."
         )
 
-        # 2. Human Prompt: Fokus pada "Data" + "Format Otomatis"
-        # Kita panggil self.json_parser.get_format_instructions() agar LangChain
-        # yang menuliskan aturan JSON-nya secara teknis untuk kita.
+        # 2. Human Prompt: Bersih dari data.style, berfokus penuh pada skenario dan konteks
         human_prompt = (
-            f"Konteks Teks Sumber:\n{data.context_text}\n\n"
-            f"Gaya Bahasa yang Diminta: {data.style}\n\n"
-            "Instruksi Tambahan: Buatlah materi yang informatif.\n\n"
+            f"Konto teks Dokumen Hukum (Referensi):\n{data.context_text}\n\n"
+            f"Skenario Tindakan Pengguna (Kasus):\n{data.user_scenario}\n\n"
+            "Instruksi Analisis:\n"
+            "1. Evaluasi apakah skenario pengguna melanggar atau mematuhi konteks hukum.\n"
+            "2. Berikan skor kepatuhan, analisis risiko sanksi, dan rekomendasi mitigasinya.\n\n"
             f"{self.json_parser.get_format_instructions()}"
         )
 
         try:
-            # Gunakan Pipe Operator LangChain
+            # Menggunakan Pipe Operator LangChain
             chain = self.engine | self.json_parser
             
             response = await chain.ainvoke([
@@ -44,18 +46,18 @@ class MaterialGeneratorService:
                 HumanMessage(content=human_prompt)
             ])
 
-            # Karena response sudah divalidasi parser, kita bisa langsung bungkus ke model
             return MaterialResponse(**response)
 
         except Exception as e:
             logger.error(f"MaterialGeneratorService Error: {str(e)}")
-            # Fallback yang aman agar sistem tidak crash
+            # Fallback aman, pastikan semua key di MaterialResponse (SPK) terpenuhi
             return MaterialResponse(
-                title="Gagal Menghasilkan Materi",
-                content=f"Terjadi kendala teknis saat memproses materi hukum. Detail: {str(e)}",
-                key_points=["Gagal memuat poin penting"],
+                decision_status="ERROR_SISTEM",
+                compliance_score=0,
+                recommendation=f"Gagal memproses keputusan hukum karena kendala teknis. Detail: {str(e)}",
+                risk_analysis=["Tidak dapat mengevaluasi risiko karena kegagalan sistem"],
                 legal_basis=[]
             )
 
-# Singleton instance
+# Singleton instance aman digunakan oleh router
 material_service = MaterialGeneratorService()

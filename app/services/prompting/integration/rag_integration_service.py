@@ -69,7 +69,7 @@ class RAGIntegrationService:
             if len(contexts) > 0:
                 material_payload = MaterialRequest(
                     context_text=f"KONTEKS HUKUM:\n{combined_context}\n\nFAKTA/TRANSKRIPSI:\n{repaired_text}",
-                    style=style
+                    user_scenario=repaired_text
                 )
                 final_material = await self.material_service.generate_legal_material(material_payload)
             else:
@@ -78,6 +78,7 @@ class RAGIntegrationService:
             return RAGIntegrationResponse(
                 raw_transcribe=raw_transcribe,
                 final_repaired_text=repaired_text,
+                user_scenario=repaired_text,
                 search_query_used=search_query,
                 retrieved_context=combined_context,
                 source_details=kb_results.get("results", []),

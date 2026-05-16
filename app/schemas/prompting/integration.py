@@ -5,6 +5,7 @@ from app.schemas.prompting.generate_content import MaterialResponse
 class RAGIntegrationResponse(BaseModel):
     raw_transcribe: str
     final_repaired_text: str
+    user_scenario: str
     search_query_used: str
     retrieved_context: str
     source_details: List[Any]
