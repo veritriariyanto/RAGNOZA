@@ -1,3 +1,5 @@
+#rag_integration_service.py
+
 import logging
 from typing import Optional
 from app.services.prompting.audio.stt_service import STTService
@@ -7,16 +9,22 @@ from app.services.prompting.prompt.generate_content_service import MaterialGener
 from app.schemas.prompting.generate_content import MaterialRequest
 from app.schemas.prompting.integration import RAGIntegrationResponse
 
+from sqlalchemy.orm import Session
+from app.services.history.rag_history_service import RAGHistoryService
+
+
 logger = logging.getLogger(__name__)
 
 class RAGIntegrationService:
     def __init__(
         self, 
-        stt_service: STTService, 
-        text_service: TextRefinerService, 
+        stt_service: STTService,
+        text_service: TextRefinerService,
         vector_service: QdrantStorage,
-        material_service: MaterialGeneratorService # Tambahkan ini
+        material_service: MaterialGeneratorService,
+        db: Session
     ):
+        self.db = db
         self.stt_service = stt_service
         self.text_service = text_service
         self.vector_service = vector_service
@@ -72,6 +80,17 @@ class RAGIntegrationService:
                     user_scenario=repaired_text
                 )
                 final_material = await self.material_service.generate_legal_material(material_payload)
+
+                RAGHistoryService.save_history(
+                    db=self.db,
+                    knowledge_base=knowledge_base,
+                    provider=provider,
+                    raw_transcribe=raw_transcribe,
+                    repaired_text=repaired_text,
+                    search_query=search_query,
+                    retrieved_context=combined_context,
+                    final_material=final_material
+                )
             else:
                 fallback_message = "Maaf, jawaban tidak dapat dibuat karena tidak ada referensi hukum yang cocok."
 
@@ -83,7 +102,7 @@ class RAGIntegrationService:
                 retrieved_context=combined_context,
                 source_details=kb_results.get("results", []),
                 final_material=final_material,
-                 fallback_message=fallback_message,
+                fallback_message=fallback_message,
                 has_context=len(contexts) > 0
             )
 

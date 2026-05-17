@@ -1,3 +1,5 @@
+#kb_service.py
+
 from typing import Dict, Optional
 from app.core.qdrant import qdrant_db
 from app.core.embeddings import embeddings
@@ -18,7 +20,8 @@ class KnowledgeBaseService:
         await self.storage.init_collections([parent_col, child_col])
         
         raw_text = self.extractor.extract_text(file_content)
-        clean_text = await text_refiner.repair_legal_text(raw_text)
+        refinement = await text_refiner.repair_legal_text(raw_text)
+        clean_text = refinement["repaired_text"]
         doc_structure = self.parser.parse_uu_structure(clean_text)
         
         doc_id = doc_structure["metadata"].get("uu_id", f"UU_{base_name}")
