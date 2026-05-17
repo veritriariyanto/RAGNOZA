@@ -1,3 +1,5 @@
+#kb_service.py
+
 from typing import Dict, Optional
 from app.core.qdrant import qdrant_db
 from app.core.embeddings import embeddings

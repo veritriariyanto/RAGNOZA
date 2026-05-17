@@ -1,3 +1,5 @@
+# app/services/prompting/prompt/generate_content_service.py
+
 import logging
 from app.core.llm_provider import llm
 from app.schemas.prompting.generate_content import MaterialRequest, MaterialResponse
@@ -25,6 +27,8 @@ class MaterialGeneratorService:
             "Sampaikan hasil analisis dengan gaya bahasa yang formal, tegas, lugas, dan patuhi PUEBI. "
             "Tentukan status keputusan dengan jelas dan hitung skor kepatuhannya (1-100). "
             "Jangan pernah melakukan halusinasi pasal. Jika tidak diatur di teks sumber, katakan data tidak memadai."
+            "Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan"
+            "dan wajib mengikuti schema yang diberikan."
         )
 
         # 2. Human Prompt: Bersih dari data.style, berfokus penuh pada skenario dan konteks
@@ -46,7 +50,7 @@ class MaterialGeneratorService:
                 HumanMessage(content=human_prompt)
             ])
 
-            return MaterialResponse(**response)
+            return MaterialResponse.model_validate(response)
 
         except Exception as e:
             logger.error(f"MaterialGeneratorService Error: {str(e)}")

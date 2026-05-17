@@ -7,6 +7,9 @@ from app.services.prompting.prompt.generate_content_service import MaterialGener
 from app.services.knowledgebase.qdrant_storage import QdrantStorage
 from app.services.prompting.integration.rag_integration_service import RAGIntegrationService
 
+from sqlalchemy.orm import Session
+from app.core.postgres import get_db
+
 # Import embeddings yang sudah Anda buat
 from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -18,7 +21,7 @@ embeddings = HuggingFaceEmbeddings(
 )
 
 # Dependency untuk RAG Service
-def get_rag_service():
+def get_rag_service(db: Session = Depends(get_db)):
     stt = STTService()
     refiner = TextRefinerService()
     material_gen = MaterialGeneratorService()
@@ -27,8 +30,17 @@ def get_rag_service():
         db=qdrant_db.client, 
         embeddings=embeddings
     )
+
+    print(RAGIntegrationService)
+    print(RAGIntegrationService.__init__)
     
-    return RAGIntegrationService(stt, refiner, qdrant, material_gen)
+    return RAGIntegrationService(
+        stt,
+        refiner, 
+        qdrant, 
+        material_gen, 
+        db
+    )
 
 @router.post("/process-integrated")
 async def process_audio_rag(
