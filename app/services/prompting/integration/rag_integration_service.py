@@ -11,6 +11,8 @@ from app.schemas.prompting.integration import RAGIntegrationResponse
 
 from sqlalchemy.orm import Session
 from app.services.history.rag_history_service import RAGHistoryService
+from app.services.evaluation.ragas_service import RagasService
+from app.services.evaluation.formatter import material_to_text
 
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ class RAGIntegrationService:
         self.text_service = text_service
         self.vector_service = vector_service
         self.material_service = material_service
+        self.ragas_service = RagasService()
 
     async def process_audio_to_material(
         self, 
@@ -80,6 +83,19 @@ class RAGIntegrationService:
                     user_scenario=repaired_text
                 )
                 final_material = await self.material_service.generate_legal_material(material_payload)
+
+                answer_text = material_to_text(final_material)
+
+                # Evaluasi dengan RAGAS
+                evaluation_result = await self.ragas_service.evaluate_rag(
+                    question=repaired_text,
+                    context=combined_context,
+                    answer=answer_text
+                )
+
+                print("========== RAGAS RESULT ==========")
+                print(evaluation_result)
+                print("==================================")
 
                 RAGHistoryService.save_history(
                     db=self.db,

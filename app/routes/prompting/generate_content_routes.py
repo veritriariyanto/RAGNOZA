@@ -1,3 +1,5 @@
+#app/routes/prompting/generate_content_routes.py
+
 from fastapi import APIRouter, HTTPException, status, Depends
 from app.schemas.prompting.generate_content import MaterialRequest, MaterialResponse
 from app.services.prompting.prompt.generate_content_service import material_service

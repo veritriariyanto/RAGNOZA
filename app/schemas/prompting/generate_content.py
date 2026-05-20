@@ -1,3 +1,5 @@
+#app/schemas/prompting/generate_content.py
+
 from pydantic import BaseModel, Field
 from typing import List
 

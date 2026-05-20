@@ -1,3 +1,5 @@
+#app/schemas/prompting/integration.py
+
 from pydantic import BaseModel, Field
 from typing import List, Optional, Any
 from app.schemas.prompting.generate_content import MaterialResponse
