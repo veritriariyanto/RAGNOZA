@@ -30,13 +30,11 @@ class Settings(BaseSettings):
     qdrant_host: str = "localhost"
     qdrant_port: int = 6333
 
-    # ── AI / Groq ────────────────────────────────
-    groq_api_key: str = ""
-
-    # ── Cleaning pipeline flags ───────────────────
-    cleaning_fix_encoding: bool = True
-    cleaning_remove_header_footer: bool = True
-    cleaning_normalize_whitespace: bool = True
+    # ── OpenRouter LLM ───────────────────────────
+    openrouter_api_key: str = ""
+    cleaning_llm_model: str = "meta-llama/llama-3.1-8b-instruct:free"
+    cleaning_llm_temperature: float = 0.1
+    cleaning_llm_concurrency: int = 2
 
     # ── Chunking token limits ─────────────────────
     chunk_level_1_max_tokens: int = 1500
@@ -75,4 +73,5 @@ def get_settings() -> Settings:
     return Settings()
 
 
+settings = get_settings()
 settings = get_settings()

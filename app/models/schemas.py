@@ -35,6 +35,39 @@ class PageContent(BaseModel):
     char_count: int = 0
 
 
+# ─────────────────────────────────────────────
+# PARSED STRUCTURE MODELS
+# ─────────────────────────────────────────────
+
+class BabEntry(BaseModel):
+    """Satu entri BAB yang terdeteksi dalam dokumen UU."""
+    number: str                         # "I", "II", "III", "1", "2"
+    title: str = ""                     # "KETENTUAN UMUM"
+    full_header: str                    # "BAB I\nKETENTUAN UMUM"
+    char_start: int                     # posisi karakter dalam full_cleaned_text
+    pasal_start: Optional[int] = None  # nomor Pasal pertama di BAB ini
+    pasal_end: Optional[int] = None    # nomor Pasal terakhir di BAB ini
+    pasal_count: int = 0               # jumlah Pasal dalam BAB ini
+
+
+class PasalEntry(BaseModel):
+    """Satu entri Pasal yang terdeteksi dalam dokumen UU."""
+    number: str                         # "1", "2", "3A"
+    full_header: str                    # "Pasal 1"
+    char_start: int                     # posisi karakter dalam full_cleaned_text
+    bab_number: Optional[str] = None   # BAB induk tempat Pasal ini berada
+    ayat_count: int = 0                # jumlah ayat terdeteksi
+
+
+class ParsedStructure(BaseModel):
+    """Hasil pra-parsing struktur hierarki dokumen UU."""
+    bab_list: List[BabEntry] = []
+    pasal_list: List[PasalEntry] = []
+    total_bab: int = 0
+    total_pasal: int = 0
+    total_ayat: int = 0
+
+
 class CleaningResult(BaseModel):
     """Hasil dari proses cleaning satu dokumen."""
     document_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -43,6 +76,7 @@ class CleaningResult(BaseModel):
     cleaned_pages: List[PageContent] = []
     full_cleaned_text: str = ""
     metadata: dict = {}
+    parsed_structure: ParsedStructure = Field(default_factory=ParsedStructure)
     status: CleaningStatus = CleaningStatus.SUCCESS
     issues: List[str] = []
 

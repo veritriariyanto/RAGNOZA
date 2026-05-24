@@ -1,13 +1,7 @@
 """
 ENDPOINT: /api/v1/chunking
 ===========================
-REST API untuk Hierarchical (Parent-Child) Chunking + Embedding Service.
-
-Routes:
-- POST /process           → Upload PDF → Cleaning → Chunking → (opsional) Embed & Index
-- POST /from-text         → Chunking dari teks langsung (untuk testing)
-- POST /search            → Similarity search berdasarkan teks query
-- GET  /collections       → Daftar collection di Qdrant
+REST API untuk Hierarchical (Parent-Child) Chunking & Embedding.
 """
 
 import logging
@@ -15,9 +9,9 @@ from typing import Optional
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Body, Query
 from fastapi.responses import JSONResponse
+from fastapi.concurrency import run_in_threadpool
 
-logger = logging.getLogger(__name__)
-
+# pyrefly: ignore [missing-import]
 from app.services.cleaning_service import CleaningService
 from app.services.chunking_service import ChunkingService
 from app.services.embedding_service import EmbeddingService
@@ -28,16 +22,20 @@ from app.models.schemas import (
     CleaningResult,
     CleaningStatus,
 )
-from app.utils.text_utils import count_tokens
-from app.config import settings
+from app.utils.text_utils import count_tokens  # pyrefly: ignore [missing-import]
+from app.config import settings  # pyrefly: ignore [missing-import]
 
 router = APIRouter(prefix="/chunking", tags=["Chunking"])
 
-# Singleton services (model dimuat satu kali)
+logger = logging.getLogger(__name__)
+
+# Singleton services
 _cleaning_service = CleaningService()
 _chunking_service = ChunkingService()
 _embedding_service = EmbeddingService()
 _qdrant_service = QdrantService()
+
+_MAX_FILE_SIZE = 50 * 1024 * 1024
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -49,54 +47,46 @@ _qdrant_service = QdrantService()
     response_model=ProcessingResponse,
     summary="Upload PDF → Cleaning → Chunking → (opsional) Embed & Index ke Qdrant",
     description="""
-Pipeline lengkap: Upload PDF → Cleaning → Parent-Child Chunking → (opsional) Embedding & Indexing.
+Pipeline lengkap untuk memproses PDF undang-undang:
+1. Cleaning (Rule-Based): Normalisasi spasi, pembersihan noise header/footer.
+2. Parent-Child Chunking: Memisahkan teks menjadi unit Parent (Dokumen, BAB, Pasal utuh) dan Child (Ayat).
+3. Embedding: Menghasilkan representasi vector untuk setiap chunk.
+4. Indexing: Menyimpan secara dual-collection di Qdrant (Parent vs Child).
 
-**Parent-Child Chunking Levels:**
-
-| Level | Tipe   | Deskripsi                                  | Role   |
-|-------|--------|--------------------------------------------|--------|
-| 0     | Document | Intro/header dokumen                     | Parent |
-| 1     | BAB    | Konten penuh satu BAB + semua Pasal+Ayat   | Parent |
-| 2     | Pasal  | Konten penuh Pasal + semua Ayat (jika ada) | Parent/Child |
-| 3     | Ayat   | Satu Ayat (unit retrieval kecil)           | Child  |
-
-**RAG Flow:**
-1. Vector search → temukan Ayat child yang relevan
-2. Fetch `parent_chunk_id` → load Pasal parent sebagai konteks penuh
-3. LLM menerima konteks lengkap
-
-Aktifkan `embed=true` untuk langsung embed dan index ke Qdrant.
+Set `embed=true` untuk mengaktifkan embedding & penyimpanan Qdrant.
 """,
 )
 async def process_pdf(
     file: UploadFile = File(..., description="File PDF undang-undang"),
     include_chunks_preview: bool = Query(False, description="Sertakan preview chunks di response"),
     embed: bool = Query(False, description="Embed chunks dan index ke Qdrant setelah chunking"),
-    collection: Optional[str] = Query(None, description="Nama collection Qdrant (default dari settings)"),
+    collection: Optional[str] = Query(None, description="Override nama collection (jika None, menggunakan dual-collection default)"),
 ):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Hanya file PDF yang diterima (.pdf)")
 
-    MAX_SIZE = 50 * 1024 * 1024
     pdf_bytes = await file.read()
-    if len(pdf_bytes) > MAX_SIZE:
+    if len(pdf_bytes) > _MAX_FILE_SIZE:
         raise HTTPException(status_code=413, detail="Ukuran file terlalu besar. Maksimal 50MB.")
 
-    logger.info(f"[API] Process: {file.filename} (embed={embed})")
+    logger.info(f"[API/chunking/process] Memproses file: {file.filename} (embed={embed})")
 
-    # Step 1: Cleaning
+    # Step 1: Cleaning (dijalankan di threadpool karena synchronous)
     try:
-        cleaning_result = await _cleaning_service.clean_from_bytes(
-            pdf_bytes=pdf_bytes,
-            source_filename=file.filename,
+        cleaning_result = await run_in_threadpool(
+            _cleaning_service.clean_from_bytes,
+            pdf_bytes,
+            file.filename,
         )
     except Exception as e:
+        logger.error(f"[API/chunking/process] Cleaning gagal: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Cleaning gagal: {str(e)}")
 
     # Step 2: Chunking (Parent-Child)
     try:
         chunking_result = await _chunking_service.chunk(cleaning_result)
     except Exception as e:
+        logger.error(f"[API/chunking/process] Chunking gagal: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Chunking gagal: {str(e)}")
 
     all_chunks = chunking_result.all_chunks
@@ -136,23 +126,21 @@ async def process_pdf(
                 "embedded_chunks": emb_count,
                 "vector_dim": emb_dim,
             }
-            logger.info(f"[API] Embedding selesai: {emb_count} chunks, dim={emb_dim}")
+            logger.info(f"[API/chunking/process] Embedding selesai: {emb_count} chunks, dim={emb_dim}")
 
             # Step 4: Upsert ke Qdrant
             try:
-                col = collection or settings.embedding_collection
                 upsert_result = _qdrant_service.upsert_chunks(
-                    embedded_chunks, collection_name=col
+                    embedded_chunks, collection_name=collection
                 )
                 response_data["indexing"] = upsert_result
-                logger.info(f"[API] Qdrant upsert: {upsert_result}")
             except Exception as e:
-                logger.warning(f"[API] Qdrant upsert gagal (embedding tetap OK): {e}")
+                logger.warning(f"[API/chunking/process] Qdrant upsert gagal: {e}")
                 response_data["indexing"] = {"error": str(e)}
 
         except Exception as e:
-            logger.error(f"[API] Embedding gagal: {e}")
-            raise HTTPException(status_code=500, detail=f"Embedding gagal: {str(e)}")
+            logger.error(f"[API/chunking/process] Embedding/indexing gagal: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Embedding/indexing gagal: {str(e)}")
 
     # Preview opsional
     if include_chunks_preview:
@@ -164,6 +152,7 @@ async def process_pdf(
                 "token_count": c.metadata.token_count,
                 "has_embedding": c.embedding is not None,
                 "parent_chunk_id": c.metadata.parent_chunk_id,
+                "is_parent": c.metadata.is_parent,
                 "preview": c.preview,
                 "bab": c.metadata.bab_title,
                 "pasal": c.metadata.pasal_title,
@@ -174,8 +163,7 @@ async def process_pdf(
 
     return ProcessingResponse(
         success=True,
-        message=f"Berhasil: {chunking_result.total_chunks} chunks dari {file.filename}"
-                + (f" | {response_data['embedding']['embedded_chunks']} embedded" if embed and response_data["embedding"] else ""),
+        message=f"Berhasil memproses: {chunking_result.total_chunks} chunks dari {file.filename}",
         document_id=chunking_result.document_id,
         data=response_data,
     )
@@ -193,34 +181,41 @@ async def process_pdf(
 async def chunk_from_text(
     text: str = Body(..., embed=True, description="Teks UU yang sudah bersih"),
     filename: str = Body(default="manual_input.txt", embed=True),
-    embed: bool = Body(default=False, embed=True, description="Embed hasil chunks"),
+    embed: bool = Body(default=False, embed=True, description="Embed hasil chunks dan simpan ke Qdrant"),
 ):
     if not text.strip():
         raise HTTPException(status_code=400, detail="Teks tidak boleh kosong")
 
     token_count = count_tokens(text)
-    logger.info(f"[API] Chunk from text: {token_count} tokens")
+    logger.info(f"[API/chunking/from-text] Input: {token_count} tokens")
 
+    # Siapkan CleaningResult tiruan untuk parser chunk
     cleaning_result = CleaningResult(
         source_filename=filename,
         total_pages=1,
         full_cleaned_text=text,
         status=CleaningStatus.SUCCESS,
     )
-
+    
+    # Lakukan parsing struktur cepat menggunakan regex cleaning service
     try:
+        cleaning_result.parsed_structure = _cleaning_service._parse_structure(text)
         chunking_result = await _chunking_service.chunk(cleaning_result)
     except Exception as e:
+        logger.error(f"[API/chunking/from-text] Proses chunking gagal: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Chunking gagal: {str(e)}")
 
     all_chunks = chunking_result.all_chunks
 
-    # Opsional embed
+    # Opsional embed dan simpan ke Qdrant
+    indexing_result = None
     if embed:
         try:
             all_chunks = await _embedding_service.embed_chunks(all_chunks)
+            indexing_result = _qdrant_service.upsert_chunks(all_chunks)
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Embedding gagal: {str(e)}")
+            logger.error(f"[API/chunking/from-text] Embedding/indexing gagal: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Embedding/indexing gagal: {str(e)}")
 
     return JSONResponse({
         "document_id": chunking_result.document_id,
@@ -231,11 +226,13 @@ async def chunk_from_text(
             "level_2_pasal": len(chunking_result.level_2_chunks),
             "level_3_ayat": len(chunking_result.level_3_chunks),
         },
+        "indexing_result": indexing_result,
         "chunks": [
             {
                 "chunk_id": c.chunk_id,
                 "level": c.metadata.hierarchy_level.value,
                 "level_number": c.metadata.level_number,
+                "is_parent": c.metadata.is_parent,
                 "bab": c.metadata.bab_title,
                 "pasal": c.metadata.pasal_title,
                 "ayat": c.metadata.ayat_number,
@@ -255,60 +252,62 @@ async def chunk_from_text(
 
 @router.post(
     "/search",
-    summary="Similarity Search berdasarkan teks query",
+    summary="Similarity Search berdasarkan teks query (Parent-Child RAG)",
     description="""
-Embed query teks menggunakan model yang sama, lalu cari chunks paling relevan di Qdrant.
-
-**Parent-Child RAG Flow:**
-1. Child chunks ditemukan (Ayat / Pasal leaf)
-2. Response menyertakan `parent_chunk_id` → client bisa fetch konteks penuh
+Melakukan similarity search di Qdrant.
+Secara default akan melakukan search di `embedding_collection_child`.
+Jika `fetch_parent=True`, akan otomatis men-lookup parent chunk yang utuh
+dari `embedding_collection_parent` menggunakan parent_chunk_id.
 """,
 )
 async def search_chunks(
-    query: str = Body(..., embed=True, description="Pertanyaan atau teks yang dicari"),
-    top_k: int = Body(default=5, embed=True, description="Jumlah hasil (max 20)"),
-    score_threshold: float = Body(default=0.3, embed=True, description="Minimum similarity score"),
-    filter_level: Optional[int] = Body(default=None, embed=True, description="Filter level (3=Ayat, 2=Pasal, None=semua)"),
-    collection: Optional[str] = Body(default=None, embed=True, description="Nama collection Qdrant"),
-    fetch_parent: bool = Body(default=False, embed=True, description="Sertakan parent chunk di setiap hasil"),
+    query: str = Body(..., embed=True, description="Pertanyaan atau kata kunci pencarian"),
+    top_k: int = Body(default=5, embed=True, description="Jumlah hasil teratas"),
+    score_threshold: float = Body(default=0.3, embed=True, description="Similarity score threshold (0.0 - 1.0)"),
+    filter_level: Optional[int] = Body(default=None, embed=True, description="Filter level (3=Ayat, 2=Pasal, None=Semua)"),
+    collection: Optional[str] = Body(default=None, embed=True, description="Override nama collection untuk search"),
+    fetch_parent: bool = Body(default=False, embed=True, description="Ambil dan sertakan parent chunk (konteks penuh) di setiap hasil"),
 ):
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query tidak boleh kosong")
 
     top_k = min(top_k, 20)
-    col = collection or settings.embedding_collection
 
-    # Embed query
+    # Embed query vector
     try:
         query_vector = _embedding_service.embed_text(query.strip())
     except Exception as e:
+        logger.error(f"[API/chunking/search] Embedding query gagal: {e}")
         raise HTTPException(status_code=500, detail=f"Embedding query gagal: {str(e)}")
 
-    # Search Qdrant
+    # Cari kemiripan vector di Qdrant
     try:
         results = _qdrant_service.search(
             query_vector=query_vector,
             top_k=top_k,
-            collection_name=col,
+            collection_name=collection,
             score_threshold=score_threshold,
             filter_level=filter_level,
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search gagal: {str(e)}")
+        logger.error(f"[API/chunking/search] Search Qdrant gagal: {e}")
+        raise HTTPException(status_code=500, detail=f"Pencarian gagal: {str(e)}")
 
-    # Opsional: fetch parent untuk setiap hasil
+    # Fetch parent chunk jika diminta
     if fetch_parent and results:
         for hit in results:
             parent_id = hit.get("parent_chunk_id")
             if parent_id:
-                parent = _qdrant_service.get_chunk_by_id(parent_id, col)
+                # Dapatkan parent chunk dari parent collection
+                parent = _qdrant_service.get_chunk_by_id(parent_id, collection_name=None)
                 hit["parent_context"] = parent.get("content") if parent else None
             else:
                 hit["parent_context"] = None
 
     return JSONResponse({
         "query": query,
-        "collection": col,
+        "collection_mode": "dual" if not collection else "single",
+        "search_collection": collection or settings.embedding_collection_child,
         "model": settings.embedding_model,
         "total_results": len(results),
         "results": results,

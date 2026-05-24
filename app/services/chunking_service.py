@@ -3,74 +3,40 @@ app/services/chunking_service.py
 =================================
 Implementasi PARENT-CHILD CHUNKING untuk dokumen UU Indonesia.
 
-Konsep:
-┌─────────────────────────────────────────────────────────────┐
-│  PARENT chunk: Konten PENUH satu unit hierarki (konteks)    │
-│  CHILD chunk:  Unit KECIL yang di-embed & di-retrieve       │
-│                                                             │
-│  Document (L0) → parent semua BAB                           │
-│      BAB (L1 parent) → konten penuh semua Pasal+Ayat        │
-│          Pasal (L2 parent) → konten penuh semua Ayat        │
-│              Ayat (L3 child) → unit retrieval kecil         │
-│                                                             │
-│  Pasal tanpa Ayat → Pasal menjadi child langsung            │
-└─────────────────────────────────────────────────────────────┘
+Memanfaatkan parsed_structure dari CleaningResult untuk membelah teks
+secara presisi berdasarkan batas BAB, Pasal, dan Ayat.
 
-Alur RAG:
-  1. Vector search → temukan CHILD chunk yang relevan
-  2. Baca parent_chunk_id → fetch PARENT sebagai konteks penuh
-  3. LLM menerima konteks lengkap, bukan hanya potongan kecil
+Hierarki Chunks:
+- Level 0: Document (is_parent=True) -> header/intro sebelum BAB I
+- Level 1: BAB (is_parent=True)      -> isi lengkap BAB (judul + pasal + ayat)
+- Level 2: Pasal (is_parent=True jika ada ayat, is_parent=False jika tanpa ayat)
+- Level 3: Ayat (is_parent=False)     -> unit terkecil untuk embedding & retrieval
 """
 
 import uuid
-from typing import Optional
 import logging
+import re
+from typing import Optional, List, Tuple
 
-logger = logging.getLogger(__name__)
-
+# pyrefly: ignore [missing-import]
 from app.models.schemas import (
     ChunkingResult,
     DocumentChunk,
     ChunkMetadata,
     HierarchyLevel,
     CleaningResult,
+    BabEntry,
+    PasalEntry,
 )
-from app.utils.uu_patterns import detect_structure_level
-from app.utils.text_utils import count_tokens, normalize_whitespace
-from app.config import settings
+from app.utils.text_utils import count_tokens, normalize_whitespace  # pyrefly: ignore [missing-import]
+from app.config import settings  # pyrefly: ignore [missing-import]
 
+logger = logging.getLogger(__name__)
 
-# ─────────────────────────────────────────────
-# INTERNAL DATA CLASS
-# ─────────────────────────────────────────────
-
-class _HierarchyNode:
-    """Node internal untuk membangun pohon hierarki sebelum di-chunk."""
-    def __init__(self, level: str, title: str, number: str = ""):
-        self.level = level
-        self.title = title
-        self.number = number
-        self.lines: list[str] = []
-        self.children: list["_HierarchyNode"] = []
-        self.page_start: Optional[int] = None
-        self.page_end: Optional[int] = None
-
-    @property
-    def content(self) -> str:
-        return normalize_whitespace("\n".join(self.lines))
-
-
-# ─────────────────────────────────────────────
-# CHUNKING SERVICE
-# ─────────────────────────────────────────────
 
 class ChunkingService:
     """
-    Parent-Child Chunking untuk dokumen UU Indonesia.
-
-    - Parent chunks (L0-L2): Konten agregat penuh, dipakai sebagai konteks RAG
-    - Child chunks (L3 Ayat, L2 Pasal tanpa Ayat): Unit kecil untuk vector search
-    - Setiap child memiliki parent_chunk_id → fetch konteks saat retrieval
+    Parent-Child Chunking Service menggunakan parsed_structure hasil cleaning.
     """
 
     def __init__(self):
@@ -83,13 +49,11 @@ class ChunkingService:
         self.overlap_tokens = settings.chunk_overlap_tokens
         self.min_tokens = settings.chunk_min_tokens
 
-    # ──────────────────────────────────────────────────────────────
-    # PUBLIC API
-    # ──────────────────────────────────────────────────────────────
-
     async def chunk(self, cleaning_result: CleaningResult) -> ChunkingResult:
-        """Entry point: terima CleaningResult, hasilkan ChunkingResult."""
-        logger.info(f"[CHUNKING] Mulai parent-child chunking: {cleaning_result.source_filename}")
+        """
+        Membagi dokumen UU menjadi parent-child chunks memanfaatkan parsed_structure.
+        """
+        logger.info(f"[CHUNKING] Memulai parent-child chunking: {cleaning_result.source_filename}")
 
         result = ChunkingResult(
             document_id=cleaning_result.document_id,
@@ -102,86 +66,89 @@ class ChunkingService:
             logger.warning("[CHUNKING] Teks kosong, tidak ada chunk yang dibuat")
             return result
 
-        doc_node = self._parse_to_hierarchy(full_text)
         doc_title = self._build_document_title(cleaning_result.metadata)
         doc_id = cleaning_result.document_id
         src = cleaning_result.source_filename
 
-        # ── L0: Document parent ──────────────────────────────────
-        doc_chunk = self._make_document_chunk(doc_node, doc_id, src, doc_title)
-        result.level_0_chunks = [doc_chunk]
+        # Sediakan list BAB dari parsed_structure
+        bab_list = list(cleaning_result.parsed_structure.bab_list)
+        pasal_list = list(cleaning_result.parsed_structure.pasal_list)
 
-        level_1: list[DocumentChunk] = []
-        level_2: list[DocumentChunk] = []
-        level_3: list[DocumentChunk] = []
+        # Jika bab_list kosong tetapi ada pasal, buat dummy BAB
+        if not bab_list and pasal_list:
+            dummy_bab = BabEntry(
+                number="UMUM",
+                title="KETENTUAN UMUM / TANPA BAB",
+                full_header="BAB UMUM",
+                char_start=pasal_list[0].char_start,
+                pasal_count=len(pasal_list)
+            )
+            bab_list = [dummy_bab]
 
-        for bab_node in doc_node.children:
+        # ── Level 0: Document Intro (Sebelum BAB I) ──────────────────
+        first_bab_start = bab_list[0].char_start if bab_list else len(full_text)
+        doc_intro = full_text[0:first_bab_start].strip()
+        doc_content = doc_intro if doc_intro else doc_title
 
-            # ── L1: BAB parent (konten penuh: judul + semua Pasal + Ayat) ──
-            bab_full = self._aggregate_node_text(bab_node, depth=2)
+        doc_chunks = self._split_to_chunks(
+            content=doc_content,
+            document_id=doc_id,
+            source_filename=src,
+            hierarchy_level=HierarchyLevel.DOCUMENT,
+            level_number=0,
+            doc_title=doc_title,
+            max_tokens=self.max_tokens[0],
+            is_parent=True,
+        )
+        result.level_0_chunks = doc_chunks
+        
+        # Simpan chunk_id utama dokumen untuk parent references
+        doc_parent_id = doc_chunks[0].chunk_id if doc_chunks else doc_id
+
+        # ── Level 1, 2, dan 3: BAB, Pasal, & Ayat ────────────────────
+        level_1_bab_chunks: List[DocumentChunk] = []
+        level_2_pasal_chunks: List[DocumentChunk] = []
+        level_3_ayat_chunks: List[DocumentChunk] = []
+
+        for i, bab in enumerate(bab_list):
+            bab_start = bab.char_start
+            bab_end = bab_list[i + 1].char_start if i + 1 < len(bab_list) else len(full_text)
+            bab_content = full_text[bab_start:bab_end].strip()
+
+            # ── L1: BAB Parent Chunk ──
             bab_chunks = self._split_to_chunks(
-                content=bab_full,
+                content=bab_content,
                 document_id=doc_id,
                 source_filename=src,
                 hierarchy_level=HierarchyLevel.BAB,
                 level_number=1,
                 doc_title=doc_title,
-                bab_title=bab_node.title,
-                bab_number=bab_node.number,
-                parent_id=doc_chunk.chunk_id,
+                bab_title=bab.full_header.replace("\n", " "),
+                bab_number=bab.number,
+                parent_id=doc_parent_id,
                 max_tokens=self.max_tokens[1],
-                is_parent=True,  # BAB = parent
+                is_parent=True,
             )
-            level_1.extend(bab_chunks)
-            bab_parent_id = bab_chunks[0].chunk_id if bab_chunks else doc_chunk.chunk_id
+            level_1_bab_chunks.extend(bab_chunks)
+            bab_parent_id = bab_chunks[0].chunk_id if bab_chunks else doc_parent_id
 
-            for pasal_node in bab_node.children:
+            # Filter Pasal yang berada di dalam BAB ini
+            bab_pasals = [p for p in pasal_list if bab_start <= p.char_start < bab_end]
 
-                if pasal_node.children:
-                    # ── L2: Pasal parent (konten penuh: judul + semua Ayat) ──
-                    pasal_full = self._aggregate_node_text(pasal_node, depth=1)
-                    pasal_chunks = self._split_to_chunks(
-                        content=pasal_full,
-                        document_id=doc_id,
-                        source_filename=src,
-                        hierarchy_level=HierarchyLevel.PASAL,
-                        level_number=2,
-                        doc_title=doc_title,
-                        bab_title=bab_node.title,
-                        bab_number=bab_node.number,
-                        pasal_title=pasal_node.title,
-                        pasal_number=self._to_int(pasal_node.number),
-                        parent_id=bab_parent_id,
-                        max_tokens=self.max_tokens[2],
-                        is_parent=True,  # Pasal dengan Ayat = parent
-                    )
-                    level_2.extend(pasal_chunks)
-                    pasal_parent_id = pasal_chunks[0].chunk_id if pasal_chunks else bab_parent_id
-
-                    for ayat_node in pasal_node.children:
-                        # ── L3: Ayat child (unit kecil untuk vector search) ──
-                        ayat_content = ayat_node.content or ayat_node.title
-                        ayat_chunks = self._split_to_chunks(
-                            content=ayat_content,
-                            document_id=doc_id,
-                            source_filename=src,
-                            hierarchy_level=HierarchyLevel.AYAT,
-                            level_number=3,
-                            doc_title=doc_title,
-                            bab_title=bab_node.title,
-                            bab_number=bab_node.number,
-                            pasal_title=pasal_node.title,
-                            pasal_number=self._to_int(pasal_node.number),
-                            ayat_number=self._to_int(ayat_node.number),
-                            parent_id=pasal_parent_id,
-                            max_tokens=self.max_tokens[3],
-                            is_parent=False,  # Ayat = child
-                        )
-                        level_3.extend(ayat_chunks)
-
+            for pasal in bab_pasals:
+                global_idx = pasal_list.index(pasal)
+                
+                # Batas akhir Pasal
+                if global_idx + 1 < len(pasal_list):
+                    pasal_end = min(pasal_list[global_idx + 1].char_start, bab_end)
                 else:
-                    # ── L2: Pasal child (leaf — tidak punya Ayat) ──
-                    pasal_content = self._aggregate_node_text(pasal_node, depth=0)
+                    pasal_end = bab_end
+
+                pasal_content = full_text[pasal.char_start:pasal_end].strip()
+                ayats = self._extract_ayats_from_pasal(pasal_content)
+
+                if ayats:
+                    # ── L2: Pasal Parent Chunk (is_parent=True) ──
                     pasal_chunks = self._split_to_chunks(
                         content=pasal_content,
                         document_id=doc_id,
@@ -189,169 +156,93 @@ class ChunkingService:
                         hierarchy_level=HierarchyLevel.PASAL,
                         level_number=2,
                         doc_title=doc_title,
-                        bab_title=bab_node.title,
-                        bab_number=bab_node.number,
-                        pasal_title=pasal_node.title,
-                        pasal_number=self._to_int(pasal_node.number),
+                        bab_title=bab.full_header.replace("\n", " "),
+                        bab_number=bab.number,
+                        pasal_title=pasal.full_header,
+                        pasal_number=self._to_int(pasal.number),
                         parent_id=bab_parent_id,
                         max_tokens=self.max_tokens[2],
-                        is_parent=False,  # Pasal tanpa Ayat = leaf/child
+                        is_parent=True,
                     )
-                    level_2.extend(pasal_chunks)
+                    level_2_pasal_chunks.extend(pasal_chunks)
+                    pasal_parent_id = pasal_chunks[0].chunk_id if pasal_chunks else bab_parent_id
 
-        result.level_1_chunks = level_1
-        result.level_2_chunks = level_2
-        result.level_3_chunks = level_3
+                    # ── L3: Ayat Child Chunks (is_parent=False) ──
+                    for ayat in ayats:
+                        ayat_chunks = self._split_to_chunks(
+                            content=ayat["content"],
+                            document_id=doc_id,
+                            source_filename=src,
+                            hierarchy_level=HierarchyLevel.AYAT,
+                            level_number=3,
+                            doc_title=doc_title,
+                            bab_title=bab.full_header.replace("\n", " "),
+                            bab_number=bab.number,
+                            pasal_title=pasal.full_header,
+                            pasal_number=self._to_int(pasal.number),
+                            ayat_number=ayat["ayat_number"],
+                            parent_id=pasal_parent_id,
+                            max_tokens=self.max_tokens[3],
+                            is_parent=False,
+                        )
+                        level_3_ayat_chunks.extend(ayat_chunks)
+                else:
+                    # ── L2: Pasal Child Chunk (Leaf/Tanpa Ayat, is_parent=False) ──
+                    pasal_chunks = self._split_to_chunks(
+                        content=pasal_content,
+                        document_id=doc_id,
+                        source_filename=src,
+                        hierarchy_level=HierarchyLevel.PASAL,
+                        level_number=2,
+                        doc_title=doc_title,
+                        bab_title=bab.full_header.replace("\n", " "),
+                        bab_number=bab.number,
+                        pasal_title=pasal.full_header,
+                        pasal_number=self._to_int(pasal.number),
+                        parent_id=bab_parent_id,
+                        max_tokens=self.max_tokens[2],
+                        is_parent=False,
+                    )
+                    level_2_pasal_chunks.extend(pasal_chunks)
+
+        result.level_1_chunks = level_1_bab_chunks
+        result.level_2_chunks = level_2_pasal_chunks
+        result.level_3_chunks = level_3_ayat_chunks
         result.total_chunks = len(result.all_chunks)
 
         all_tokens = [count_tokens(c.content) for c in result.all_chunks]
         avg_tokens = sum(all_tokens) / len(all_tokens) if all_tokens else 0
 
         logger.info(
-            f"[CHUNKING] Selesai (parent-child): "
-            f"L0={len(result.level_0_chunks)}, "
+            f"[CHUNKING] Selesai: L0={len(result.level_0_chunks)} Doc, "
             f"L1={len(result.level_1_chunks)} BAB, "
             f"L2={len(result.level_2_chunks)} Pasal, "
             f"L3={len(result.level_3_chunks)} Ayat | "
-            f"Total={result.total_chunks} | "
-            f"Avg {avg_tokens:.0f} tokens/chunk"
+            f"Total={result.total_chunks} chunks | Rata-rata {avg_tokens:.1f} tokens/chunk"
         )
         return result
 
-    # ──────────────────────────────────────────────────────────────
-    # STEP 1: PARSE TEKS → POHON HIERARKI
-    # ──────────────────────────────────────────────────────────────
+    # ── Helpers ──────────────────────────────────────────────────
 
-    def _parse_to_hierarchy(self, text: str) -> _HierarchyNode:
+    def _extract_ayats_from_pasal(self, pasal_content: str) -> List[dict]:
         """
-        Parse teks UU menjadi pohon hierarki:
-        Document → BAB → Pasal → Ayat (single-pass scanning).
+        Mengekstrak ayat-ayat dari teks Pasal secara presisi menggunakan regex.
         """
-        doc_node = _HierarchyNode(level="document", title="Document Root")
-        current_bab: Optional[_HierarchyNode] = None
-        current_pasal: Optional[_HierarchyNode] = None
-        current_ayat: Optional[_HierarchyNode] = None
+        matches = list(re.finditer(r"(?:^|\n)\s*\((\d+)\)\s+", pasal_content))
+        if not matches:
+            return []
 
-        lines = text.split("\n")
-        i = 0
-
-        while i < len(lines):
-            line = lines[i]
-            stripped = line.strip()
-            level_name, match = detect_structure_level(line)
-
-            if level_name == "bab":
-                bab_title = stripped
-                # Cek apakah baris berikutnya adalah kelanjutan nama BAB
-                if i + 1 < len(lines) and lines[i + 1].strip():
-                    next_line = lines[i + 1].strip()
-                    nxt_level, _ = detect_structure_level(next_line)
-                    if nxt_level not in ("bab", "pasal", "ayat", "bagian"):
-                        bab_title = f"{stripped} {next_line}"
-                        i += 1
-
-                current_bab = _HierarchyNode(
-                    level="bab", title=bab_title, number=match.number
-                )
-                doc_node.children.append(current_bab)
-                current_pasal = None
-                current_ayat = None
-
-            elif level_name == "pasal":
-                current_pasal = _HierarchyNode(
-                    level="pasal", title=stripped, number=match.number
-                )
-                if current_bab is not None:
-                    current_bab.children.append(current_pasal)
-                else:
-                    if not doc_node.children:
-                        dummy_bab = _HierarchyNode(level="bab", title="BAB UMUM", number="0")
-                        doc_node.children.append(dummy_bab)
-                    doc_node.children[-1].children.append(current_pasal)
-                current_ayat = None
-
-            elif level_name == "ayat":
-                current_ayat = _HierarchyNode(
-                    level="ayat", title=match.title, number=match.number
-                )
-                current_ayat.lines.append(stripped)
-                if current_pasal is not None:
-                    current_pasal.children.append(current_ayat)
-
-            else:
-                if stripped:
-                    if current_ayat is not None:
-                        current_ayat.lines.append(stripped)
-                    elif current_pasal is not None:
-                        current_pasal.lines.append(stripped)
-                    elif current_bab is not None:
-                        current_bab.lines.append(stripped)
-                    else:
-                        doc_node.lines.append(stripped)
-
-            i += 1
-
-        logger.debug(
-            f"[CHUNKING] Parse selesai: "
-            f"{len(doc_node.children)} BAB, "
-            f"{sum(len(b.children) for b in doc_node.children)} Pasal"
-        )
-        return doc_node
-
-    # ──────────────────────────────────────────────────────────────
-    # STEP 2: AGGREGASI TEKS (untuk parent chunks)
-    # ──────────────────────────────────────────────────────────────
-
-    def _aggregate_node_text(self, node: _HierarchyNode, depth: int = 1) -> str:
-        """
-        Kumpulkan teks dari node secara rekursif sampai kedalaman `depth`.
-
-        depth=0 → hanya judul + baris langsung node
-        depth=1 → termasuk children langsung
-        depth=2 → termasuk grandchildren (Ayat dalam BAB)
-        """
-        parts: list[str] = []
-        if node.title:
-            parts.append(node.title)
-        parts.extend(node.lines)
-
-        if depth > 0:
-            for child in node.children:
-                child_text = self._aggregate_node_text(child, depth - 1)
-                if child_text:
-                    parts.append(child_text)
-
-        return normalize_whitespace("\n".join(p for p in parts if p))
-
-    # ──────────────────────────────────────────────────────────────
-    # STEP 3: GENERATE CHUNKS
-    # ──────────────────────────────────────────────────────────────
-
-    def _make_document_chunk(
-        self,
-        doc_node: _HierarchyNode,
-        document_id: str,
-        source_filename: str,
-        doc_title: str,
-    ) -> DocumentChunk:
-        """Buat chunk Level 0: ringkasan/header dokumen (intro sebelum BAB I)."""
-        intro_lines = doc_node.lines[:50]
-        content = normalize_whitespace("\n".join(intro_lines)) or doc_title
-
-        metadata = ChunkMetadata(
-            document_id=document_id,
-            source_filename=source_filename,
-            hierarchy_level=HierarchyLevel.DOCUMENT,
-            level_number=0,
-            document_title=doc_title,
-            chunk_index=0,
-            total_chunks=1,
-            token_count=count_tokens(content),
-            is_parent=True,  # Document selalu parent
-        )
-        return DocumentChunk(
-            chunk_id=str(uuid.uuid4()), content=content, metadata=metadata
-        )
+        ayats = []
+        for idx, match in enumerate(matches):
+            ayat_num = int(match.group(1))
+            start_idx = match.start()
+            end_idx = matches[idx + 1].start() if idx + 1 < len(matches) else len(pasal_content)
+            ayat_text = pasal_content[start_idx:end_idx].strip()
+            ayats.append({
+                "ayat_number": ayat_num,
+                "content": ayat_text
+            })
+        return ayats
 
     def _split_to_chunks(
         self,
@@ -369,12 +260,10 @@ class ChunkingService:
         pasal_number: Optional[int] = None,
         ayat_number: Optional[int] = None,
         is_parent: bool = False,
-    ) -> list[DocumentChunk]:
+    ) -> List[DocumentChunk]:
         """
-        Bagi konten menjadi chunks dengan batas token.
-        Jika konten < min_tokens → buang.
-        Jika konten ≤ max_tokens → satu chunk.
-        Jika konten > max_tokens → split dengan overlap.
+        Membagi konten teks berdasarkan batas maksimum token dengan overlap.
+        Menambahkan context prefix untuk meningkatkan retrieval accuracy pada child chunks.
         """
         content = content.strip()
         if not content or count_tokens(content) < self.min_tokens:
@@ -383,8 +272,10 @@ class ChunkingService:
         context_prefix = self._build_context_prefix(
             doc_title, bab_title, pasal_title, ayat_number
         )
+        
+        # Bagi isi teks jika melebihi batas token maksimum
         sub_contents = self._token_split_with_overlap(content, max_tokens)
-        chunks: list[DocumentChunk] = []
+        chunks: List[DocumentChunk] = []
 
         for idx, sub_content in enumerate(sub_contents):
             full_content = (
@@ -392,6 +283,7 @@ class ChunkingService:
                 if context_prefix
                 else sub_content
             )
+            
             metadata = ChunkMetadata(
                 document_id=document_id,
                 source_filename=source_filename,
@@ -409,6 +301,7 @@ class ChunkingService:
                 parent_chunk_id=parent_id,
                 is_parent=is_parent,
             )
+            
             chunks.append(
                 DocumentChunk(
                     chunk_id=str(uuid.uuid4()),
@@ -418,24 +311,23 @@ class ChunkingService:
             )
         return chunks
 
-    # ──────────────────────────────────────────────────────────────
-    # TOKEN SPLIT + OVERLAP
-    # ──────────────────────────────────────────────────────────────
-
-    def _token_split_with_overlap(self, text: str, max_tokens: int) -> list[str]:
-        """Split teks berdasarkan batas token dengan overlap per baris."""
+    def _token_split_with_overlap(self, text: str, max_tokens: int) -> List[str]:
+        """
+        Membelah teks berdasarkan token limit secara aman per baris dengan overlap.
+        """
         if count_tokens(text) <= max_tokens:
             return [text]
 
         lines = [l for l in text.split("\n") if l.strip()]
-        chunks: list[str] = []
-        current_lines: list[str] = []
+        chunks: List[str] = []
+        current_lines: List[str] = []
         current_tokens = 0
 
         for line in lines:
             line_tokens = count_tokens(line)
             if current_tokens + line_tokens > max_tokens and current_lines:
                 chunks.append("\n".join(current_lines))
+                # Ambil sisa baris untuk overlap
                 overlap_lines = self._get_overlap_lines(current_lines)
                 current_lines = overlap_lines + [line]
                 current_tokens = sum(count_tokens(l) for l in current_lines)
@@ -448,9 +340,11 @@ class ChunkingService:
 
         return chunks if chunks else [text]
 
-    def _get_overlap_lines(self, lines: list[str]) -> list[str]:
-        """Ambil baris-baris terakhir sebagai overlap untuk chunk berikutnya."""
-        overlap_lines: list[str] = []
+    def _get_overlap_lines(self, lines: List[str]) -> List[str]:
+        """
+        Mengambil beberapa baris terakhir dari list baris untuk dijadikan overlap.
+        """
+        overlap_lines: List[str] = []
         token_count = 0
         for line in reversed(lines):
             t = count_tokens(line)
@@ -460,10 +354,6 @@ class ChunkingService:
             token_count += t
         return overlap_lines
 
-    # ──────────────────────────────────────────────────────────────
-    # HELPERS
-    # ──────────────────────────────────────────────────────────────
-
     def _build_context_prefix(
         self,
         doc_title: Optional[str],
@@ -472,16 +362,9 @@ class ChunkingService:
         ayat_number: Optional[int],
     ) -> str:
         """
-        Bangun context prefix untuk setiap chunk agar LLM/RAG memahami
-        posisi chunk dalam hierarki dokumen.
-
-        Contoh output:
-        [Dokumen: UU No. 11 Tahun 2008 tentang ITE]
-        [BAB: BAB I KETENTUAN UMUM]
-        [Pasal: Pasal 1]
-        [Ayat: (1)]
+        Membangun header penunjuk konteks (context prefix) untuk setiap chunk.
         """
-        parts: list[str] = []
+        parts: List[str] = []
         if doc_title:
             parts.append(f"[Dokumen: {doc_title}]")
         if bab_title:
@@ -493,10 +376,12 @@ class ChunkingService:
         return "\n".join(parts)
 
     def _build_document_title(self, metadata: dict) -> str:
-        """Bangun judul dokumen dari metadata."""
+        """
+        Membangun judul lengkap dokumen hukum dari metadata yang diekstrak.
+        """
         if not metadata:
             return "Dokumen Hukum"
-        parts: list[str] = []
+        parts: List[str] = []
         if metadata.get("jenis"):
             parts.append(metadata["jenis"])
         if metadata.get("nomor") and metadata.get("tahun"):
@@ -507,8 +392,10 @@ class ChunkingService:
 
     @staticmethod
     def _to_int(value: str) -> Optional[int]:
-        """Convert string ke int, return None jika gagal."""
+        """Convert string ke integer dengan aman."""
         try:
-            return int(value)
+            # Ambil digit numerik pertama jika format nomor pasal berhuruf (misal '3A' -> 3)
+            match = re.search(r"\d+", str(value))
+            return int(match.group(0)) if match else None
         except (ValueError, TypeError):
             return None

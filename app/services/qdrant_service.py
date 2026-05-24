@@ -1,20 +1,19 @@
 """
 app/services/qdrant_service.py
 ================================
-Wrapper service around the Qdrant vector database client.
+Wrapper service untuk Qdrant Vector Database.
 
-Menyediakan:
-- health_check()       → cek koneksi Qdrant
-- ensure_collection()  → buat collection jika belum ada
-- upsert_chunks()      → simpan chunks yang sudah di-embed
-- search()             → similarity search berdasarkan query vector
-- get_chunk()          → ambil chunk by ID
-- fetch_parent()       → ambil parent chunk dari child chunk_id
+Mendukung arsitektur Parent-Child Dual-Collection:
+- Parent collection (`embedding_collection_parent`): Menyimpan chunk berukuran besar
+  (BAB, Pasal utuh) sebagai unit pembawa konteks penuh.
+- Child collection (`embedding_collection_child`): Menyimpan chunk berukuran kecil
+  (Ayat, Pasal tanpa ayat) yang di-embed untuk kemiripan semantik (vector search).
 """
 
 import logging
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
+# pyrefly: ignore [missing-import]
 from app.config import settings
 from app.models.schemas import DocumentChunk
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 class QdrantService:
-    """Wrapper Qdrant client untuk indexing dan retrieval chunks UU."""
+    """Wrapper Qdrant client untuk indexing dan dual-collection retrieval chunks UU."""
 
     def __init__(self):
         self._host = settings.qdrant_host
@@ -31,15 +30,15 @@ class QdrantService:
         self._collection_child = settings.embedding_collection_child
 
     def _get_client(self):
-        from qdrant_client import QdrantClient
+        from qdrant_client import QdrantClient  # pyrefly: ignore [missing-import]
         return QdrantClient(host=self._host, port=self._port, timeout=10)
 
     # ──────────────────────────────────────────────────────────────
-    # HEALTH CHECK
+    # HEALTH CHECK & COLLECTIONS MANAGEMENT
     # ──────────────────────────────────────────────────────────────
 
     def health_check(self) -> dict:
-        """Ping Qdrant dan return status dict."""
+        """Cek koneksi dan status collection di Qdrant."""
         try:
             client = self._get_client()
             collections = client.get_collections()
@@ -59,58 +58,40 @@ class QdrantService:
                 "port": self._port,
             }
 
-    # ──────────────────────────────────────────────────────────────
-    # COLLECTION MANAGEMENT
-    # ──────────────────────────────────────────────────────────────
+    def ensure_collection(self, collection_name: str, vector_size: int = 384) -> bool:
+        """Pastikan collection ada di Qdrant. Jika belum, buat otomatis."""
+        from qdrant_client.models import VectorParams, Distance  # pyrefly: ignore [missing-import]
 
-    def ensure_collection(
-        self,
-        collection_name: Optional[str] = None,
-        vector_size: int = 384,
-    ) -> bool:
-        """
-        Pastikan collection ada di Qdrant.
-        Jika belum ada → buat otomatis dengan COSINE distance.
-
-        Returns True jika collection sudah/baru dibuat, False jika error.
-        """
-        from qdrant_client.models import VectorParams, Distance
-
-        name = collection_name or self._collection
         client = self._get_client()
-
         try:
-            client.get_collection(name)
-            logger.debug(f"[QDRANT] Collection '{name}' sudah ada")
+            client.get_collection(collection_name)
             return True
         except Exception:
-            # Collection belum ada → buat baru
             pass
 
         try:
             client.create_collection(
-                collection_name=name,
+                collection_name=collection_name,
                 vectors_config=VectorParams(
                     size=vector_size,
                     distance=Distance.COSINE,
                 ),
             )
-            logger.info(f"[QDRANT] Collection '{name}' dibuat (dim={vector_size}, COSINE)")
+            logger.info(f"[QDRANT] Collection '{collection_name}' berhasil dibuat (dim={vector_size})")
             return True
         except Exception as e:
-            logger.error(f"[QDRANT] Gagal membuat collection '{name}': {e}")
+            logger.error(f"[QDRANT] Gagal membuat collection '{collection_name}': {e}")
             return False
 
-    def delete_collection(self, collection_name: Optional[str] = None) -> bool:
-        """Hapus collection (untuk reset index)."""
-        name = collection_name or self._collection
+    def delete_collection(self, collection_name: str) -> bool:
+        """Hapus collection dari Qdrant."""
         try:
             client = self._get_client()
-            client.delete_collection(name)
-            logger.info(f"[QDRANT] Collection '{name}' dihapus")
+            client.delete_collection(collection_name)
+            logger.info(f"[QDRANT] Collection '{collection_name}' berhasil dihapus")
             return True
         except Exception as e:
-            logger.error(f"[QDRANT] Gagal hapus collection '{name}': {e}")
+            logger.error(f"[QDRANT] Gagal menghapus collection '{collection_name}': {e}")
             return False
 
     # ──────────────────────────────────────────────────────────────
@@ -119,50 +100,77 @@ class QdrantService:
 
     def upsert_chunks(
         self,
-        chunks: list[DocumentChunk],
+        chunks: List[DocumentChunk],
         collection_name: Optional[str] = None,
         only_embedded: bool = True,
     ) -> dict:
         """
-        Upsert chunks yang sudah memiliki embedding ke Qdrant.
+        Upsert chunks ke Qdrant.
 
-        Args:
-            chunks:          List DocumentChunk (harus sudah ada .embedding)
-            collection_name: Override collection name (default dari settings)
-            only_embedded:   Jika True, skip chunk yang belum punya embedding
-
-        Returns:
-            Dict dengan statistik upsert
+        Jika `collection_name` di-pass (tidak None), semua chunks akan dipaksa masuk ke sana.
+        Jika `collection_name` adalah None (default), chunks akan dipilah secara otomatis:
+        - Parent chunks (`is_parent=True`) masuk ke `embedding_collection_parent`.
+        - Child chunks (`is_parent=False`) masuk ke `embedding_collection_child`.
         """
-        from qdrant_client.models import PointStruct
-
-        name = collection_name or self._collection
-
-        # Filter hanya chunk yang punya embedding
-        to_upsert = [
-            c for c in chunks
-            if (not only_embedded or c.embedding is not None)
-        ]
-
+        # Filter chunks yang memiliki embedding
+        to_upsert = [c for c in chunks if (not only_embedded or c.embedding is not None)]
         if not to_upsert:
             logger.warning("[QDRANT] Tidak ada chunk dengan embedding untuk di-upsert")
-            return {"upserted": 0, "skipped": len(chunks), "collection": name}
+            return {"upserted": 0, "skipped": len(chunks)}
 
-        # Pastikan collection ada (auto-create dengan dimensi dari chunk pertama)
-        vector_size = len(to_upsert[0].embedding)
-        self.ensure_collection(name, vector_size=vector_size)
+        # Jika nama collection di-override oleh parameter call
+        if collection_name:
+            result = self._upsert_to_single_collection(to_upsert, collection_name)
+            return {
+                "upserted": result,
+                "skipped": len(chunks) - result,
+                "collection_mode": "single",
+                "collection": collection_name,
+            }
 
-        # Bangun PointStruct list
-        points: list[PointStruct] = []
-        for chunk in to_upsert:
+        # Pisahkan parent vs child
+        parent_chunks = [c for c in to_upsert if c.metadata.is_parent]
+        child_chunks = [c for c in to_upsert if not c.metadata.is_parent]
+
+        upserted_parent = 0
+        upserted_child = 0
+
+        if parent_chunks:
+            upserted_parent = self._upsert_to_single_collection(parent_chunks, self._collection_parent)
+        if child_chunks:
+            upserted_child = self._upsert_to_single_collection(child_chunks, self._collection_child)
+
+        total_upserted = upserted_parent + upserted_child
+        skipped = len(chunks) - total_upserted
+
+        logger.info(
+            f"[QDRANT] Upsert selesai (Dual-Collection): "
+            f"Parent={upserted_parent} → '{self._collection_parent}', "
+            f"Child={upserted_child} → '{self._collection_child}' (skipped={skipped})"
+        )
+
+        return {
+            "upserted": total_upserted,
+            "skipped": skipped,
+            "collection_mode": "dual",
+            "parent_collection": self._collection_parent,
+            "child_collection": self._collection_child,
+            "parent_count": upserted_parent,
+            "child_count": upserted_child,
+        }
+
+    def _upsert_to_single_collection(self, chunks: List[DocumentChunk], collection_name: str) -> int:
+        """Helper internal untuk upsert list chunk ke suatu collection tertentu."""
+        from qdrant_client.models import PointStruct  # pyrefly: ignore [missing-import]
+
+        vector_size = len(chunks[0].embedding)
+        self.ensure_collection(collection_name, vector_size=vector_size)
+
+        points: List[PointStruct] = []
+        for chunk in chunks:
             payload = chunk.metadata.model_dump()
-            # Tambahkan field tambahan ke payload untuk kemudahan retrieval
             payload["chunk_id"] = chunk.chunk_id
             payload["content"] = chunk.content
-            payload["is_parent"] = chunk.metadata.level_number < 3 and bool(
-                chunk.metadata.ayat_number is None
-                and chunk.metadata.level_number < 2
-            )
 
             points.append(
                 PointStruct(
@@ -173,26 +181,15 @@ class QdrantService:
             )
 
         client = self._get_client()
-        # Upsert dalam batch agar tidak timeout untuk dokumen besar
         batch_size = 100
         total_upserted = 0
+        
         for i in range(0, len(points), batch_size):
             batch = points[i : i + batch_size]
-            client.upsert(collection_name=name, points=batch)
+            client.upsert(collection_name=collection_name, points=batch)
             total_upserted += len(batch)
-            logger.debug(f"[QDRANT] Upserted {total_upserted}/{len(points)} points")
-
-        skipped = len(chunks) - total_upserted
-        logger.info(
-            f"[QDRANT] Upsert selesai: {total_upserted} points → collection '{name}' "
-            f"(skipped={skipped})"
-        )
-        return {
-            "upserted": total_upserted,
-            "skipped": skipped,
-            "collection": name,
-            "vector_size": vector_size,
-        }
+            
+        return total_upserted
 
     # ──────────────────────────────────────────────────────────────
     # SEARCH
@@ -200,28 +197,20 @@ class QdrantService:
 
     def search(
         self,
-        query_vector: list[float],
+        query_vector: List[float],
         top_k: int = 5,
         collection_name: Optional[str] = None,
         score_threshold: float = 0.3,
         filter_level: Optional[int] = None,
-    ) -> list[dict]:
+    ) -> List[dict]:
         """
-        Similarity search berdasarkan query vector.
-
-        Args:
-            query_vector:     Vector query dari embedding model
-            top_k:            Jumlah hasil teratas
-            collection_name:  Override collection (default dari settings)
-            score_threshold:  Minimum similarity score (0-1)
-            filter_level:     Filter berdasarkan level_number (None = semua)
-
-        Returns:
-            List dict berisi chunk_id, score, dan payload
+        Similarity search. Lakukan search default pada child collection
+        karena child collection menyimpan ayat-ayat yang sangat granular.
         """
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
+        from qdrant_client.models import Filter, FieldCondition, MatchValue  # pyrefly: ignore [missing-import]
 
-        name = collection_name or self._collection
+        # Mode default: cari di child collection
+        name = collection_name or self._collection_child
         client = self._get_client()
 
         query_filter = None
@@ -261,36 +250,52 @@ class QdrantService:
                 for hit in results
             ]
         except Exception as e:
-            logger.error(f"[QDRANT] Search gagal: {e}")
+            logger.error(f"[QDRANT] Search gagal pada collection '{name}': {e}")
             return []
+
+    # ──────────────────────────────────────────────────────────────
+    # RETRIEVAL (GET CHUNK BY ID & PARENT FETCH)
+    # ──────────────────────────────────────────────────────────────
 
     def get_chunk_by_id(
         self,
         chunk_id: str,
         collection_name: Optional[str] = None,
     ) -> Optional[dict]:
-        """Ambil satu chunk berdasarkan ID (untuk fetch parent chunk)."""
-        name = collection_name or self._collection
+        """
+        Ambil satu chunk berdasarkan ID.
+        Jika `collection_name` None, cari di parent collection terlebih dahulu,
+        kemudian fallback ke child collection jika tidak ditemukan.
+        """
         client = self._get_client()
 
-        try:
-            results = client.retrieve(
-                collection_name=name,
-                ids=[chunk_id],
-                with_payload=True,
-            )
-            if results:
-                point = results[0]
-                payload = point.payload or {}
-                return {
-                    "chunk_id": str(point.id),
-                    "content": payload.get("content", ""),
-                    **{k: v for k, v in payload.items() if k != "content"},
-                }
-            return None
-        except Exception as e:
-            logger.error(f"[QDRANT] get_chunk_by_id gagal: {e}")
-            return None
+        # Tentukan urutan pencarian collection
+        collections_to_search = []
+        if collection_name:
+            collections_to_search = [collection_name]
+        else:
+            collections_to_search = [self._collection_parent, self._collection_child]
+
+        for col in collections_to_search:
+            try:
+                results = client.retrieve(
+                    collection_name=col,
+                    ids=[chunk_id],
+                    with_payload=True,
+                )
+                if results:
+                    point = results[0]
+                    payload = point.payload or {}
+                    return {
+                        "chunk_id": str(point.id),
+                        "content": payload.get("content", ""),
+                        **{k: v for k, v in payload.items() if k != "content"},
+                    }
+            except Exception as e:
+                logger.debug(f"[QDRANT] Retrieve ID '{chunk_id}' gagal pada '{col}': {e}")
+                continue
+                
+        return None
 
     def fetch_parent(
         self,
@@ -298,8 +303,8 @@ class QdrantService:
         collection_name: Optional[str] = None,
     ) -> Optional[dict]:
         """
-        Ambil parent chunk dari sebuah child chunk.
-        Digunakan dalam RAG untuk mendapatkan konteks lebih luas.
+        Ambil parent chunk utuh berdasarkan id child chunk.
+        Secara default mencari ID parent_chunk_id di parent collection.
         """
         child = self.get_chunk_by_id(child_chunk_id, collection_name)
         if not child:
@@ -309,4 +314,5 @@ class QdrantService:
         if not parent_id:
             return None
 
+        # Fetch parent menggunakan get_chunk_by_id (akan mencari di parent collection secara default)
         return self.get_chunk_by_id(parent_id, collection_name)
