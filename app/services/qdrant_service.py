@@ -58,6 +58,49 @@ class QdrantService:
                 "port": self._port,
             }
 
+    def get_collections_detailed(self) -> List[Dict[str, Any]]:
+        """Ambil info detail untuk semua collection di Qdrant."""
+        try:
+            client = self._get_client()
+            collections = client.get_collections()
+            detailed = []
+            for col in collections.collections:
+                try:
+                    info = client.get_collection(col.name)
+                    vectors_config = info.config.params.vectors
+                    vector_size = None
+                    distance = None
+                    if hasattr(vectors_config, 'size'):
+                        vector_size = vectors_config.size
+                        distance = str(vectors_config.distance)
+                    elif isinstance(vectors_config, dict):
+                        if 'size' in vectors_config:
+                            vector_size = vectors_config['size']
+                            distance = str(vectors_config.get('distance'))
+                        elif len(vectors_config) > 0:
+                            first_val = list(vectors_config.values())[0]
+                            vector_size = getattr(first_val, 'size', None) or (first_val.get('size') if isinstance(first_val, dict) else None)
+                            distance = str(getattr(first_val, 'distance', None) or (first_val.get('distance') if isinstance(first_val, dict) else None))
+                    
+                    detailed.append({
+                        "name": col.name,
+                        "status": str(info.status),
+                        "points_count": info.points_count,
+                        "vectors_count": getattr(info, 'vectors_count', None),
+                        "vector_size": vector_size,
+                        "distance": distance,
+                    })
+                except Exception as e:
+                    detailed.append({
+                        "name": col.name,
+                        "status": "error",
+                        "error": str(e)
+                    })
+            return detailed
+        except Exception as e:
+            logger.error(f"[QDRANT] Gagal mengambil detail collections: {e}")
+            return []
+
     def ensure_collection(self, collection_name: str, vector_size: int = 384) -> bool:
         """Pastikan collection ada di Qdrant. Jika belum, buat otomatis."""
         from qdrant_client.models import VectorParams, Distance  # pyrefly: ignore [missing-import]
@@ -225,14 +268,14 @@ class QdrantService:
             )
 
         try:
-            results = client.search(
+            results = client.query_points(
                 collection_name=name,
-                query_vector=query_vector,
+                query=query_vector,
                 limit=top_k,
                 score_threshold=score_threshold,
                 query_filter=query_filter,
                 with_payload=True,
-            )
+            ).points
             return [
                 {
                     "chunk_id": str(hit.id),
