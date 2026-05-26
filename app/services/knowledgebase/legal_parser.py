@@ -1,5 +1,9 @@
+#legal_parser.py
+
+from pydoc import text
 import re
 from typing import List, Dict
+import uuid
 
 class LegalParser:
     @staticmethod
@@ -10,6 +14,30 @@ class LegalParser:
         clean_raw_text = re.sub(r'--- PAGE \d+ ---', '', text)
         clean_raw_text = re.sub(r'\\', '', clean_raw_text)
 
+        # Hapus watermark / footer JDIH
+        clean_raw_text = re.sub(r'jdih\.[^\s]+', '', clean_raw_text, flags=re.IGNORECASE)
+
+        # Hapus marker perubahan
+        clean_raw_text = re.sub(r'\*+\)\s*:\s*Perubahan\s+\w+','', clean_raw_text, flags=re.IGNORECASE)
+
+        # Rapikan spasi berlebih
+        clean_raw_text = re.sub(r'\n{2,}', '\n', clean_raw_text)
+
+        # Hapus footer / watermark berulang
+        clean_raw_text = re.sub(r'jdih\.[^\n]+', '', clean_raw_text, flags=re.IGNORECASE)
+
+        # Hapus marker perubahan
+        clean_raw_text = re.sub(r'\*+\)\s*:\s*Perubahan\s+\w+','', clean_raw_text, flags=re.IGNORECASE)
+
+        # Hapus nomor halaman standalone
+        clean_raw_text = re.sub(r'\n\s*\d+\s*\n', '\n', clean_raw_text)
+
+        # Rapikan whitespace
+        clean_raw_text = re.sub(r'[ \t]+', ' ', clean_raw_text)
+
+        # Rapikan newline berlebih
+        clean_raw_text = re.sub(r'\n{2,}', '\n', clean_raw_text)
+
         # 2. Deteksi Nomor dan Tahun UU Utama (Dibatasi pada 1000 karakter pertama dokumen)
         top_text = clean_raw_text[:1000]
         doc_match = re.search(r'(UNDANG[- ]UNDANG|PERATURAN BERSAMA|PERATURAN MENTERI).*?NOMOR[:\s]+(\d+)\s+TAHUN\s+(\d{4})', top_text, re.IGNORECASE)
@@ -17,19 +45,26 @@ class LegalParser:
             structure["metadata"]["jenis_dokumen"] = doc_match.group(1).strip().upper()
             structure["metadata"]["uu_number"] = doc_match.group(2)
             structure["metadata"]["tahun"] = doc_match.group(3)
-            structure["metadata"]["uu_id"] = f"UU_{doc_match.group(2)}_{doc_match.group(3)}"
+            structure["metadata"]["uu_id"] = f"UU_{doc_match.group(2)}_{doc_match.group(3)}_" f"{uuid.uuid4().hex[:8]}"
         else:
             structure["metadata"]["jenis_dokumen"] = "UNDANG-UNDANG"
             structure["metadata"]["uu_number"] = "1"
             structure["metadata"]["tahun"] = "2024"
             structure["metadata"]["uu_id"] = "UU_1_2024"
 
-        # 3. Deteksi Judul UU secara ketat (Lookahead pembatas pembukaan)
-        tentang_match = re.search(r'TENTANG\s+(.*?)(?=\nDENGAN|\n\s*DENGAN|\nMenimbang|\nMengingat|bahwa|MEMUTUSKAN)', clean_raw_text, re.IGNORECASE | re.DOTALL)
-        if tentang_match:
-            structure["metadata"]["judul_uu"] = re.sub(r'\s+', ' ', tentang_match.group(1)).strip()
+        # 3. Deteksi Judul UU 
+        judul_match = re.search(r'(UNDANG[- ]UNDANG DASAR NEGARA REPUBLIK INDONESIA TAHUN 1945)', clean_raw_text, re.IGNORECASE)
+
+        tentang_match = re.search(r'TENTANG\s+(.*?)(?=\nDENGAN|\nMENIMBANG|\nMENGINGAT|\nMEMUTUSKAN)', clean_raw_text, re.IGNORECASE)
+
+        if judul_match: 
+            structure["metadata"]["judul"] = judul_match.group(1).strip()
+
+        elif tentang_match:
+            structure["metadata"]["judul"] = re.sub (r'\s+',' ',tentang_match.group(1)).strip()
+
         else:
-            structure["metadata"]["judul_uu"] = "PERUBAHAN KEDUA ATAS UNDANG-UNDANG NOMOR 11 TAHUN 2008 TENTANG INFORMASI DAN TRANSAKSI ELEKTRONIK"
+            structure["metadata"]["judul"] = "DOKUMEN HUKUM"
 
         # 4. PERBAIKAN SEKAT: Temukan gerbang masuk Batang Tubuh utama
         # Menghindari pengambilan pasal-pasal dasar hukum UUD 1945 di dalam konsiderans 'Mengingat'
@@ -46,7 +81,8 @@ class LegalParser:
         batang_tubuh_text = clean_raw_text[batang_tubuh_start:]
 
         # 5. Ekstraksi Pasal Menggunakan Pola Word Boundary (\b) pada teks Batang Tubuh saja
-        pasal_matches = list(re.finditer(r'\bPasal\s+(\d+[A-Za-z]*)', batang_tubuh_text, re.IGNORECASE))
+        pasal_pattern = r'(?im)^\s*Pasal\s+(\d+[A-Za-z]*)'
+        pasal_matches = list(re.finditer(pasal_pattern, batang_tubuh_text, re.IGNORECASE))
         bab_matches = list(re.finditer(r'\bBAB\s+([IVXLCDM]+)', batang_tubuh_text, re.IGNORECASE))
         
         current_bab = {"nomor": "N/A", "judul": "N/A"}
@@ -60,7 +96,15 @@ class LegalParser:
                 if b_match.start() < p_start:
                     bab_segment = batang_tubuh_text[b_match.start():p_start]
                     lines = [l.strip() for l in bab_segment.split('\n') if l.strip()]
-                    judul_bab = lines[1] if len(lines) > 1 else "N/A"
+                    judul_bab = "N/A"
+                    for line in lines[1:4]:
+                        if(
+                            "pasal" not in line.lower()
+                            and len(line.strip()) > 3
+                        ):
+                            judul_bab = line.strip()
+                            break
+
                     # Cegah judul bab mengambil potongan teks pasal jika jaraknya terlalu dekat
                     if "pasal" in judul_bab.lower():
                         judul_bab = lines[0]
@@ -73,9 +117,17 @@ class LegalParser:
             if "PENJELASAN" in pasal_text:
                 pasal_text = pasal_text.split("PENJELASAN")[0].strip()
 
-            structure["pasal_list"].append(
-                LegalParser._parse_pasal(pasal_text, pasal_nomor, current_bab)
+            # Stop jika masuk bagian penjelasan
+            if re.search(r'\bPENJELASAN\b', pasal_text, re.IGNORECASE):
+                pasal_text = re.split(r'\bPENJELASAN\b', pasal_text, flags=re.IGNORECASE)[0]
+            parsed_pasal = LegalParser._parse_pasal(
+                pasal_text,
+                pasal_nomor,
+                current_bab
             )
+
+            if parsed_pasal["full_text"].strip():
+                structure["pasal_list"].append(parsed_pasal)
 
         # 6. Ambil Bagian Penjelasan dari teks penuh secara utuh
         penjelasan_match = re.search(r'(PENJELASAN\s+ATAS.*?)(?=$)', clean_raw_text, re.IGNORECASE | re.DOTALL)
@@ -87,7 +139,98 @@ class LegalParser:
     @staticmethod
     def _parse_pasal(text: str, pasal_nomor: str, bab_info: Dict) -> Dict:
         # PERBAIKAN: Bersihkan penyebutan redundan "Pasal X" di awal content utama teks RAG
-        clean_content = re.sub(rf'^\bPasal\s+{pasal_nomor}\b', '', text, flags=re.IGNORECASE).strip()
+        clean_content = re.sub(rf'^\s*Pasal\s+{pasal_nomor}[A-Za-z]*', '', text, flags=re.IGNORECASE).strip()
+
+        # Hapus footer sisa
+        clean_content = re.sub(r'jdih\.[^\n]+', '', clean_content, flags=re.IGNORECASE)
+
+        # =========================
+        # NORMALISASI PDF / OCR
+        # =========================
+
+        # kurung unicode/fullwidth → normal
+        clean_content = clean_content.replace('（', '(')
+        clean_content = clean_content.replace('）', ')')
+
+        # normalisasi unicode dash
+        clean_content = clean_content.replace('–', '-')
+        clean_content = clean_content.replace('—', '-')
+
+        # normalisasi bullet aneh
+        clean_content = clean_content.replace('•', '-')
+
+        # normalize multiple spaces
+        clean_content = re.sub(r'[ \t]+', ' ', clean_content)
+
+        # hapus zero width char
+        clean_content = re.sub(r'[\u200b\u200c\u200d]', '', clean_content)
+
+        # normalisasi newline
+        clean_content = clean_content.replace('\r', '\n')
+
+        # rapikan spasi/tab TANPA menghapus newline
+        clean_content = re.sub(r'[ \t]+', ' ', clean_content)
+
+        # rapikan newline berlebih
+        clean_content = re.sub(r'\n{2,}', '\n', clean_content)
+
+        clean_content = re.sub(
+            r'\)\s+\((\d+)\)',
+            r')\n(\1)',
+            clean_content
+        )
+
+        clean_content = re.sub(
+            r'Ayat\s+\((\d+)\)',
+            r'(\1)',
+            clean_content,
+            flags=re.IGNORECASE
+        )
+        
+        # FIX FORMAT AYAT:
+        clean_content = re.sub(
+            rf'^\s*Pasal\s+{re.escape(str(pasal_nomor))}\s*',
+            '',
+            clean_content,
+            flags=re.IGNORECASE
+        ).strip()
+
+        # =========================
+        # NORMALISASI AYAT INLINE PDF
+        # =========================
+
+        # kasus:
+        # "... negara.(2) Setiap ..."
+        # menjadi:
+        # "... negara.\n(2) Setiap ..."
+
+        clean_content = re.sub(
+            r'([a-zA-Z0-9\.\;\:])\s*\((\d+)\)',
+            r'\1\n(\2)',
+            clean_content
+        )
+
+        # hapus newline berlebih lagi
+        clean_content = re.sub(r'\n{2,}', '\n', clean_content)
+
+        clean_content = clean_content.strip()
+
+        # =========================
+        # POTONG JIKA MASUK BAB BARU
+        # =========================
+
+        clean_content = re.split(
+            r'(?=\nBAB\s+[IVXLCDM]+)',
+            clean_content,
+            maxsplit=1
+        )[0]
+
+        clean_content = re.split(
+            r'(?=\nPENJELASAN\b)',
+            clean_content,
+            maxsplit=1,
+            flags=re.IGNORECASE
+        )[0]
 
         pasal_data = {
             "pasal_nomor": pasal_nomor, 
@@ -98,34 +241,69 @@ class LegalParser:
             "type": LegalParser._detect_pasal_type(clean_content)
         }
 
-        ayat_matches = list(re.finditer(r'\((\d+)\)', clean_content))
-        
-        if ayat_matches:
-            for idx, a_match in enumerate(ayat_matches):
-                a_start = a_match.start()
-                a_end = ayat_matches[idx+1].start() if idx + 1 < len(ayat_matches) else len(clean_content)
-                
-                ayat_nomor = a_match.group(1)
-                ayat_text = clean_content[a_start:a_end].strip()
-                
-                pasal_data["ayat_list"].append({
+        # =========================
+        # SPLIT AYAT GENERIC
+        # =========================
+
+        ayat_pattern = r'(?m)(?=^\(\d+\))'
+
+        ayat_chunks = re.split(
+            ayat_pattern,
+            clean_content
+        )
+
+        filtered_ayat = []
+
+        for chunk in ayat_chunks:
+
+            chunk = chunk.strip()
+
+            nomor_match = re.match(
+                r'^\((\d+)\)',
+                chunk
+            )
+
+            if nomor_match:
+
+                ayat_nomor = nomor_match.group(1)
+
+                filtered_ayat.append({
                     "ayat_nomor": ayat_nomor,
-                    "text": ayat_text,
-                    "poin_list": LegalParser._parse_poin(ayat_text)
+                    "text": chunk,
+                    "poin_list": LegalParser._parse_poin(chunk)
                 })
+
+        # jika tidak ada ayat
+        if filtered_ayat:
+
+            pasal_data["ayat_list"] = filtered_ayat
+
         else:
+
             pasal_data["ayat_list"].append({
-                "ayat_nomor": "1", 
-                "text": clean_content, 
+                "ayat_nomor": "1",
+                "text": clean_content,
                 "poin_list": LegalParser._parse_poin(clean_content)
             })
-            
+
+        # Validasi minimal isi pasal
+        if len(clean_content) < 15:
+            return {
+                "pasal_nomor": pasal_nomor,
+                "bab_nomor": bab_info["nomor"],
+                "bab_judul": bab_info["judul"],
+                "full_text": "",
+                "ayat_list": [],
+                "type": "invalid"
+            }
+
         return pasal_data
 
     @staticmethod
     def _parse_poin(ayat_text: str) -> List[Dict]:
         poin_list = []
-        for match in re.finditer(r'(?:^|[\s,\"]+)([a-z])[\.\)]\s+(.*?)(?=(?:[\s,\"]+)[a-z][\.\)]|$)', ayat_text, re.DOTALL):
+        poin_pattern = r'(?m)^\s*([a-z])[\.\)]\s+(.*?)(?=^\s*[a-z][\.\)]|\Z)'
+        for match in re.finditer(poin_pattern, ayat_text, re.DOTALL):
             poin_list.append({
                 "huruf": match.group(1), 
                 "text": re.sub(r'\s+', ' ', match.group(2)).strip()

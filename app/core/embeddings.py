@@ -1,3 +1,5 @@
+#embeddings.py
+
 from langchain_huggingface import HuggingFaceEmbeddings
 
 # Inisialisasi Embeddings secara terpusat

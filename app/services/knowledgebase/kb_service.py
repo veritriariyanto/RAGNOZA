@@ -7,6 +7,7 @@ from app.services.prompting.prompt.repair_text import text_refiner
 from .pdf_extractor import PDFExtractor
 from .legal_parser import LegalParser
 from .qdrant_storage import QdrantStorage
+import re
 
 class KnowledgeBaseService:
     def __init__(self):
@@ -15,51 +16,119 @@ class KnowledgeBaseService:
         self.storage = QdrantStorage(qdrant_db.client, embeddings)
 
     async def create_knowledgebase(self, base_name: str, file_content: bytes) -> Dict:
-        parent_col, child_col = f"{base_name}_parent", f"{base_name}_child"
+
+        parent_col = f"{base_name}_parent"
+        child_col = f"{base_name}_child"
+
         await self.storage.init_collections([parent_col, child_col])
         
-        # 1. Ekstrak seluruh teks mentah dari PDF
+        # =====================================================
+        # 1. Extract text dari PDF
+        # =====================================================
+
         raw_text = self.extractor.extract_text(file_content)
+
+        if not raw_text.strip():
+            raise ValueError("File PDF tidak mengandung teks yang dapat dibaca.")
         
-        # 2. Lakukan chunking teks (~6000 karakter per bagian agar tidak melebihi limit TPM Groq)
-        chunk_size = 6000
-        text_chunks = [raw_text[i:i+chunk_size] for i in range(0, len(raw_text), chunk_size)]
+        # =====================================================
+        # 2. CLEANING MANUAL (AMAN UNTUK UU)
+        # =====================================================
+
+        clean_text = raw_text
+
+        #hapus karakter aneh
+        clean_text = clean_text.replace("\x00", " ")  # null byte
+    
+        # normalize whitespace
+        clean_text = " ".join(clean_text.split())
+
+        #kembalikan line penting hukum
+        clean_text = clean_text.replace("Pasal ", "\nPasal ")
+        clean_text = clean_text.replace("BAB ", "\nBAB ")
+
+        #rapikan newline berlebih
+        clean_text = re.sub(r'\n{3,}', '\n\n', clean_text)
+
+        # =====================================================
+        # 3. OPTIONAL AI CLEANING (NON WAJIB)
+        # =====================================================
+        """
+        AI cleaning DISARANKAN hanya untuk:
+        - OCR rusak
+        - typo ringan
+        - bukan mengganti struktur hukum
+        """
+
+        USE_AI_REFINER = False
+
+        if USE_AI_REFINER:
+            try:
+                refined = await text_refiner.refine_text(clean_text)
+
+                if isinstance(refined, dict):
+                    clean_text = refined.get("refined_text", clean_text)
+            except Exception as e:
+                print(f"AI Refiner gagal: {e}")
+
+        # =====================================================
+        # 4. Parsing Struktur UU
+        # =====================================================
         
-        cleaned_chunks = []
-        for chunk in text_chunks:
-            # Panggil AI Text Refiner kamu
-            refiner_response = await text_refiner.repair_legal_text(chunk)
-            
-            # SINKRONISASI DI SINI: Ambil key "repaired_text" sesuai return dari TextRefinerService
-            chunk_clean = refiner_response.get("repaired_text") or chunk
-            cleaned_chunks.append(chunk_clean)
-            
-        # 3. Gabungkan kembali teks yang sudah rapi dan bersih dari AI
-        clean_text = "\n".join(cleaned_chunks)
-        
-        # 4. Oper ke LegalParser yang sudah diperbaiki menggunakan teknik finditer
         doc_structure = self.parser.parse_uu_structure(clean_text)
-        
+
         doc_id = doc_structure["metadata"].get("uu_id", f"UU_{base_name}")
         
-        # 5. Simpan ke database Qdrant
+        # =====================================================
+        # 5. Simpan Pembukaan
+        # =====================================================
+
         await self.storage.store_parent_section(
-            parent_col, child_col, doc_structure["pembukaan"], doc_id,
-            doc_structure["metadata"], "pembukaan", "identitas",
+            parent_col, 
+            child_col, 
+            doc_structure["pembukaan"], 
+            doc_id,
+            doc_structure["metadata"], 
+            "pembukaan", 
+            "identitas",
             f"UU {doc_structure['metadata'].get('uu_number', 'N/A')}/{doc_structure['metadata'].get('tahun', 'N/A')}"
         )
+
+        # =====================================================
+        # 6. Simpan Batang Tubuh
+        # =====================================================
         
-        await self.storage.store_batang_tubuh(parent_col, child_col, doc_structure["pasal_list"], doc_id, doc_structure["metadata"])
+        await self.storage.store_batang_tubuh(
+            parent_col, 
+            child_col, 
+            doc_structure["pasal_list"], 
+            doc_id, 
+            doc_structure["metadata"]
+        )
         
+        # =====================================================
+        # 7. Simpan Penjelasan
+        # =====================================================
+
         if doc_structure.get("penjelasan"):
-            await self.storage.store_penjelasan(parent_col, child_col, doc_structure["penjelasan"], doc_id, doc_structure["metadata"])
-            
+            await self.storage.store_penjelasan(
+                parent_col, 
+                child_col, 
+                doc_structure["penjelasan"], 
+                doc_id, 
+                doc_structure["metadata"]
+            )
+        # =====================================================
+        # 8. Return
+        # =====================================================     
+        #        
         return {
             "status": "success", 
             "document_id": doc_id,
             "total_pasal": len(doc_structure["pasal_list"]),
             "metadata": doc_structure["metadata"]
         }
+    
     async def list_collections(self) -> list[str]:
         return await self.storage.list_collections()
 

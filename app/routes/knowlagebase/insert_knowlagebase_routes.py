@@ -1,21 +1,39 @@
+#insert_knowlagebase_routes.py
+
 import asyncio
+from fileinput import filename
 from qdrant_client.http import models
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from app.services.knowledgebase.kb_service import kb_service
-from typing import List, Dict
+from typing import List, Dict, Any, Annotated
 from pydantic import BaseModel
+import hashlib
 
 
 router = APIRouter()
 
 
 # Response Models
-class IngestResponse(BaseModel):
-    status: str
+class FileIngestResult(BaseModel):
+    filename: str
+    kb_name: str
     document_id: str
     total_pasal: int
-    metadata: Dict
-    message: str
+    metadata: Dict[str, Any]
+    file_hash: str
+    status: str
+
+class FailedFileResult(BaseModel):
+    filename: str
+    reason: str
+
+class MultipleIngestResponse(BaseModel):
+    status: str
+    total_uploaded: int
+    total_success: int
+    total_failed: int
+    results: List[FileIngestResult]
+    failed_files: List[FailedFileResult]
 
 
 class CollectionStats(BaseModel):
@@ -31,52 +49,136 @@ class DeleteResponse(BaseModel):
     deleted_collections: List[str]
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post(
+    "/ingest-multiple",
+    response_model=MultipleIngestResponse,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["files", "base_name"],
+                        "properties": {
+                            "files": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string",
+                                    "format": "binary"  # ← kunci utama!
+                                },
+                                "description": "Upload satu atau banyak PDF files"
+                            },
+                            "base_name": {
+                                "type": "string",
+                                "description": "Nama knowledge base (akan dinormalisasi)"
+                            }
+                        }
+                    }
+                }
+            },
+            "required": True
+        }
+    }
+)
 async def ingest_kb(
-    base_name: str = Form(...), 
-    file: UploadFile = File(...)
+    files: List[UploadFile] = File(...),       # ← kembali ke cara lama
+    base_name: str = Form(...)
 ):
+
     """
-    Endpoint untuk membuat KB baru dari file PDF.
+    Upload multiple PDF sekaligus untuk knowledge base.
     Akan menghasilkan koleksi {base_name}_parent dan {base_name}_child di Qdrant.
     
     Args:
         base_name: Nama knowledge base (akan dinormalisasi)
-        file: File PDF undang-undang
+        files: Daftar file PDF undang-undang
     
     Returns:
         IngestResponse dengan detail dokumen yang di-ingest
     """
-    if not file.filename.endswith(".pdf"):
+    if not files:
         raise HTTPException(
             status_code=400, 
-            detail="Hanya file PDF yang diperbolehkan."
+            detail="Tidak ada File yang diupload."
         )
+    
+    results = []
+    failed_files = []
 
     try:
-        content = await file.read()
-        # Normalisasi nama koleksi
-        formatted_name = base_name.lower().strip().replace(" ", "_")
-        
-        result = await kb_service.create_knowledgebase(
-            base_name=formatted_name, 
-            file_content=content
+        # normalisasi nama base collection
+        formatted_base_name = (
+            base_name.lower().strip().replace(" ", "_")
         )
-        
-        return IngestResponse(
-            status=result["status"],
-            document_id=result["document_id"],
-            total_pasal=result["total_pasal"],
-            metadata=result["metadata"],
-            message=f"Knowledge base '{formatted_name}' berhasil dibuat dengan {result['total_pasal']} pasal."
-        )
-        
+        for file in files:
+
+            try :
+
+                #validasi extension
+                if not file.filename.lower().endswith(".pdf"):
+                    failed_files.append({
+                        "filename": file.filename,
+                        "reason": "File bukan PDF"
+                    })
+                    continue
+
+                #baca conten file
+                content = await file.read()
+
+                #validasi file kosong
+                if not content:
+                    failed_files.append({
+                        "filename": file.filename,
+                        "reason": "File kosong"
+                    })
+                    continue
+
+                #hash file untuk deteksi duplikat
+                file_hash = hashlib.md5(content).hexdigest()
+
+                #nama kb unik per file
+                file_name_clean = (
+                    file.filename.replace(".pdf", "").replace(" ", "_").lower()
+                )
+
+                kb_name = f"{formatted_base_name}_{file_name_clean}"
+
+                # ingest ke qdrant 
+                result = await kb_service.create_knowledgebase(
+                    base_name=kb_name,
+                    file_content=content
+                )
+
+                results.append({
+                    "filename": file.filename,
+                    "kb_name": kb_name,
+                    "document_id": result["document_id"],
+                    "total_pasal": result["total_pasal"],
+                    "metadata": result["metadata"],
+                    "file_hash": file_hash,
+                    "status": "success"
+                })
+
+            except Exception as file_error:
+                failed_files.append({
+                    "filename": file.filename,
+                    "reason": str(file_error)
+                })
+
+        return {
+            "status": "success",
+            "total_uploaded": len(files),
+            "total_success": len(results),
+            "total_failed": len(failed_files),
+            "results": results,
+            "failed_files": failed_files
+        }
+    
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
-            detail=f"Gagal memproses dokumen: {str(e)}"
+            status_code=500,
+            detail=f"Gagal memproses knowledge base: {str(e)}"
         )
-
 
 @router.get("/list", response_model=List[str])
 async def list_kb():
