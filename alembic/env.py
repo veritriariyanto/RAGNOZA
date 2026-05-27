@@ -5,12 +5,25 @@ from sqlalchemy import pool
 
 from alembic import context
 
-from app.core.postgres import Base
+from app.core.postgres import Base, DATABASE_URL
 from app.database.models.rag_history import RAGHistory
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+
+
+def _get_database_url_for_alembic() -> str:
+    if hasattr(DATABASE_URL, "render_as_string"):
+        url = DATABASE_URL.render_as_string(hide_password=False)
+    else:
+        url = str(DATABASE_URL)
+
+    # ConfigParser treats % as interpolation markers, so escape them.
+    return url.replace("%", "%%")
+
+
+config.set_main_option("sqlalchemy.url", _get_database_url_for_alembic())
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
