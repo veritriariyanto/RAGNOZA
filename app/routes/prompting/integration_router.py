@@ -21,15 +21,12 @@ embeddings = HuggingFaceEmbeddings(
 )
 
 # Dependency untuk RAG Service
-def get_rag_service(db: Session = Depends(get_db)):
+async def get_rag_service(db: Session = Depends(get_db)):
     stt = STTService()
     refiner = TextRefinerService()
     material_gen = MaterialGeneratorService()
     
-    qdrant = QdrantStorage(
-        db=qdrant_db.client, 
-        embeddings=embeddings
-    )
+    qdrant = QdrantStorage(db=qdrant_db.client, embeddings=embeddings)
 
     print(RAGIntegrationService)
     print(RAGIntegrationService.__init__)

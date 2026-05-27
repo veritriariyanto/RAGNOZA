@@ -8,6 +8,7 @@ langchain-groq
 langchain-community
 langchain-huggingface
 sentence-transformers
+elevenlabs
 python-dotenv
 python-multipart
 pypdf
@@ -21,3 +22,6 @@ pydantic
 pydantic-settings
 aiofiles
 httpx
+PyPDF2
+ragas==0.1.7
+langchain-google-vertexai

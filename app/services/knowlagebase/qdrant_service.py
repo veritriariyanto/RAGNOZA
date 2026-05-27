@@ -31,4 +31,10 @@ class QdrantService:
             logger.warning(f"[QDRANT] Health check gagal: {e}")
             return {"status": "error", "detail": str(e), "host": self._host, "port": self._port}
 
+    def list_knowledgebase_names(self) -> List[str]:
+        """Return base knowledgebase names from collections ending with _parent."""
+        client = self._get_client()
+        collections = client.get_collections()
+        return sorted({c.name.replace("_parent", "") for c in collections.collections if c.name.endswith("_parent")})
+
     # Other methods preserved (ensure_collection, upsert_chunks, search...) — omitted for brevity

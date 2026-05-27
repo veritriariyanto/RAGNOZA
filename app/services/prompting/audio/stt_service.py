@@ -47,6 +47,10 @@ class STTService:
         """Menggunakan ElevenLabs Scribe v1"""
         print("[System] Memulai proses transkripsi via ElevenLabs Scribe v1")
         try:
+            if el_client is None:
+                raise Exception(
+                    "ElevenLabs package belum terpasang atau ELEVENLABS_API_KEY belum diisi. Install package: pip install elevenlabs"
+                )
             # ElevenLabs butuh file-like object
             audio_stream = io.BytesIO(audio_bytes)
             response = await asyncio.to_thread(
