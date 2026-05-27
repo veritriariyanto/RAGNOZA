@@ -385,7 +385,6 @@
 10:01:53 | INFO     | [EMBEDDING] Model siap — dimensi=384
 10:01:53 | INFO     | ✅ Embedding model siap: 'paraphrase-multilingual-MiniLM-L12-v2' (dim=384)
 10:01:53 | INFO     | 👋 Service shutdown
-<<<<<<< HEAD
 10:01:55 | INFO     | 🚀 UU AI Assistant v1.0.0 starting...
 10:01:56 | INFO     | HTTP Request: GET http://localhost:6333/collections "HTTP/1.1 200 OK"
 10:01:56 | INFO     | ✅ Qdrant terhubung: 1 collection(s)
@@ -475,8 +474,6 @@
 10:10:33 | INFO     | [EMBEDDING] Model siap — dimensi=384
 10:10:33 | INFO     | ✅ Embedding model siap: 'paraphrase-multilingual-MiniLM-L12-v2' (dim=384)
 10:16:53 | INFO     | 👋 Service shutdown
-=======
->>>>>>> 2a97b06 (feat : add cleaning,chunking, embedding, qdrant service)
 10:21:40 | INFO     | 🚀 UU AI Assistant v1.0.0 starting...
 10:21:42 | INFO     | HTTP Request: GET http://localhost:6333/collections "HTTP/1.1 200 OK"
 10:21:42 | INFO     | ✅ Qdrant terhubung: 1 collection(s)
