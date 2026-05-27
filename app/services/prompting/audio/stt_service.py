@@ -61,6 +61,22 @@ class STTService:
         except Exception as e:
             raise Exception(f"ElevenLabs Error: {str(e)}")
 
+    @staticmethod
+    async def _run_coro_with_timeout(coro, timeout: int):
+        """Run a coroutine inside a Task and enforce timeout (compatible with Python 3.14)."""
+        task = asyncio.create_task(coro)
+        done, pending = await asyncio.wait({task}, timeout=timeout)
+        if task in done:
+            return task.result()
+
+        # timeout: cancel the task and raise
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        raise asyncio.TimeoutError()
+
     async def transcribe(self, audio_bytes: bytes, provider: str = "whisper", filename: str | None = None) -> str:
         self.validate_audio(audio_bytes)
 
@@ -70,16 +86,22 @@ class STTService:
             if provider == "whisper":
                 if not filename:
                     raise ValueError("'filename' is required when using whisper provider")
-                return await asyncio.wait_for(
-                    self.transcribe_with_whisper(audio_bytes, filename), 
-                    timeout=self.TIMEOUT_SECONDS
-                )
+                try:
+                    return await STTService._run_coro_with_timeout(
+                        self.transcribe_with_whisper(audio_bytes, filename),
+                        self.TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    raise
             
             elif provider == "elevenlabs":
-                return await asyncio.wait_for(
-                    self.transcribe_with_elevenlabs(audio_bytes), 
-                    timeout=self.TIMEOUT_SECONDS
-                )
+                try:
+                    return await STTService._run_coro_with_timeout(
+                        self.transcribe_with_elevenlabs(audio_bytes),
+                        self.TIMEOUT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    raise
             
             else:
                 raise ValueError(f"Unknown STT provider: {provider}")
@@ -87,6 +109,10 @@ class STTService:
         except asyncio.TimeoutError:
             print(f"[Error] Transkripsi dibatalkan karena melebihi {self.TIMEOUT_SECONDS} detik")
             raise HTTPException(
-                status_code=504, 
+                status_code=504,
                 detail="Proses terlalu lama (Timeout). Silakan periksa koneksi atau coba file yang lebih pendek."
             )
+        except Exception as e:
+            # Map provider/internal errors to HTTP 500 so caller (Streamlit/front-end) gets JSON
+            print(f"[Error] STT general error: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
