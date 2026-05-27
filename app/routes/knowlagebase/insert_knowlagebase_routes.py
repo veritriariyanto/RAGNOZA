@@ -2,13 +2,55 @@
 
 import asyncio
 from qdrant_client.http import models
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException
-from app.services.knowledgebase.kb_service import kb_service
-from typing import List, Dict
-from pydantic import BaseModel
-from fastapi import HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import JSONResponse
-from app.services.qdrant_service import QdrantService
+from fastapi.concurrency import run_in_threadpool
+from app.services.knowledgebase.kb_service import kb_service
+from typing import List, Dict, Optional
+from pydantic import BaseModel
+from app.core.config import settings
+
+# Lazy singletons: create services only when first needed to avoid heavy imports at module import
+_cleaning_service = None
+_chunking_service = None
+_embedding_service = None
+_qdrant_service = None
+
+
+def get_cleaning_service():
+    global _cleaning_service
+    if _cleaning_service is None:
+        from app.services.cleaning_service import CleaningService
+
+        _cleaning_service = CleaningService()
+    return _cleaning_service
+
+
+def get_chunking_service():
+    global _chunking_service
+    if _chunking_service is None:
+        from app.services.chunking_service import ChunkingService
+
+        _chunking_service = ChunkingService()
+    return _chunking_service
+
+
+def get_embedding_service():
+    global _embedding_service
+    if _embedding_service is None:
+        from app.services.embedding_service import EmbeddingService
+
+        _embedding_service = EmbeddingService()
+    return _embedding_service
+
+
+def get_qdrant_service():
+    global _qdrant_service
+    if _qdrant_service is None:
+        from app.services.qdrant_service import QdrantService
+
+        _qdrant_service = QdrantService()
+    return _qdrant_service
 
 
 router = APIRouter()
@@ -34,6 +76,78 @@ class DeleteResponse(BaseModel):
     status: str
     message: str
     deleted_collections: List[str]
+
+
+# ---------- Cleaning & Chunking endpoints added here ----------
+# Note: services are created lazily via getters (get_cleaning_service(), etc.)
+
+
+@router.post("/upload", summary="Upload & cleaning (alias for cleaning route)")
+async def upload_and_clean(file: UploadFile = File(..., description="File PDF undang-undang")):
+    pdf_bytes = await file.read()
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Hanya file PDF yang diterima (.pdf)")
+
+    try:
+        result = await run_in_threadpool(get_cleaning_service().clean_from_bytes, pdf_bytes, file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cleaning gagal: {str(e)}")
+
+    return JSONResponse(content={
+        "success": True,
+        "message": f"Cleaning berhasil: {file.filename}",
+        "document_id": result.document_id,
+        "data": {
+            "total_pages": result.total_pages,
+            "total_words": result.total_words,
+        }
+    })
+
+
+@router.post("/process", summary="Chunking (+ optional embed & index)")
+async def process_pdf(
+    file: UploadFile = File(..., description="File PDF undang-undang"),
+    include_chunks_preview: bool = Query(False),
+    embed: bool = Query(False),
+    collection: Optional[str] = Query(None),
+):
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Hanya file PDF yang diterima (.pdf)")
+
+    pdf_bytes = await file.read()
+
+    try:
+        cleaning_result = await run_in_threadpool(get_cleaning_service().clean_from_bytes, pdf_bytes, file.filename)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cleaning gagal: {str(e)}")
+
+    try:
+        chunking_result = await get_chunking_service().chunk(cleaning_result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chunking gagal: {str(e)}")
+
+    all_chunks = chunking_result.all_chunks
+
+    response_data = {"cleaning_stats": {"total_pages": cleaning_result.total_pages}, "chunking_stats": {"total_chunks": chunking_result.total_chunks}, "embedding": None, "indexing": None}
+
+    if embed:
+        try:
+            embedded_chunks = await get_embedding_service().embed_chunks(all_chunks)
+            try:
+                upsert_result = get_qdrant_service().upsert_chunks(embedded_chunks, collection_name=collection)
+                response_data["indexing"] = upsert_result
+            except Exception as e:
+                response_data["indexing"] = {"error": str(e)}
+            response_data["embedding"] = {"model": settings.embedding_model, "embedded_chunks": sum(1 for c in embedded_chunks if c.embedding is not None)}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Embedding/indexing gagal: {str(e)}")
+
+    if include_chunks_preview:
+        response_data["chunks_preview"] = [{"chunk_id": c.chunk_id, "preview": c.preview} for c in all_chunks[:20]]
+
+    return JSONResponse(content={"success": True, "message": f"Berhasil memproses: {chunking_result.total_chunks} chunks", "document_id": chunking_result.document_id, "data": response_data})
+
+# ---------- end additions ----------
 
 
 @router.post("/ingest", response_model=IngestResponse)
@@ -206,7 +320,7 @@ async def delete_kb(base_name: str):
 async def list_qdrant_collections():
     """Dapatkan statistik/metadata collections dari Qdrant (detailed)."""
     try:
-        qdrant = QdrantService()
+        qdrant = get_qdrant_service()
         detailed = qdrant.get_collections_detailed()
         return JSONResponse(content=detailed)
     except Exception as e:
