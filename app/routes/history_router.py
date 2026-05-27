@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.postgres import get_db
-from app.database.migration.models import RAGHistory
+from app.database.models import RAGHistory
 
 router = APIRouter()
 

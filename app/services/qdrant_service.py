@@ -14,7 +14,7 @@ import logging
 from typing import Optional, List, Dict, Any
 
 # pyrefly: ignore [missing-import]
-from app.config import settings
+from app.core.config import settings
 from app.database.models.schemas import DocumentChunk
 
 logger = logging.getLogger(__name__)
