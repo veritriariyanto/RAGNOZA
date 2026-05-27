@@ -26,3 +26,4 @@ PyPDF2
 ragas==0.1.7
 langchain-google-vertexai
 streamlite
+alembic
