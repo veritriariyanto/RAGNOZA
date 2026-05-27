@@ -51,7 +51,7 @@ Buat file `.env` di root folder dan sesuaikan dengan pengaturan lokal Anda (khus
 ```env
 PROJECT_NAME="RAG UUD Decision Support"
 
-# Database PostgreSQL (Laragon Default)
+# Database PostgreSQL (Docker Default)
 PGHOST=localhost
 PGPORT=5432
 PGDATABASE=aitta_db

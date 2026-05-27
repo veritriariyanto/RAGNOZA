@@ -3,7 +3,7 @@ services:
   postgres:
     image: postgres:15
     container_name: postgres
-    restart: always
+    restart: "no"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -16,7 +16,7 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     container_name: qdrant
-    restart: always
+    restart: "no"
     ports:
       - "6333:6333"
       - "6334:6334"
