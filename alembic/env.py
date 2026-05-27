@@ -6,7 +6,7 @@ from sqlalchemy import pool
 from alembic import context
 
 from app.core.postgres import Base
-from app.database.migration.models.rag_history import RAGHistory
+from app.database.models.rag_history import RAGHistory
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
