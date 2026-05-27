@@ -6,6 +6,9 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from app.services.knowledgebase.kb_service import kb_service
 from typing import List, Dict
 from pydantic import BaseModel
+from fastapi import HTTPException
+from fastapi.responses import JSONResponse
+from app.services.qdrant_service import QdrantService
 
 
 router = APIRouter()
@@ -197,3 +200,14 @@ async def delete_kb(base_name: str):
             status_code=500, 
             detail=f"Gagal menghapus KB: {str(e)}"
         )
+
+
+@router.get("/collections")
+async def list_qdrant_collections():
+    """Dapatkan statistik/metadata collections dari Qdrant (detailed)."""
+    try:
+        qdrant = QdrantService()
+        detailed = qdrant.get_collections_detailed()
+        return JSONResponse(content=detailed)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Gagal mengambil collections dari Qdrant: {str(e)}")

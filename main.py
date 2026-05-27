@@ -19,7 +19,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.v1.router import api_router
+from app.routes.chunking_routes import router as chunking_router
+from app.routes.cleaning_routes import router as cleaning_router
+from app.routes.similarity_routes import router as similarity_router
 from app.config import settings
 from app.services.qdrant_service import QdrantService
 
@@ -123,7 +125,9 @@ app.add_middleware(
 )
 
 
-app.include_router(api_router)
+app.include_router(cleaning_router)
+app.include_router(chunking_router)
+app.include_router(similarity_router)
 
 
 @app.get("/", tags=["Health"])
