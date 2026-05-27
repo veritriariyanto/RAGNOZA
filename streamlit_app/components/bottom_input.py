@@ -1,7 +1,7 @@
 import streamlit as st
 
 from utils.session import get_current_session
-from api.rag_api import ask_rag
+from streamlit_app.api.prompting.rag_api import ask_rag
 
 def render_bottom_input():
 

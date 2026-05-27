@@ -1,8 +1,8 @@
 #app/routes/knowlagebase/search_knowlagebase_routes.py
 
 from fastapi import APIRouter, Form, HTTPException
-from app.services.knowledgebase.kb_service import kb_service
-from app.services.knowledgebase.qdrant_service import QdrantService
+from app.services.knowlagebase.kb_service import kb_service
+from app.services.knowlagebase.qdrant_service import QdrantService
 from fastapi.responses import JSONResponse
 
 router = APIRouter()

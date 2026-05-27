@@ -5,7 +5,7 @@ from qdrant_client.http import models
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
-from app.services.knowledgebase.kb_service import kb_service
+from app.services.knowlagebase.kb_service import kb_service
 from typing import List, Dict, Optional
 from pydantic import BaseModel
 from app.core.config import settings
@@ -20,7 +20,7 @@ _qdrant_service = None
 def get_cleaning_service():
     global _cleaning_service
     if _cleaning_service is None:
-        from app.services.knowledgebase.cleaning_service import CleaningService
+        from app.services.knowlagebase.cleaning_service import CleaningService
 
         _cleaning_service = CleaningService()
     return _cleaning_service
@@ -29,7 +29,7 @@ def get_cleaning_service():
 def get_chunking_service():
     global _chunking_service
     if _chunking_service is None:
-        from app.services.knowledgebase.chunking_service import ChunkingService
+        from app.services.knowlagebase.chunking_service import ChunkingService
 
         _chunking_service = ChunkingService()
     return _chunking_service
@@ -38,7 +38,7 @@ def get_chunking_service():
 def get_embedding_service():
     global _embedding_service
     if _embedding_service is None:
-        from app.services.knowledgebase.embedding_service import EmbeddingService
+        from app.services.knowlagebase.embedding_service import EmbeddingService
 
         _embedding_service = EmbeddingService()
     return _embedding_service
@@ -47,7 +47,7 @@ def get_embedding_service():
 def get_qdrant_service():
     global _qdrant_service
     if _qdrant_service is None:
-        from app.services.knowledgebase.qdrant_service import QdrantService
+        from app.services.knowlagebase.qdrant_service import QdrantService
 
         _qdrant_service = QdrantService()
     return _qdrant_service

@@ -4,7 +4,7 @@ from app.core.qdrant import qdrant_db
 from app.services.prompting.audio.stt_service import STTService
 from app.services.prompting.prompt.repair_text import TextRefinerService
 from app.services.prompting.prompt.generate_content_service import MaterialGeneratorService
-from app.services.knowledgebase.qdrant_storage import QdrantStorage
+from app.services.knowlagebase.qdrant_storage import QdrantStorage
 from app.services.prompting.integration.rag_integration_service import RAGIntegrationService
 
 from sqlalchemy.orm import Session
