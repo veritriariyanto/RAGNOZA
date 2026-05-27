@@ -23,7 +23,7 @@ from app.routes.chunking_routes import router as chunking_router
 from app.routes.cleaning_routes import router as cleaning_router
 from app.routes.similarity_routes import router as similarity_router
 from app.config import settings
-from app.services.qdrant_service import QdrantService
+from app.services.knowledgebase.qdrant_service import QdrantService
 
 __all__ = ["app"]
 
@@ -60,7 +60,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"⚠️  Qdrant tidak tersedia: {health['detail']} (service tetap berjalan)")
 
     # Preload embedding model (agar request pertama tidak lambat)
-    from app.services.embedding_service import EmbeddingService
+    from app.services.knowledgebase.embedding_service import EmbeddingService
     emb = EmbeddingService()
     try:
         emb.load()

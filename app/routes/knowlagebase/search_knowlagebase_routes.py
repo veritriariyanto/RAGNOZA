@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Form, HTTPException
 from app.services.knowledgebase.kb_service import kb_service
-from app.services.qdrant_service import QdrantService
+from app.services.knowledgebase.qdrant_service import QdrantService
 from fastapi.responses import JSONResponse
 
 router = APIRouter()

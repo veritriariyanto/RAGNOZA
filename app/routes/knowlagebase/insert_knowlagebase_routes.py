@@ -20,7 +20,7 @@ _qdrant_service = None
 def get_cleaning_service():
     global _cleaning_service
     if _cleaning_service is None:
-        from app.services.cleaning_service import CleaningService
+        from app.services.knowledgebase.cleaning_service import CleaningService
 
         _cleaning_service = CleaningService()
     return _cleaning_service
@@ -29,7 +29,7 @@ def get_cleaning_service():
 def get_chunking_service():
     global _chunking_service
     if _chunking_service is None:
-        from app.services.chunking_service import ChunkingService
+        from app.services.knowledgebase.chunking_service import ChunkingService
 
         _chunking_service = ChunkingService()
     return _chunking_service
@@ -38,7 +38,7 @@ def get_chunking_service():
 def get_embedding_service():
     global _embedding_service
     if _embedding_service is None:
-        from app.services.embedding_service import EmbeddingService
+        from app.services.knowledgebase.embedding_service import EmbeddingService
 
         _embedding_service = EmbeddingService()
     return _embedding_service
@@ -47,7 +47,7 @@ def get_embedding_service():
 def get_qdrant_service():
     global _qdrant_service
     if _qdrant_service is None:
-        from app.services.qdrant_service import QdrantService
+        from app.services.knowledgebase.qdrant_service import QdrantService
 
         _qdrant_service = QdrantService()
     return _qdrant_service
