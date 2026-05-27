@@ -1,35 +1,45 @@
+#main.py
+
 from fastapi import FastAPI
-from app.core.postgres import engine, Base
-from app.core.qdrant import qdrant_db
-from app.routes.routes import api_router
-from app.routes.history_router import router as history_router
+from fastapi.middleware.cors import CORSMiddleware
 
-# Create tables in Postgres (Laragon) if they don't exist
-Base.metadata.create_all(bind=engine)
+# =========================================
+# IMPORT ROUTERS
+# =========================================
+from app.routes.prompting.prompting_routes import prompting_router
+from app.routes.knowlagebase.knowlagebase_routes import knowlagebase_router
+from app.routes.history_routes import api_router
 
-app = FastAPI(title="AI RAG UUD Decision Support")
-app.include_router(
-    history_router,
-    prefix="/history",
-    tags=["History"]
-    )
 
-app.include_router(api_router)
+# =========================================
+# FASTAPI APP
+# =========================================
+app = FastAPI(
+    title="RAGNOZA API",
+    description="AI RAG UUD Decision Support"
+)
 
-@app.on_event("startup")
-async def startup_event():
-    """
-    Event ini berjalan saat server dimulai.
-    Memastikan koleksi di Qdrant sudah dibuat sebelum ada request masuk.
-    """
-    try:
-        # Inisialisasi koleksi Qdrant (384 sesuai dimensi all-MiniLM-L6-v2)
-        qdrant_db.init_collection(collection_name="uud_articles", vector_size=384)
-        print("✅ Berhasil memvalidasi koneksi PostgreSQL dan Qdrant.")
-    except Exception as e:
-        print(f"❌ Terjadi kesalahan saat startup: {e}")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Ubah sesuai kebutuhan, sebaiknya hanya domain yang diperlukan
+    allow_methods=["*"],
+    allow_headers=["*"],
+    allow_credentials=True
+)
 
-if __name__ == "__main__":
-    import uvicorn
-    # Menggunakan port 8000 sebagai standar FastAPI
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+# =========================================
+# MAIN API ROUTER
+# =========================================
+app.include_router(prompting_router, prefix="/api/v1")
+app.include_router(knowlagebase_router, prefix="/api/v1")
+app.include_router(api_router, prefix="/api/v1")
+
+# =========================================
+# ROOT
+# =========================================
+@app.get("/")
+async def root():
+
+    return {
+        "message": "RAGNOZA API Running"
+    }

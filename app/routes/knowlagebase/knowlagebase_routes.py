@@ -5,5 +5,5 @@ from app.routes.knowlagebase.search_knowlagebase_routes import router as search_
 knowlagebase_router = APIRouter()
 
 # Panggil satu per satu
-knowlagebase_router.include_router(insert_knowlagebase_router, prefix="/qdran", tags=["knowlagebase"])
-knowlagebase_router.include_router(search_knowlagebase_router, prefix="/qdran", tags=["knowlagebase"])
+knowlagebase_router.include_router(insert_knowlagebase_router, prefix="/qdran", tags=["insert_knowledgebase"])
+knowlagebase_router.include_router(search_knowlagebase_router, prefix="/qdran", tags=["search_knowledgebase"])

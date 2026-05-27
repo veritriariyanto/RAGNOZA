@@ -1,3 +1,5 @@
+# history_router.py
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -36,24 +38,25 @@ def get_all_history(
             "created_at": item.created_at
         })
 
-        return {
+    return {
             "status": "success",
             "total": len(results),
             "data": results
         }
+        
 
 # =========================================================
 # GET HISTORY DETAIL
 # =========================================================
 @router.get("/{history_id}")
 def get_history_detail(
-    hisroty_id: int,
+    history_id: int,
     db: Session = Depends(get_db)
 ):
     
     history = (
         db.query(RAGHistory)
-        .filter(RAGHistory.id == hisroty_id)
+        .filter(RAGHistory.id == history_id)
         .first()
     )
 
