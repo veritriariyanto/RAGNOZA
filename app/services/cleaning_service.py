@@ -23,7 +23,7 @@ from collections import Counter
 
 import fitz  # PyMuPDF
 
-from app.models.schemas import (
+from app.database.models.schemas import (
     CleaningResult,
     CleaningStatus,
     PageContent,

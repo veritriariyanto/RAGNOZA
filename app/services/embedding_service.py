@@ -23,7 +23,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 from app.config import settings
-from app.models.schemas import DocumentChunk
+from app.database.models.schemas import DocumentChunk
 
 
 class EmbeddingService:

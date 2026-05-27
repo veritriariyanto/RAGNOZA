@@ -19,7 +19,7 @@ import re
 from typing import Optional, List, Tuple
 
 # pyrefly: ignore [missing-import]
-from app.models.schemas import (
+from app.database.models.schemas import (
     ChunkingResult,
     DocumentChunk,
     ChunkMetadata,

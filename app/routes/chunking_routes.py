@@ -13,7 +13,7 @@ from app.services.cleaning_service import CleaningService
 from app.services.chunking_service import ChunkingService
 from app.services.embedding_service import EmbeddingService
 from app.services.qdrant_service import QdrantService
-from app.models.schemas import (ProcessingResponse, ChunkingStats, CleaningResult, CleaningStatus)
+from app.database.models.schemas import (ProcessingResponse, ChunkingStats, CleaningResult, CleaningStatus)
 from app.utils.text_utils import count_tokens
 from app.config import settings
 

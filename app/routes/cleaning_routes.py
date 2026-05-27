@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from fastapi.concurrency import run_in_threadpool
 
 from app.services.cleaning_service import CleaningService
-from app.models.schemas import ProcessingResponse, CleaningStats
+from app.database.models.schemas import ProcessingResponse, CleaningStats
 
 logger = logging.getLogger(__name__)
 
