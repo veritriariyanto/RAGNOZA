@@ -6,19 +6,12 @@ from app.services.prompting.prompt.repair_text import TextRefinerService
 from app.services.prompting.prompt.generate_content_service import MaterialGeneratorService
 from app.services.knowlagebase.qdrant_storage import QdrantStorage
 from app.services.prompting.integration.rag_integration_service import RAGIntegrationService
+from app.core.embeddings import embeddings
 
 from sqlalchemy.orm import Session
 from app.core.postgres import get_db
 
-# Import embeddings yang sudah Anda buat
-from langchain_huggingface import HuggingFaceEmbeddings
-
 router = APIRouter()
-
-# Inisialisasi embeddings (sama seperti yang Anda gunakan di tempat lain)
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
 
 # Dependency untuk RAG Service
 async def get_rag_service(db: Session = Depends(get_db)):
