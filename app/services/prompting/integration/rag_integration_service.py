@@ -10,7 +10,7 @@ from app.schemas.prompting.generate_content import MaterialRequest
 from app.schemas.prompting.integration import RAGIntegrationResponse
 
 from sqlalchemy.orm import Session
-from app.services.history.rag_history_service import RAGHistoryService
+from app.services.evaluation.history.rag_history_service import RAGHistoryService
 from app.services.evaluation.ragas_service import RagasService
 from app.services.evaluation.formatter import material_to_text
 

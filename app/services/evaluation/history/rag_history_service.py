@@ -3,7 +3,7 @@
 import json  
 from sqlalchemy.orm import Session
 
-from app.database.migration.models import RAGHistory
+from app.database.models import RAGHistory
 
 class RAGHistoryService:
     @staticmethod
