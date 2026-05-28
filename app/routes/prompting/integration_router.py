@@ -1,5 +1,16 @@
+"""
+integration_router.py  (updated)
+ 
+Perubahan dari versi lama:
+- Tambah parameter BackgroundTasks dari FastAPI
+- BackgroundTasks diteruskan ke RAGIntegrationService.process_audio_to_material()
+  agar evaluasi RAGAS berjalan di background (tidak blocking response user)
+"""
+
+
 # app/routes/prompting/integration_router.py
-from fastapi import APIRouter, UploadFile, File, Query, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from app.core.postgres import get_db
 from app.core.qdrant import qdrant_db
 from app.services.prompting.audio.stt_service import STTService
 from app.services.prompting.prompt.repair_text import TextRefinerService
@@ -9,12 +20,12 @@ from app.services.prompting.integration.rag_integration_service import RAGIntegr
 from app.core.embeddings import embeddings
 
 from sqlalchemy.orm import Session
-from app.core.postgres import get_db
 
 router = APIRouter()
 
 # Dependency untuk RAG Service
-async def get_rag_service(db: Session = Depends(get_db)):
+async def get_rag_service(db: Session = Depends(get_db)) -> RAGIntegrationService:
+    """Bangun RAGIntegrationService dengan semua dependency-nya."""
     stt = STTService()
     refiner = TextRefinerService()
     material_gen = MaterialGeneratorService()
@@ -25,15 +36,34 @@ async def get_rag_service(db: Session = Depends(get_db)):
     print(RAGIntegrationService.__init__)
     
     return RAGIntegrationService(
-        stt,
-        refiner, 
-        qdrant, 
-        material_gen, 
-        db
+       stt_service=stt,
+        text_service=refiner,
+        vector_service=qdrant,
+        material_service=material_gen,
+        db=db,
     )
 
-@router.post("/process-integrated")
+# ── Route ─────────────────────────────────────────────────────────────────────
+
+@router.post(
+    "/process-integrated",
+    summary="RAG Pipeline Terintegrasi (Audio → STT → Search → Material)",
+    description="""
+    Endpoint terintegrasi penuh RAG:
+    **Audio → STT → Repair Text → Search Qdrant → Generate Material**
+ 
+    Evaluasi RAGAS berjalan otomatis di **background** setelah response dikirim ke user
+    (tidak memperlambat waktu respons). Hasil evaluasi dapat dilihat di log server.
+ 
+    **Metrik yang dievaluasi otomatis:**
+    - Faithfulness
+    - Answer Relevancy
+    - Context Precision *(jika ground truth tersedia)*
+    - Context Recall *(jika ground truth tersedia)*
+    """,
+)
 async def process_audio_rag(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     provider: str = Query("whisper", enum=["whisper", "elevenlabs"]),
     knowledge_base: str = Query("test"),
@@ -41,17 +71,14 @@ async def process_audio_rag(
     rag_service: RAGIntegrationService = Depends(get_rag_service)
 ):
     """
-    Endpoint terintegrasi penuh RAG:
-    Audio -> STT -> Repair Text -> Search Qdrant -> Generate Material
-    
     Args:
-        file: File audio (MP3, WAV, dll)
-        provider: Provider STT (whisper/elevenlabs)
-        knowledge_base: Nama collection di Qdrant
-        style: Gaya penulisan material (formal/casual/academic)
-    
+        file            : File audio (MP3, WAV, dll)
+        provider        : Provider STT (whisper / elevenlabs)
+        knowledge_base  : Nama collection di Qdrant
+        style           : Gaya penulisan material
+ 
     Returns:
-        Complete RAG pipeline result with final generated material
+        Hasil RAG pipeline lengkap. Evaluasi RAGAS berjalan di background.
     """
     try:
         audio_data = await file.read()
@@ -62,7 +89,8 @@ async def process_audio_rag(
             filename=file.filename,
             knowledge_base=knowledge_base,
             provider=provider,
-            style=style
+            style=style,
+            background_tasks=background_tasks,  # Pass BackgroundTasks untuk evaluasi async
         )
         
         return {
@@ -82,7 +110,15 @@ async def process_audio_rag(
                 },
                 "generated_material": result.final_material.model_dump() if result.final_material else None,
                 "fallback_message": result.fallback_message 
-            }
+            },
+            # Info untuk user bahwa evaluasi berjalan di background
+            "evaluation": {
+                "status": "running_in_background",
+                "note": (
+                    "Evaluasi RAGAS berjalan otomatis di background. "
+                    "Lihat log server untuk hasil metrik."
+                ),
+            },
         }
 
     except HTTPException as e:

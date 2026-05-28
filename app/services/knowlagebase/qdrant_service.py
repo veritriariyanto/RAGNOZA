@@ -1,3 +1,5 @@
+# app/services/knowlagebase/qdrant_service.py
+
 """
 Qdrant service moved into knowledgebase package.
 """
