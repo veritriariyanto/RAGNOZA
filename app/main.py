@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routes.prompting.prompting_routes import prompting_router
 from app.routes.knowlagebase.knowlagebase_routes import knowlagebase_router
 from app.routes.history_routes import api_router
+from app.routes.evaluation_router import router as evaluation_router
 
 
 # =========================================
@@ -33,6 +34,7 @@ app.add_middleware(
 app.include_router(prompting_router, prefix="/api/v1")
 app.include_router(knowlagebase_router, prefix="/api/v1")
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(evaluation_router, prefix="/api/v1")
 
 # =========================================
 # ROOT

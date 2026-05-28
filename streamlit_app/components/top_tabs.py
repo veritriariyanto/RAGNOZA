@@ -1,3 +1,5 @@
+# components/top_tabs.py
+
 import streamlit as st
 
 def render_top_tabs():

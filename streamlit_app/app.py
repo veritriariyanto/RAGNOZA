@@ -1,4 +1,4 @@
-# app.py
+# streamlit_app/app.py
 
 import streamlit as st
 
@@ -7,6 +7,7 @@ from components.top_tabs import render_top_tabs
 from components.chat_area import render_chat_area
 from components.bottom_input import render_bottom_input
 from components.audio_controls import render_audio_controls
+from components.evaluation_tab import render_evaluation_tab
 
 from utils.session import init_session_state
 
@@ -67,9 +68,7 @@ with center_col:
     # TAB EVALUASI
     # =====================================
     with tab3:
-        st.subheader('📊 **Evaluasi**')
-        st.write("Fitur untuk mengevaluasi performa RAGNOZA Assistant berdasarkan sesi chat yang telah dilakukan.")
-   
+        render_evaluation_tab()
 
 # =========================================
 # RIGHT PANEL
