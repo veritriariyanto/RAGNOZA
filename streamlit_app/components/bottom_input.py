@@ -1,7 +1,10 @@
+# streamlit_app/components/bottom_input.py
+
 import streamlit as st
 
-from utils.session import get_current_session
-from streamlit_app.api.prompting.rag_api import ask_rag
+from utils.session import get_current_session, pop_pending_audio_text
+from api.prompting.rag_api import ask_rag
+
 
 def render_bottom_input():
 
@@ -11,47 +14,64 @@ def render_bottom_input():
     # JIKA BELUM ADA SESSION
     # =========================================
     if current_session is None:
-        st.info ("Buat chat baru terlebih dahulu.")
-
+        st.info("Buat chat baru terlebih dahulu.")
         return
+
+    # =========================================
+    # CEK PENDING AUDIO TEXT
+    # Jika ada transkripsi audio yang baru selesai, pre-fill ke input
+    # =========================================
+    pending = pop_pending_audio_text()
+
     # =========================================
     # CHAT INPUT
     # =========================================
-    prompt = st.chat_input (
-        "Ketika pertanyaan Anda..."
+    prompt = st.chat_input(
+        "Ketik pertanyaan Anda...",
+        key="chat_input",
     )
 
+    # Jika tidak ada input manual tapi ada pending audio, gunakan teks audio
+    if not prompt and pending:
+        prompt = pending
+
     # =========================================
-    # JIKA USER INPUT
+    # JIKA ADA INPUT (manual ATAU dari audio)
     # =========================================
     if prompt:
 
-        #User message
-        user_message = {
+        # --- User message ---
+        current_session["messages"].append({
             "role": "user",
-            "content": prompt
-        }
+            "content": prompt,
+        })
 
-        current_session["messages"].append(user_message)
+        # =====================================
+        # CALL FASTAPI
+        # =====================================
+        with st.spinner("RAGNOZA sedang berpikir..."):
+            response = ask_rag(prompt, session_id=current_session["id"])
 
-    # =====================================
-    # CALL FASTAPI
-    # =====================================  
-    response = ask_rag(prompt)
+        # =====================================
+        # HANDLE ERROR
+        # =====================================
+        if response.get("error"):
+            st.error(f"⚠️ {response['error']}")
+            # Tetap simpan pesan error sebagai balasan agar konteks terjaga
+            current_session["messages"].append({
+                "role": "assistant",
+                "content": f"_(Error: {response['error']})_",
+            })
+        else:
+            ai_answer = response.get("answer", "Tidak ada jawaban.")
 
-    ai_response = response.get(
-        "answer", 
-        "Tidak ada jawaban."
-    ) 
+            # Simpan sumber ke session agar right panel bisa membacanya
+            current_session["last_sources"] = response.get("sources", [])
 
-    # =====================================
-    # ASSISTANT MESSAGE
-    # =====================================
-    assistant_message = {
-        "role": "assistant",
-        "content": ai_response
-    }
+            # --- Assistant message ---
+            current_session["messages"].append({
+                "role": "assistant",
+                "content": ai_answer,
+            })
 
-    current_session["messages"].append(assistant_message)
-
-    st.rerun()
+        st.rerun()

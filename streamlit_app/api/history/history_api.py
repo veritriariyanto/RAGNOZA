@@ -1,6 +1,8 @@
 import requests
 
-BASE_URL = "http://localhost:8000/api/v1"
+from config.settings import settings
+
+BASE_URL = settings.API_BASE_URL
 
 def get_all_history():
     response = requests.get(f"{BASE_URL}/history/")

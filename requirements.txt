@@ -27,3 +27,4 @@ ragas==0.1.7
 langchain-google-vertexai
 streamlite
 alembic
+streamlit-mic-recorder==0.0.8

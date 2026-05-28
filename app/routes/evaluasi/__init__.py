@@ -7,7 +7,7 @@ sub-routers (history, evaluation, etc.). Import this one router from
 
 from fastapi import APIRouter
 
-from .history_router import router as history_router
+from ..history.history_router import router as history_router
 from .evaluation_router import router as evaluation_router
 
 router = APIRouter()

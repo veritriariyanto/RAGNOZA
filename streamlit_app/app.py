@@ -1,4 +1,4 @@
-# app.py
+# streamlit_app/app.py
 
 import streamlit as st
 
@@ -7,6 +7,8 @@ from components.top_tabs import render_top_tabs
 from components.chat_area import render_chat_area
 from components.bottom_input import render_bottom_input
 from components.audio_controls import render_audio_controls
+from components.evaluation_tab import render_evaluation_tab
+from components.knowledgebase_tab import render_knowledgebase_tab
 
 from utils.session import init_session_state
 
@@ -49,27 +51,24 @@ with center_col:
     # TAB KNOWLEDGEBASE
     # =====================================
     with tab1:
-        st.subheader("📚 **Knowledge Base**")
-
-        st.write("Fitur untuk mengelola knowledge base yang digunakan oleh RAGNOZA Assistant.")
+        render_knowledgebase_tab()
 
     # =====================================
     # TAB GENERATE
     # =====================================
     with tab2:
-        render_chat_area()
 
         render_audio_controls()
 
         render_bottom_input()
 
+        render_chat_area()
+
     # =====================================
     # TAB EVALUASI
     # =====================================
     with tab3:
-        st.subheader('📊 **Evaluasi**')
-        st.write("Fitur untuk mengevaluasi performa RAGNOZA Assistant berdasarkan sesi chat yang telah dilakukan.")
-   
+        render_evaluation_tab()
 
 # =========================================
 # RIGHT PANEL

@@ -1,3 +1,5 @@
+# app/core/config.py
+
 """Canonical application settings.
 
 This module defines the single `settings` object used across the codebase.
