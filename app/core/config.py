@@ -21,16 +21,27 @@ class Settings(BaseSettings):
 	log_level: str = "INFO"
 
 	# ── Database ─────────────────────────────────
-	pghost: str = "localhost"
-	pgport: int = 5432
-	pgdatabase: str = "ragdb"
-	pguser: str = "postgres"
-	pgpassword: str = ""
-	pgsslmode: str = "disable"
-	database_url: str = "postgresql://postgres@localhost:5432/ragdb"
+	PGHOST: str = "localhost"
+	PGPORT: int = 5432
+	PGDATABASE: str = "ragdb"
+	PGUSER: str = "postgres"
+	PGPASSWORD: str = ""
+	PGSSLMODE: str = "disable"
 
-	# Uppercase alias for compatibility with older modules/env vars
-	DATABASE_URL: str = "postgresql://postgres@localhost:5432/ragdb"
+	@property
+	def database_url(self) -> str:
+		auth = self.PGUSER
+		if self.PGPASSWORD:
+			auth += f":{self.PGPASSWORD}"
+
+		return (
+			f"postgresql://{auth}"
+			f"@{self.PGHOST}:{self.PGPORT}/{self.PGDATABASE}"
+		)
+
+	@property
+	def DATABASE_URL(self) -> str:
+		return self.database_url
 
 	# ── Vector DB ────────────────────────────────
 	qdrant_host: str = "localhost"

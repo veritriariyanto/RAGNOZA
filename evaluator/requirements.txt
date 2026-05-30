@@ -1,0 +1,38 @@
+# evaluator/requirements.txt
+#
+# PENTING: Ini adalah environment TERPISAH dari service utama.
+# Jangan gabungkan dengan requirements.txt di root project.
+#
+# Kompatibilitas yang diuji:
+#   ragas==0.1.x membutuhkan langchain>=0.1.0,<0.2.0
+#   ragas==0.2.x membutuhkan langchain>=0.3.0
+#   Gunakan ragas terbaru dan biarkan pip resolve versi langchain yang tepat.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
+# Core framework
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-dotenv
+
+# RAGAS + langchain (versi yang kompatibel — jangan pin langchain manual)
+ragas==0.1.21
+langchain==0.1.17
+langchain-community==0.0.38
+langchain-groq
+langchain-huggingface
+sentence-transformers
+
+# Dataset processing (dibutuhkan ragas)
+datasets
+
+# HTTP client (untuk health check internal jika perlu)
+httpx
+
+google-cloud-aiplatform
+
+
+
