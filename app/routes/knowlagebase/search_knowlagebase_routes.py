@@ -2,7 +2,6 @@
 
 from fastapi import APIRouter, Form, HTTPException
 from app.services.knowlagebase.kb_service import kb_service
-from app.services.knowlagebase.qdrant_service import QdrantService
 from fastapi.responses import JSONResponse
 
 router = APIRouter()
@@ -29,13 +28,3 @@ async def search_kb(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal melakukan pencarian: {str(e)}")
-
-
-@router.get("/collections")
-async def list_qdrant_collections():
-    try:
-        qdrant = QdrantService()
-        detailed = qdrant.get_collections_detailed()
-        return JSONResponse(content=detailed)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gagal mengambil collections dari Qdrant: {str(e)}")

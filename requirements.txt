@@ -1,3 +1,8 @@
+# requirements.txt
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
 fastapi
 uvicorn[standard]
 sqlalchemy
@@ -23,8 +28,6 @@ pydantic-settings
 aiofiles
 httpx
 PyPDF2
-ragas==0.1.7
-langchain-google-vertexai
-streamlite
+streamlit
 alembic
-streamlit-mic-recorder==0.0.8
+streamlit-mic-recorder

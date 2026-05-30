@@ -69,9 +69,9 @@ class KnowledgeBaseService:
             "metadata": doc_structure["metadata"]
         }
     async def list_collections(self) -> list[str]:
-        # Listing collections is done via the sync Qdrant client to avoid
-        # async-backend detection issues during lightweight metadata queries.
-        return await asyncio.to_thread(QdrantService().list_knowledgebase_names)
+        # Pakai storage yang sama (async client, konsisten dengan operasi lain)
+        storage = self._get_storage()
+        return await storage.list_collections()
 
     async def delete_knowledgebase(self, base_name: str) -> bool:
         return await self._get_storage().delete_knowledgebase(base_name)

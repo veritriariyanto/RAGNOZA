@@ -90,34 +90,52 @@ class QdrantStorage:
                     }) for i in range(len(chunks))
                 ])
 
-    async def store_penjelasan(self, parent_col: str, child_col: str, text: str, doc_id: str, metadata: Dict):
+    async def store_penjelasan(self, parent_col, child_col, text, doc_id, metadata):
         prefix = f"[UU No {metadata.get('uu_number', 'N/A')} Tahun {metadata.get('tahun', 'N/A')}]"
         for m in re.finditer(r'Pasal\s+(\d+[A-Za-z]?)(.*?)(?=Pasal\s+\d+|$)', text, re.DOTALL):
             pn, pc = m.group(1), m.group(2).strip()
-            if len(pc) < 30: continue
-            
-            ref = f"Penjelasan Pasal {pn}"
-            vector = await asyncio.to_thread(self.embeddings.embed_query, f"{prefix} {ref}: {pc}")
-            await self.db.upsert(collection_name=parent_col, points=[models.PointStruct(
-                id=str(uuid.uuid4()), vector=vector, payload={
-                    "content": pc, "document_id": doc_id, "section_type": "penjelasan", "level": "pasal",
-                    "reference_label": ref, "uu_number": metadata.get("uu_number", ""),
-                    "tahun": metadata.get("tahun", ""), "judul_uu": metadata.get("judul_uu", ""),
-                    "pasal_nomor": pn
-                })])
+            if len(pc) < 30:
+                continue
 
-            paras = [p.strip() for p in pc.split("\n\n") if len(p.strip()) > 30]
-            if paras:
-                vectors = await asyncio.to_thread(self.embeddings.embed_documents, paras)
-                await self.db.upsert(collection_name=child_col, points=[
-                    models.PointStruct(id=str(uuid.uuid4()), vector=vectors[i], payload={
-                        "content": f"{prefix} {ref} paragraf {i+1}: {paras[i]}", "raw_text": paras[i],
-                        "parent_id": str(uuid.uuid4()), "document_id": doc_id, "section_type": "penjelasan",
-                        "reference_label": ref, "uu_number": metadata.get("uu_number", ""),
-                        "tahun": metadata.get("tahun", ""), "type": "penjelasan_detail",
-                        "pasal_nomor": pn, "position": i
-                    }) for i in range(len(paras))
-                ])
+        ref = f"Penjelasan Pasal {pn}"
+        parent_id = str(uuid.uuid4())  # ← generate SEKALI di sini
+
+        vector = await asyncio.to_thread(self.embeddings.embed_query, f"{prefix} {ref}: {pc}")
+        await self.db.upsert(collection_name=parent_col, points=[models.PointStruct(
+            id=parent_id,  # ← pakai parent_id ini
+            vector=vector,
+            payload={
+                "content": pc, "document_id": doc_id, "section_type": "penjelasan",
+                "level": "pasal", "reference_label": ref,
+                "uu_number": metadata.get("uu_number", ""),
+                "tahun": metadata.get("tahun", ""),
+                "judul_uu": metadata.get("judul_uu", ""),
+                "pasal_nomor": pn
+            }
+        )])
+
+        paras = [p.strip() for p in pc.split("\n\n") if len(p.strip()) > 30]
+        if paras:
+            vectors = await asyncio.to_thread(self.embeddings.embed_documents, paras)
+            await self.db.upsert(collection_name=child_col, points=[
+                models.PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=vectors[i],
+                    payload={
+                        "content": f"{prefix} {ref} paragraf {i+1}: {paras[i]}",
+                        "raw_text": paras[i],
+                        "parent_id": parent_id,  # ← pakai parent_id yang sama, bukan uuid baru
+                        "document_id": doc_id,
+                        "section_type": "penjelasan",
+                        "reference_label": ref,
+                        "uu_number": metadata.get("uu_number", ""),
+                        "tahun": metadata.get("tahun", ""),
+                        "type": "penjelasan_detail",
+                        "pasal_nomor": pn,
+                        "position": i
+                    }
+                ) for i in range(len(paras))
+            ])
 
     async def _store_child_chunks(self, child_col: str, chunks: List[str], parent_id: str, doc_id: str, metadata: Dict, section_type: str, reference_label: str, keyword_tags: List[str]):
         vectors = await asyncio.to_thread(self.embeddings.embed_documents, chunks)
@@ -132,7 +150,14 @@ class QdrantStorage:
 
     async def list_collections(self) -> List[str]:
         res = await self.db.get_collections()
-        return sorted({c.name.replace("_parent", "") for c in res.collections if "_parent" in c.name})
+        all_names = [c.name for c in res.collections]
+        print(f"[QDRANT LIST DEBUG] semua collections: {all_names}")
+        
+        filtered = sorted({c.name.replace("_parent", "") 
+                        for c in res.collections 
+                        if "_parent" in c.name})
+        print(f"[QDRANT LIST DEBUG] filtered result: {filtered}")
+        return filtered
 
     async def delete_knowledgebase(self, base_name: str) -> bool:
         for s in ["_parent", "_child"]:

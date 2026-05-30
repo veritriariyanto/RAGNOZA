@@ -51,19 +51,19 @@ def render_knowledgebase_tab():
     with col1:
         st.metric(
             "Parent Count",
-            data["parent_count"]
+            data.get("parent_count", 0)
         )
 
     with col2:
         st.metric(
             "Child Count",
-            data["child_count"]
+            data.get("child_count", 0)
         )
 
     with col3:
         st.metric(
             "Status",
-            data["status"]
+            data.get("status", "N/A")
         )
 
     st.divider()

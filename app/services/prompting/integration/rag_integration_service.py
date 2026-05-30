@@ -89,14 +89,28 @@ class RAGIntegrationService:
                 limit=3,
             )
 
-            # ── Tahap 4: Ekstraksi Konteks ────────────────────────────────────
+            # rag_integration_service.py — Tahap 4, GANTI SELURUH BLOK INI:
+
+            # ── Tahap 4: Ekstraksi Konteks ────────────────────────────────────────
             contexts = []
             for res in kb_results.get("results", []):
+                # Coba parent dulu (lebih lengkap)
                 parent_content = res.get("parent", {}).get("content")
                 if parent_content:
                     contexts.append(parent_content)
+                    continue
+                
+                # Fallback ke child content jika parent kosong
+                child_content = res.get("child", {}).get("content")
+                if child_content:
+                    contexts.append(child_content)
 
             combined_context = "\n\n".join(contexts)
+
+            # Debug sementara
+            print(f"[SERVICE DEBUG] contexts count: {len(contexts)}")
+            print(f"[SERVICE DEBUG] combined_context length: {len(combined_context)}")
+            print(f"[SERVICE DEBUG] sample: {combined_context[:200]}")
 
             # ── Tahap 5: Generate Material ────────────────────────────────────
             final_material = None

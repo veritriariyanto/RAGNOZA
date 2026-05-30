@@ -1,11 +1,25 @@
 # evaluation_tab.py
 
+"""
+streamlit_app/components/evaluation_tab.py  (updated)
+ 
+Perubahan dari versi lama:
+- Auto-populate form dari hasil RAG terakhir (session_state.last_rag_result)
+- Tampilkan hasil RAGAS otomatis jika sudah ada (session_state.last_ragas_result)
+- Form manual tetap tersedia untuk evaluasi kustom atau tambah ground truth
+- Tombol "Evaluasi Ulang dengan Ground Truth" untuk aktifkan 4 metrik
+"""
+
 import streamlit as st
 from api.evaluasi.evaluation_api import run_ragas_evaluation
-
+from utils.session import (
+    get_last_rag_result,
+    get_last_ragas_result,
+    set_last_ragas_result,
+)
 
 # ─────────────────────────────────────────
-# HELPERS
+# HELPERS VISUAL
 # ─────────────────────────────────────────
 
 def _score_color(score: float | None) -> str:
@@ -75,6 +89,69 @@ def _render_metric_card(label: str, description: str, score: float | None, badge
         unsafe_allow_html=True,
     )
 
+def _render_metrics_display(metrics: dict):
+    """Render kartu metrik + progress bar dari dict metrics."""
+    has_gt = metrics.get("context_precision") is not None
+
+    if has_gt: 
+        col1, col2 = st.columns(2)
+        with col1:
+            _render_metric_card("Faithfulness",      "Faktual vs konteks",          metrics.get("faithfulness"))
+            _render_metric_card("Context Precision", "Presisi konteks vs reference", metrics.get("context_precision"), badge="+ ground truth")
+        with col2:
+            _render_metric_card("Answer Relevancy",  "Relevansi jawaban",           metrics.get("answer_relevancy"))
+            _render_metric_card("Context Recall",    "Kelengkapan konteks",         metrics.get("context_recall"),    badge="+ ground truth")
+
+            st.markdown("<div style='margin-top:8px;'>", unsafe_allow_html=True)
+            _render_metric_card("Overall Score", "Rata-rata semua 4 metrik", metrics.get("overall_score"))
+            st.markdown("</div>", unsafe_allow_html=True)
+    else:
+        col1, col2, col3 = st.columns(3)  
+        with col1:
+            _render_metric_card("Faithfulness",     "Faktual vs konteks", metrics.get("faithfulness"))
+        with col2:
+            _render_metric_card("Answer Relevancy", "Relevansi jawaban",  metrics.get("answer_relevancy"))
+        with col3:
+            _render_metric_card("Overall Score",    "Rata-rata 2 metrik", metrics.get("overall_score"))
+
+    # Progress bar
+    st.markdown("#### 📈 Visualisasi Skor")
+    for name, score in [
+        ("Faithfulness", metrics.get("faithfulness")),
+        ("Answer Relevancy", metrics.get("answer_relevancy")),
+        ("Context Precision", metrics.get("context_precision")),
+        ("Context Recall", metrics.get("context_recall")),
+    ]:
+        if score is not None:
+            col_label, col_bar = st.columns([1.5, 3])
+            with col_label:
+                st.markdown(
+                    f"<div style='padding-top:6px; font-size:13px;'>"
+                    f"{_score_emoji(score)} <b>{name}</b></div>",
+                    unsafe_allow_html=True,
+                )
+            with col_bar:
+                st.progress(float(score), text=f"{score:.4f}")
+
+    #Rekomendasi
+    overall = metrics.get("overall_score")
+    if overall is not None:
+        st.divider()
+        if overall >= 0.8:
+            st.success(
+                "✅ **Sistem RAG Anda bekerja dengan sangat baik!** "
+                "Jawaban akurat, faktual, dan relevan."
+            )
+        elif overall >= 0.6:
+            st.warning(
+                "⚠️ **Performa cukup, ada ruang perbaikan.** "
+                "Pertimbangkan meningkatkan kualitas chunk atau sistem prompt."
+            )
+        else:
+            st.error(
+                "❌ **Performa rendah, perlu peningkatan.** "
+                "Analisis lebih lanjut diperlukan untuk mengidentifikasi penyebab."
+            )
 
 # ─────────────────────────────────────────
 # MAIN RENDER
@@ -83,8 +160,8 @@ def _render_metric_card(label: str, description: str, score: float | None, badge
 def render_evaluation_tab():
     st.subheader("📊 **Evaluasi RAGAS**")
     st.caption(
-        "Evaluasi kualitas jawaban RAG. Isi **ground truth** untuk mengaktifkan "
-        "metrik Context Precision & Context Recall."
+        "Evaluasi kualitas jawaban RAG. Tab ini auto-populate dari hasil audio terakhir. "
+        "Isi **ground truth** untuk mengaktifkan Context Precision & Recall."
     )
 
     st.divider()
@@ -94,36 +171,114 @@ def render_evaluation_tab():
         col_a, col_b = st.columns(2)
         with col_a:
             st.markdown("""
-**🎯 Faithfulness**  
-Seberapa faktual jawaban berdasarkan konteks.  
-Skor tinggi = jawaban tidak "mengarang" di luar konteks.
+                **🎯 Faithfulness**  
+                Seberapa faktual jawaban berdasarkan konteks.  
+                Skor tinggi = jawaban tidak "mengarang" di luar konteks.
 
-**📐 Context Precision** *(butuh ground truth)*  
-Seberapa presisi konteks yang di-retrieve.  
-Skor tinggi = chunk yang relevan muncul di posisi atas.
+                **📐 Context Precision** *(butuh ground truth)*  
+                Seberapa presisi konteks yang di-retrieve.  
+                Skor tinggi = chunk yang relevan muncul di posisi atas.
             """)
         with col_b:
             st.markdown("""
-**💬 Answer Relevancy**  
-Seberapa relevan jawaban terhadap pertanyaan.  
-Skor tinggi = jawaban langsung menjawab inti pertanyaan.
+                **💬 Answer Relevancy**  
+                Seberapa relevan jawaban terhadap pertanyaan.  
+                Skor tinggi = jawaban langsung menjawab inti pertanyaan.
 
-**🔁 Context Recall** *(butuh ground truth)*  
-Seberapa lengkap konteks mencakup ground truth.  
-Skor tinggi = tidak ada informasi penting yang terlewat.
+                **🔁 Context Recall** *(butuh ground truth)*  
+                Seberapa lengkap konteks mencakup ground truth.  
+                Skor tinggi = tidak ada informasi penting yang terlewat.
             """)
         st.markdown(
-            "**Interpretasi:** 🟢 `≥ 0.8` Sangat Baik &nbsp; "
-            "🟡 `0.6–0.79` Cukup Baik &nbsp; 🔴 `< 0.6` Perlu Perbaikan"
+            "**Interpretasi:** " \
+            "🟢 `≥ 0.8` Sangat Baik &nbsp; "
+            "🟡 `0.6–0.79` Cukup Baik &nbsp; " \
+            "🔴 `< 0.6` Perlu Perbaikan"
         )
 
-    # ── FORM INPUT ──────────────────────────────────────
-    st.markdown("### 📝 Input Evaluasi")
+    # ── SEKSI 1: HASIL OTOMATIS (dari RAG pipeline terakhir) ─────────────────
+    last_rag = get_last_rag_result()
+    last_ragas = get_last_ragas_result()
+
+    # Normalisasi — pastikan keduanya dict atau None
+    last_rag   = last_rag   if isinstance(last_rag,   dict) else None
+    last_ragas = last_ragas if isinstance(last_ragas, dict) else None
+
+    if last_rag and last_ragas and isinstance(last_ragas, dict) and last_ragas.get("status") == "success":
+        st.markdown("### 🤖 Evaluasi Otomatis — Hasil Terakhir") 
+
+        timestamp = last_ragas.get("timestamp", "-") if last_ragas else "-"
+        question  = last_rag.get("question", "-")[:80] if last_rag else "-"
+        st.caption(f"Dari audio diproses pukul **{timestamp}** · Query: *{question}...*")
+
+        metrics = last_ragas.get("metrics", {})
+        _render_metrics_display(metrics)
+
+        # ── Tambah Ground Truth untuk 4 Metrik ───────────────────────────────
+        st.divider()
+        st.markdown("#### ➕ Tambah Ground Truth untuk 4 Metrik")
+        st.caption(
+            "Saat ini hanya 2 metrik (tanpa ground truth). "
+            "Isi di bawah untuk aktifkan Context Precision & Context Recall."
+        )
+
+        gt_input = st.text_area(
+            "✅ Ground Truth",
+            placeholder="Masukkan jawaban referensi ideal untuk pertanyaan di atas...",
+            height=100,
+            key="gt_from_auto",
+        )
+
+        if st.button("🔄 Evaluasi Ulang dengan Ground Truth", key="btn_reeval"):
+            if not gt_input.strip():
+                st.warning("⚠️ Ground truth tidak boleh kosong untuk evaluasi ulang.")
+            elif not last_rag:
+                st.warning("⚠️ Tidak ada data RAG tersimpan. Proses audio terlebih dahulu.")
+            else:
+                with st.spinner("⏳ Menjalankan evaluasi ulang RAGAS..."):
+                    new_result = run_ragas_evaluation(
+                        question=last_rag["question"],
+                        context=last_rag["context"],
+                        answer=last_rag["answer_text"],
+                        ground_truth=gt_input.strip(),
+                    )
+                set_last_ragas_result(new_result)  # Update hasil evaluasi di session
+                st.rerun()  # Refresh untuk tampilkan hasil baru
+
+        # Detail input
+        if last_rag:
+            with st.expander("🔍 Detail Input yang Dievaluasi", expanded=False):
+                st.markdown(f"**❓ Pertanyaan:** {last_rag.get('question', '-')}")
+                st.markdown("**📄 Konteks:**")
+                st.info(last_rag.get("context", "-")[:800] + ("..." if len(last_rag.get("context", "")) > 800 else ""))
+                st.markdown("**💡 Jawaban LLM:**")
+                st.success(last_rag.get("answer_text", "-")[:600])
+
+    elif last_ragas and last_ragas.get("status") == "error":
+        st.error(f"⚠️ Evaluasi otomatis terakhir gagal: {last_ragas.get('error', 'Unknown error')}")
+        st.info("Gunakan form di bawah untuk evaluasi manual.")
+
+    else:
+        st.info(
+            "💡 Belum ada hasil evaluasi otomatis. "
+            "Proses audio di **tab Generate** dengan tombol 🚀 **Proses RAG & Evaluasi** terlebih dahulu."
+        )
+
+    # ── SEKSI 2: FORM MANUAL ──────────────────────────────────────────────────
+    st.divider()
+    st.markdown("### 📝 Input Evaluasi Manual")
+    st.caption("Evaluasi kustom dengan input manual.")
+
+    # Pre-fill dari last_rag jika ada, tapi bisa diedit
+    default_question = last_rag["question"] if last_rag else ""
+    default_context  = last_rag["context"] if last_rag else ""
+    default_answer   = last_rag["answer_text"] if last_rag else ""
 
     with st.form("ragas_evaluation_form", clear_on_submit=False):
 
         question_input = st.text_area(
             "❓ Pertanyaan",
+            value=default_question,
             placeholder="Contoh: Apa bunyi Pasal 1 UUD 1945?",
             height=80,
             help="Pertanyaan yang diajukan user ke sistem RAG.",
@@ -131,6 +286,7 @@ Skor tinggi = tidak ada informasi penting yang terlewat.
 
         context_input = st.text_area(
             "📄 Konteks (Retrieved Context)",
+            value=default_context,
             placeholder="Teks konteks yang di-retrieve dari knowledge base...",
             height=120,
             help="Chunk teks yang dikembalikan oleh retriever.",
@@ -138,6 +294,7 @@ Skor tinggi = tidak ada informasi penting yang terlewat.
 
         answer_input = st.text_area(
             "💡 Jawaban LLM",
+            value=default_answer,
             placeholder="Jawaban yang dihasilkan LLM berdasarkan konteks...",
             height=120,
             help="Output dari LLM setelah menerima konteks dan pertanyaan.",
@@ -178,7 +335,7 @@ Skor tinggi = tidak ada informasi penting yang terlewat.
             return
 
         st.divider()
-        st.markdown("### 📊 Hasil Evaluasi")
+        st.markdown("### 📊 Hasil Evaluasi Manual")
 
         with st.spinner("⏳ Menjalankan evaluasi RAGAS... (biasanya 15–60 detik)"):
             result = run_ragas_evaluation(
@@ -192,84 +349,4 @@ Skor tinggi = tidak ada informasi penting yang terlewat.
             st.error(f"❌ Evaluasi gagal: {result.get('error', 'Unknown error')}")
             return
 
-        metrics = result.get("metrics", {})
-        has_gt_result = metrics.get("context_precision") is not None
-
-        # ── KARTU METRIK ──
-        if has_gt_result:
-            # 4 kartu dalam 2 baris
-            col1, col2 = st.columns(2)
-            with col1:
-                _render_metric_card("Faithfulness",      "Faktual vs konteks",          metrics.get("faithfulness"))
-                _render_metric_card("Context Precision", "Presisi konteks vs reference", metrics.get("context_precision"), badge="+ ground truth")
-            with col2:
-                _render_metric_card("Answer Relevancy",  "Relevansi jawaban",           metrics.get("answer_relevancy"))
-                _render_metric_card("Context Recall",    "Kelengkapan konteks",         metrics.get("context_recall"),    badge="+ ground truth")
-
-            # Overall sendiri di bawah
-            st.markdown("<div style='margin-top:8px;'>", unsafe_allow_html=True)
-            _render_metric_card("Overall Score", "Rata-rata semua 4 metrik", metrics.get("overall_score"))
-            st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            # 2 kartu + overall
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                _render_metric_card("Faithfulness",     "Faktual vs konteks", metrics.get("faithfulness"))
-            with col2:
-                _render_metric_card("Answer Relevancy", "Relevansi jawaban",  metrics.get("answer_relevancy"))
-            with col3:
-                _render_metric_card("Overall Score",    "Rata-rata 2 metrik", metrics.get("overall_score"))
-
-        # ── PROGRESS BAR ──
-        st.markdown("#### 📈 Visualisasi Skor")
-
-        metrics_display = {
-            "Faithfulness":      metrics.get("faithfulness"),
-            "Answer Relevancy":  metrics.get("answer_relevancy"),
-            "Context Precision": metrics.get("context_precision"),
-            "Context Recall":    metrics.get("context_recall"),
-        }
-
-        for metric_name, score in metrics_display.items():
-            if score is not None:
-                col_label, col_bar = st.columns([1.5, 3])
-                with col_label:
-                    st.markdown(
-                        f"<div style='padding-top:6px; font-size:13px;'>"
-                        f"{_score_emoji(score)} <b>{metric_name}</b></div>",
-                        unsafe_allow_html=True,
-                    )
-                with col_bar:
-                    st.progress(float(score), text=f"{score:.4f}")
-
-        # ── DETAIL INPUT ──
-        with st.expander("🔍 Detail Input yang Dievaluasi", expanded=False):
-            inp = result.get("input", {})
-            st.markdown(f"**❓ Pertanyaan:** {inp.get('question', '-')}")
-            st.markdown("**📄 Konteks:**")
-            st.info(inp.get("context", "-"))
-            st.markdown("**💡 Jawaban LLM:**")
-            st.success(inp.get("answer", "-"))
-            if inp.get("ground_truth"):
-                st.markdown("**✅ Ground Truth:**")
-                st.warning(inp.get("ground_truth"))
-
-        # ── REKOMENDASI ──
-        overall = metrics.get("overall_score")
-        if overall is not None:
-            st.divider()
-            if overall >= 0.8:
-                st.success(
-                    "✅ **Sistem RAG Anda bekerja dengan sangat baik!** "
-                    "Jawaban akurat, faktual, dan relevan."
-                )
-            elif overall >= 0.6:
-                st.warning(
-                    "⚠️ **Performa cukup, ada ruang perbaikan.** "
-                    "Pertimbangkan meningkatkan kualitas chunk atau sistem prompt."
-                )
-            else:
-                st.error(
-                    "🔴 **Performa perlu ditingkatkan.** "
-                    "Coba perbaiki strategi retrieval, kualitas dokumen, atau instruksi system prompt."
-                )
+        _render_metrics_display(result.get("metrics", {}))

@@ -196,21 +196,22 @@ async def ingest_kb(
             detail=f"Gagal memproses dokumen: {str(e)}"
         )
 
-
 @router.get("/list", response_model=List[str])
 async def list_kb():
-    """
-    Mendapatkan daftar semua Knowledge Base yang tersedia.
-    
-    Returns:
-        List nama knowledge base (tanpa suffix _parent/_child)
-    """
     try:
         names = await kb_service.list_collections()
+        # kb_service.list_collections() sudah return nama yang bersih
+        # tidak perlu filter _parent lagi
         return sorted(names)
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
+            detail=f"Gagal mengambil daftar KB: {str(e)}"
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
             detail=f"Gagal mengambil daftar KB: {str(e)}"
         )
 

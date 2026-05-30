@@ -1,7 +1,16 @@
+"""
+streamlit_app/api/evaluasi/evaluation_api.py
+
+Client untuk endpoint /evaluation/ragas.
+Dipanggil dari frontend setelah material RAG diterima.
+"""
+
 import requests
 from config.settings import settings
 
-BASE_URL = settings.API_BASE_URL
+# Port evaluator berbeda dari main backend
+EVALUATOR_URL = settings.EVALUATOR_BASE_URL
+
 
 def run_ragas_evaluation(
     question: str,
@@ -10,56 +19,63 @@ def run_ragas_evaluation(
     ground_truth: str | None = None,
 ) -> dict:
     """
-    Kirim request evaluasi RAGAS ke backend FastAPI.
+    Kirim data ke endpoint evaluasi RAGAS.
 
-    Args:
-        question: Pertanyaan yang dievaluasi
-        context: Konteks yang digunakan RAG
-        answer: Jawaban yang dihasilkan LLM 
-        ground_truth: Jawaban kebenaran (jika tersedia)
-
-    Returns:
-        dict berisi status dan metrics evaluasi
+    Returns dict dengan key:
+        - status   (str)   "success" | "error"
+        - metrics  (dict)  faithfulness, answer_relevancy, context_precision,
+                           context_recall, overall_score
+        - input    (dict)
+        - error    (str | None)
     """
     try:
-        response = requests.post(
-            url=f"{BASE_URL}/evaluation/ragas",
-            json={
-                "question": question,
-                "context": context,
-                "answer": answer,
-                "ground_truth": ground_truth or None,
-            },
-            timeout=120,  # evaluasi RAGAS bisa butuh waktu lama
-        )
-        response.raise_for_status()
-        return response.json()
-
-    except requests.exceptions.Timeout:
-        return {
-            "status": "error",
-            "error": "Request timeout — evaluasi RAGAS membutuhkan waktu terlalu lama.",
-            "metrics": None,
+        payload = {
+            "question": question,
+            "context": context,
+            "answer": answer,
+            "source_label": "audio_rag",
         }
+        if ground_truth:
+            payload["ground_truth"] = ground_truth
+
+        print(f"[RAGAS API] Mengirim ke {EVALUATOR_URL}/evaluate")
+        print(f"[RAGAS API] context length: {len(context)}, answer length: {len(answer)}")
+
+        response = requests.post(
+            f"{EVALUATOR_URL}/evaluate",
+            json=payload,
+            timeout=120,
+        )
+
+        print(f"[RAGAS API] Response status: {response.status_code}")
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            try:
+                err_detail = response.json().get("detail", response.text)
+            except Exception:
+                err_detail = response.text
+            return {
+                "status": "error",
+                "metrics": None,
+                "input": {},
+                "error": f"Server error {response.status_code}: {err_detail}",
+            }
+
     except requests.exceptions.ConnectionError:
         return {
             "status": "error",
-            "error": "Tidak dapat terhubung ke backend. Pastikan server FastAPI berjalan.",
             "metrics": None,
+            "input": {},
+            "error": "Evaluator service tidak berjalan di port 8001. Jalankan evaluator terlebih dahulu.",
         }
-    except requests.exceptions.HTTPError as e:
-        try:
-            detail = e.response.json().get("detail", str(e))
-        except Exception:
-            detail = str(e)
+    except requests.exceptions.Timeout:
         return {
             "status": "error",
-            "error": detail,
             "metrics": None,
+            "input": {},
+            "error": "Evaluasi timeout — RAGAS membutuhkan waktu lebih lama dari biasanya.",
         }
     except Exception as e:
-        return {
-            "status": "error",
-            "error": str(e),
-            "metrics": None,
-        }
+        return {"status": "error", "metrics": None, "input": {}, "error": str(e)}
