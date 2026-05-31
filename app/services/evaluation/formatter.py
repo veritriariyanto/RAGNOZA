@@ -1,48 +1,73 @@
-# formatter.py
-
 from app.schemas.prompting.generate_content import MaterialResponse
 
 def material_to_text(material: MaterialResponse) -> str:
+    # 1. Ambil objek utama dengan fallback aman
+    summary = material.summary
+    risk = material.risk_review
+
+    # 2. Format blok teks tunggal (jika tidak ada data, beri fallback "-")
+    overview = summary.overview if (summary and summary.overview) else "-"
+    conclusion = summary.conclusion if (summary and summary.conclusion) else "-"
+    
+    risk_status = risk.status if (risk and risk.status) else "-"
+    risk_score = risk.score if (risk and risk.score is not None) else "-"
+    risk_analysis = risk.analysis if (risk and risk.analysis) else "-"
+    recommendation = risk.recommendation if (risk and risk.recommendation) else "-"
+
+    # 3. Format data list/array dengan pengecekan kosong (empty check)
+    key_points = ' | '.join(str(p) for p in summary.key_points) if (summary and summary.key_points) else "-"
+    risks_list = ' | '.join(str(r) for r in risk.risks) if (risk and risk.risks) else "-"
+    mitigation_steps = ' | '.join(str(m) for m in risk.mitigation_steps) if (risk and risk.mitigation_steps) else "-"
+
+    # 4. Format objek list bersarang (Nested Object List)
+    clause_search = ' | '.join([f'{item.clause_topic} => {item.article}' for item in material.clause_search]) if material.clause_search else "-"
+    legal_qa = ' | '.join([f'{item.question} => {item.answer}' for item in material.legal_qa]) if material.legal_qa else "-"
+    
+    # Sesuai aturan baru, jika LLM mengosongkan array ini, output otomatis jadi "-"
+    timeline_extraction = ' | '.join([f'{item.date_or_period} => {item.event}' for item in material.timeline_extraction]) if material.timeline_extraction else "-"
+    comparison = ' | '.join([f'{item.aspect} => {item.conclusion}' for item in material.comparison]) if material.comparison else "-"
+    referensi_uu = ' | '.join([f'{item.source_name} Pasal {item.article}' for item in material.referensi_uu]) if material.referensi_uu else "-"
+
     return f"""
     Resume:
-    {material.summary.overview}
+    {overview}
 
     Poin Penting:
-    {' | '.join(material.summary.key_points)}
+    {key_points}
 
     Kesimpulan:
-    {material.summary.conclusion}
+    {conclusion}
 
     Clause Search:
-    {' | '.join([f'{item.clause_topic} => {item.article}' for item in material.clause_search])}
+    {clause_search}
 
     Legal Q&A:
-    {' | '.join([f'{item.question} => {item.answer}' for item in material.legal_qa])}
+    {legal_qa}
 
     Status Kepatuhan:
-    {material.risk_review.status}
+    {risk_status}
 
     Skor Kepatuhan:
-    {material.risk_review.score}
+    {risk_score}
 
     Analisis Kepatuhan:
-    {material.risk_review.analysis}
+    {risk_analysis}
 
     Risiko Analisis:
-    {' | '.join(material.risk_review.risks)}
+    {risks_list}
 
     Langkah Mitigasi:
-    {' | '.join(material.risk_review.mitigation_steps)}
+    {mitigation_steps}
 
     Rekomendasi Tindakan:
-    {material.risk_review.recommendation}
+    {recommendation}
 
     Timeline Extraction:
-    {' | '.join([f'{item.date_or_period} => {item.event}' for item in material.timeline_extraction])}
+    {timeline_extraction}
 
     Comparison:
-    {' | '.join([f'{item.aspect} => {item.conclusion}' for item in material.comparison])}
+    {comparison}
 
     Referensi UU:
-    {' | '.join([f'{item.source_name} Pasal {item.article}' for item in material.referensi_uu])}
+    {referensi_uu}
     """

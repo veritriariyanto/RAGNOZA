@@ -22,26 +22,28 @@ class MaterialGeneratorService:
 
         # 1. System Prompt: Mengunci peran, format output, dan gaya bahasa formal.
         system_prompt = (
-            "Anda adalah Legal Task Agent untuk dokumen hukum Indonesia. "
-            "Anda harus menyiapkan output terstruktur untuk blok: Summary, Clause Search, Legal Q&A, Risk Review, Timeline Extraction, dan Comparison. "
-            "Tugas Anda adalah menganalisis skenario pengguna secara objektif berdasarkan konteks hukum yang diberikan. "
-            "Gunakan gaya bahasa formal, tegas, lugas, dan patuhi PUEBI. "
-            "Jangan pernah mengarang pasal atau referensi. Jika konteks tidak memadai, nyatakan dengan jelas bahwa data tidak memadai. "
-            "Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan, dan wajib mengikuti schema yang diberikan."
+            "Anda adalah Legal Task Agent untuk dokumen hukum Indonesia yang bertugas menganalisis skenario secara objektif dan berbasis fakta.\n\n"
+            "CRITICAL RULES (WAJIB DIPATUHI):\n"
+            "1. STRICTLY CONTEXT-BOUND: Analisis HANYA boleh bersumber dari 'Konieks teks Dokumen Hukum' yang diberikan. Jangan berasumsi, menyimpulkan nama Undang-Undang (seperti KUHP/UU ITE), atau mengarang nomor pasal/ayat jika tidak tertulis eksplisit di dalam konteks.\n"
+            "2. NO HALUCINATION ON COMPARISON: Pada blok Comparison, Anda HANYA boleh membandingkan dua ketentuan yang benar-benar tertulis di dalam konteks teks. Jika tidak ada elemen pembanding di dalam konteks, isi bidang comparison dengan array kosong []. DILARANG MENGARANG pasal pembanding (seperti Pasal 27B).\n"
+            "3. ACCURATE CLAUSE MAPPING: Pastikan teks kutipan (excerpt) atau isi ringkasan benar-benar cocok dengan pasal/ayat aslinya. Jangan mencampuradukkan isi ayat satu dengan ayat lainnya.\n"
+            "4. TIMELINE STRICTNESS: Bidang 'date_or_period' pada Timeline Extraction WAJIB berisi durasi waktu, tanggal, tenggat masa berlaku, atau periode hukuman (misal: '2 tahun', '4 tahun') yang ada di teks, BUKAN diisi nama pasal.\n"
+            "5. Jika konteks tidak memadai untuk mengisi suatu blok, kosongkan blok tersebut (gunakan array kosong atau '-' sesuai schema Pydantic) tanpa mengarang informasi.\n\n"
+            "Gunakan gaya bahasa formal, tegas, lugas, patuhi PUEBI. Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan, dan wajib mengikuti schema."
         )
 
         # 2. Human Prompt: Berisi konteks hukum, skenario, dan struktur jawaban yang diharapkan.
         human_prompt = (
-            f"Konteks teks Dokumen Hukum (Referensi):\n{data.context_text}\n\n"
+            f"Konieks teks Dokumen Hukum (Referensi):\n{data.context_text}\n\n"
             f"Skenario Tindakan Pengguna (Kasus):\n{data.user_scenario}\n\n"
             "Instruksi Output:\n"
-            "1. Isi Summary dengan ringkasan isi dokumen hukum, poin penting, dan kesimpulan singkat.\n"
-            "2. Isi Clause Search dengan pencarian klausul/pasal/ayat yang paling relevan terhadap pertanyaan pengguna.\n"
-            "3. Isi Legal Q&A dengan 3 sampai 5 pertanyaan dan jawaban yang benar-benar berbasis konteks.\n"
-            "4. Isi Risk Review dengan status, skor, analisis risiko, mitigasi, dan rekomendasi.\n"
-            "5. Isi Timeline Extraction dengan tanggal, masa berlaku, tenggat, atau urutan peristiwa hukum yang relevan.\n"
-            "6. Isi Comparison dengan perbandingan dua ketentuan, klausul, atau dokumen yang relevan.\n"
-            "7. Jika data tidak tersedia untuk salah satu blok, gunakan array kosong atau nilai yang menyatakan data tidak memadai tanpa mengarang.\n\n"
+            "1. Isi Summary dengan ringkasan isi dokumen hukum secara presisi, poin penting, dan kesimpulan singkat.\n"
+            "2. Isi Clause Search dengan memetakan klausul/pasal/ayat yang paling relevan. Pastikan teks ekskrip (excerpt) murni menyalin dari konteks tanpa tertukar.\n"
+            "3. Isi Legal Q&A dengan 3 sampai 5 pertanyaan dan jawaban yang benar-benar berbasis konteks untuk menjawab kasus pengguna.\n"
+            "4. Isi Risk Review dengan status, skor (0-100), analisis risiko, mitigasi, dan rekomendasi berdasarkan kasus pengguna.\n"
+            "5. Isi Timeline Extraction dengan urutan waktu/peristiwa. Catatan: 'date_or_period' harus mengekstrak elemen waktu (seperti masa hukuman penjara, batas waktu pengaduan), BUKAN nama pasal. Jika tidak ada elemen waktu, kosongkan.\n"
+            "6. Isi Comparison HANYA jika terdapat dua ketentuan atau lebih di dalam teks konteks yang bisa diperbandingkan secara nyata. JIKA TIDAK ADA, isi dengan array kosong [].\n"
+            "7. Jika data tidak tersedia atau tidak memadai untuk salah satu blok, gunakan array kosong atau nilai default '-' tanpa melakukan karangan di luar teks.\n\n"
             f"{self.json_parser.get_format_instructions()}"
         )
 
