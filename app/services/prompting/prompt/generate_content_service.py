@@ -11,33 +11,37 @@ logger = logging.getLogger(__name__)
 class MaterialGeneratorService:
     def __init__(self):
         self.engine = llm
-        # Parser otomatis mengenali struktur baru dari MaterialResponse (SPK)
+        # Parser otomatis mengenali struktur baru MaterialResponse yang dipakai blok UI legal task agents
         self.json_parser = JsonOutputParser(pydantic_object=MaterialResponse)
 
     async def generate_legal_material(self, data: MaterialRequest) -> MaterialResponse:
         """
-        Menghasilkan rekomendasi keputusan hukum berdasarkan analisis UU (SPK).
+        Menghasilkan output JSON untuk blok:
+        Summary, Clause Search, Legal Q&A, Risk Review, Timeline Extraction, dan Comparison.
         """
-        
-        # 1. System Prompt: Mengunci peran & gaya bahasa formal secara internal
+
+        # 1. System Prompt: Mengunci peran, format output, dan gaya bahasa formal.
         system_prompt = (
-            "Anda adalah Sistem Penunjang Keputusan (SPK) Hukum Senior di Indonesia. "
-            "Tugas Anda adalah menganalisis skenario tindakan pengguna secara objektif dan ketat "
-            "berdasarkan konteks dokumen hukum yang diberikan. "
-            "Sampaikan hasil analisis dengan gaya bahasa yang formal, tegas, lugas, dan patuhi PUEBI. "
-            "Tentukan status keputusan dengan jelas dan hitung skor kepatuhannya (1-100). "
-            "Jangan pernah melakukan halusinasi pasal. Jika tidak diatur di teks sumber, katakan data tidak memadai."
-            "Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan"
-            "dan wajib mengikuti schema yang diberikan."
+            "Anda adalah Legal Task Agent untuk dokumen hukum Indonesia. "
+            "Anda harus menyiapkan output terstruktur untuk blok: Summary, Clause Search, Legal Q&A, Risk Review, Timeline Extraction, dan Comparison. "
+            "Tugas Anda adalah menganalisis skenario pengguna secara objektif berdasarkan konteks hukum yang diberikan. "
+            "Gunakan gaya bahasa formal, tegas, lugas, dan patuhi PUEBI. "
+            "Jangan pernah mengarang pasal atau referensi. Jika konteks tidak memadai, nyatakan dengan jelas bahwa data tidak memadai. "
+            "Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan, dan wajib mengikuti schema yang diberikan."
         )
 
-        # 2. Human Prompt: Bersih dari data.style, berfokus penuh pada skenario dan konteks
+        # 2. Human Prompt: Berisi konteks hukum, skenario, dan struktur jawaban yang diharapkan.
         human_prompt = (
-            f"Konto teks Dokumen Hukum (Referensi):\n{data.context_text}\n\n"
+            f"Konteks teks Dokumen Hukum (Referensi):\n{data.context_text}\n\n"
             f"Skenario Tindakan Pengguna (Kasus):\n{data.user_scenario}\n\n"
-            "Instruksi Analisis:\n"
-            "1. Evaluasi apakah skenario pengguna melanggar atau mematuhi konteks hukum.\n"
-            "2. Berikan skor kepatuhan, analisis risiko sanksi, dan rekomendasi mitigasinya.\n\n"
+            "Instruksi Output:\n"
+            "1. Isi Summary dengan ringkasan isi dokumen hukum, poin penting, dan kesimpulan singkat.\n"
+            "2. Isi Clause Search dengan pencarian klausul/pasal/ayat yang paling relevan terhadap pertanyaan pengguna.\n"
+            "3. Isi Legal Q&A dengan 3 sampai 5 pertanyaan dan jawaban yang benar-benar berbasis konteks.\n"
+            "4. Isi Risk Review dengan status, skor, analisis risiko, mitigasi, dan rekomendasi.\n"
+            "5. Isi Timeline Extraction dengan tanggal, masa berlaku, tenggat, atau urutan peristiwa hukum yang relevan.\n"
+            "6. Isi Comparison dengan perbandingan dua ketentuan, klausul, atau dokumen yang relevan.\n"
+            "7. Jika data tidak tersedia untuk salah satu blok, gunakan array kosong atau nilai yang menyatakan data tidak memadai tanpa mengarang.\n\n"
             f"{self.json_parser.get_format_instructions()}"
         )
 
@@ -54,13 +58,27 @@ class MaterialGeneratorService:
 
         except Exception as e:
             logger.error(f"MaterialGeneratorService Error: {str(e)}")
-            # Fallback aman, pastikan semua key di MaterialResponse (SPK) terpenuhi
+            # Fallback aman, pastikan semua key di MaterialResponse terpenuhi.
             return MaterialResponse(
-                decision_status="ERROR_SISTEM",
-                compliance_score=0,
-                recommendation=f"Gagal memproses keputusan hukum karena kendala teknis. Detail: {str(e)}",
-                risk_analysis=["Tidak dapat mengevaluasi risiko karena kegagalan sistem"],
-                legal_basis=[]
+                summary={
+                    "title": "Summary",
+                    "overview": "Terjadi kegagalan sistem saat menyusun ringkasan hukum.",
+                    "key_points": ["Proses generate gagal dijalankan"],
+                    "conclusion": "Data tidak dapat diproses saat ini.",
+                },
+                clause_search=[],
+                legal_qa=[],
+                risk_review={
+                    "status": "ERROR_SISTEM",
+                    "score": 0,
+                    "analysis": f"Gagal memproses analisis hukum karena kendala teknis. Detail: {str(e)}",
+                    "risks": ["Tidak dapat mengevaluasi risiko karena kegagalan sistem"],
+                    "mitigation_steps": ["Coba ulang proses setelah sistem kembali stabil"],
+                    "recommendation": "Ulangi permintaan setelah perbaikan sistem.",
+                },
+                timeline_extraction=[],
+                comparison=[],
+                referensi_uu=[],
             )
 
 # Singleton instance aman digunakan oleh router
