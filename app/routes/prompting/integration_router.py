@@ -66,6 +66,8 @@ async def process_audio_rag(
     provider: str = Query("whisper", enum=["whisper", "elevenlabs"]),
     knowledge_base: str = Query("uud_1945"),
     style: str = Query("formal", enum=["formal", "casual", "academic"]),
+    auto_evaluate: bool = Query(True),
+    session_id: int | None = Query(None),
     rag_service: RAGIntegrationService = Depends(get_rag_service),
 ):
     """
@@ -88,14 +90,19 @@ async def process_audio_rag(
             provider=provider,
             style=style,
             background_tasks=background_tasks,              # ← BARU: teruskan ke service
+            auto_evaluate=auto_evaluate,
+            session_id=session_id,
         )
 
         # integration_router.py — di dalam process_audio_rag, sebelum return
-        full_ctx = result.retrieved_context or ""
+        full_ctx = getattr(result, "retrieved_context", None) or getattr(result, "context", "") or ""
+        source_details = getattr(result, "source_details", []) or []
+
         print(f"[ROUTER DEBUG] retrieved_context length: {len(full_ctx)}")
         print(f"[ROUTER DEBUG] retrieved_context preview: {repr(full_ctx[:200])}")
-        print(f"[ROUTER DEBUG] source_details count: {len(result.source_details)}")
-        print(f"[ROUTER DEBUG] source_details[0] keys: {list(result.source_details[0].keys()) if result.source_details else 'EMPTY'}")
+        print(f"[ROUTER DEBUG] source_details count: {len(source_details)}")
+        if source_details and isinstance(source_details, list):
+            print(f"[ROUTER DEBUG] source_details[0] type: {type(source_details[0])}")
 
         return {
             "status": "success",
@@ -103,29 +110,32 @@ async def process_audio_rag(
             "knowledge_base": knowledge_base,
             "data": {
                 "transcription": {
-                    "raw": result.raw_transcribe,
-                    "repaired": result.final_repaired_text,
+                    "raw": getattr(result, "raw_transcribe", None),
+                    "repaired": getattr(result, "final_repaired_text", None),
                 },
                 "rag": {
-                    "query_used": result.search_query_used,
-                    "has_context": result.has_context,
+                    "query_used": getattr(result, "search_query_used", None),
+                    "has_context": getattr(result, "has_context", False),
                     "context_preview": (
-                        result.retrieved_context[:500] + "..."
-                        if len(result.retrieved_context) > 500
-                        else result.retrieved_context
+                        full_ctx[:500] + "..."
+                        if len(full_ctx) > 500
+                        else full_ctx
                     ),
-                    "full_context": result.retrieved_context or "",  # ← tambah ini
-                    "sources_count": len(result.source_details),
+                    "full_context": full_ctx,  # ← tambah ini
+                    "sources_count": len(source_details),
                 },
 
                 "generated_material": (
-                    result.final_material.model_dump() if result.final_material else None
+                    result.final_material.model_dump() if getattr(result, "final_material", None) else None
                 ),
-                "fallback_message": result.fallback_message,
+                "fallback_message": getattr(result, "fallback_message", None),
+                "history_id": getattr(result, "history_id", None),
+                "session_id": getattr(result, "session_id", None),
             },
             # Info untuk user bahwa evaluasi berjalan di background
             "evaluation": {
                 "status": "running_in_background",
+                "enabled": auto_evaluate,
                 "note": (
                     "Evaluasi RAGAS berjalan otomatis di background. "
                     "Lihat log server untuk hasil metrik."

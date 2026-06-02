@@ -57,6 +57,28 @@ def _bg_color(color: str) -> str:
     }.get(color, "rgba(108,117,125,0.05)")
 
 
+def _resolve_history_id(last_rag: dict | None) -> int | None:
+    if last_rag and last_rag.get("history_id") is not None:
+        return last_rag.get("history_id")
+    return st.session_state.get("selected_history_id")
+
+
+def _sync_history_cache_after_ragas_update(history_id: int | None, result: dict) -> None:
+    if history_id is None:
+        return
+    if result.get("status") != "success":
+        return
+
+    selected = st.session_state.get("selected_history")
+    if selected and selected.get("id") == history_id:
+        selected["ragas_status"] = "success"
+        selected["ragas_metrics"] = result.get("metrics") or {}
+        st.session_state["selected_history"] = selected
+
+    st.session_state["_force_refresh_history"] = True
+    st.session_state.pop("_db_history_cache", None)
+
+
 def _render_metric_card(label: str, description: str, score: float | None, badge: str = ""):
     color  = _score_color(score)
     emoji  = _score_emoji(score)
@@ -217,10 +239,18 @@ def render_evaluation_tab():
         # ── Tambah Ground Truth untuk 4 Metrik ───────────────────────────────
         st.divider()
         st.markdown("#### ➕ Tambah Ground Truth untuk 4 Metrik")
-        st.caption(
-            "Saat ini hanya 2 metrik (tanpa ground truth). "
-            "Isi di bawah untuk aktifkan Context Precision & Context Recall."
-        )
+        # SESUDAH — cek dulu apakah sudah ada context_precision:
+        has_gt_already = metrics.get("context_precision") is not None
+        if has_gt_already:
+            st.caption(
+                "✅ Sudah dievaluasi dengan ground truth (4 metrik aktif). "
+                "Isi ulang untuk evaluasi dengan ground truth berbeda."
+            )
+        else:
+            st.caption(
+                "Saat ini hanya 2 metrik (tanpa ground truth). "
+                "Isi di bawah untuk aktifkan Context Precision & Context Recall."
+            )
 
         gt_input = st.text_area(
             "✅ Ground Truth",
@@ -236,13 +266,16 @@ def render_evaluation_tab():
                 st.warning("⚠️ Tidak ada data RAG tersimpan. Proses audio terlebih dahulu.")
             else:
                 with st.spinner("⏳ Menjalankan evaluasi ulang RAGAS..."):
+                    history_id = _resolve_history_id(last_rag)
                     new_result = run_ragas_evaluation(
                         question=last_rag["question"],
                         context=last_rag["context"],
                         answer=last_rag["answer_text"],
                         ground_truth=gt_input.strip(),
+                        history_id=history_id,
                     )
                 set_last_ragas_result(new_result)  # Update hasil evaluasi di session
+                _sync_history_cache_after_ragas_update(history_id, new_result)
                 st.rerun()  # Refresh untuk tampilkan hasil baru
 
         # Detail input
@@ -338,15 +371,18 @@ def render_evaluation_tab():
         st.markdown("### 📊 Hasil Evaluasi Manual")
 
         with st.spinner("⏳ Menjalankan evaluasi RAGAS... (biasanya 15–60 detik)"):
+            history_id = _resolve_history_id(last_rag)
             result = run_ragas_evaluation(
                 question=question_input.strip(),
                 context=context_input.strip(),
                 answer=answer_input.strip(),
                 ground_truth=ground_truth_input.strip() or None,
+                history_id=history_id,
             )
 
         if result.get("status") == "error":
             st.error(f"❌ Evaluasi gagal: {result.get('error', 'Unknown error')}")
             return
 
+        _sync_history_cache_after_ragas_update(history_id, result)
         _render_metrics_display(result.get("metrics", {}))

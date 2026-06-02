@@ -22,12 +22,16 @@ from utils.session import (
     set_last_ragas_result,
     get_last_rag_result,
     get_last_ragas_result,
+    get_rag_session_id,
+    set_rag_session_id,
     set_ragas_evaluating,
     is_ragas_evaluating,
 )
-from api.prompting.integration_api import process_audio_integrated
+
 from api.evaluasi.evaluation_api import run_ragas_evaluation
 from config.settings import settings
+from api.prompting.integration_api import process_audio_integrated, convert_material_to_text
+
 
 BASE_URL = settings.API_BASE_URL
 
@@ -60,25 +64,6 @@ def _transcribe(audio_bytes: bytes, filename: str, provider: str) -> tuple[str |
         return None, "Request timeout. Coba file yang lebih pendek."
     except Exception as e:
         return None, str(e)
-
-
-# ── Helper: format material SPK ke teks plain (untuk RAGAS) ──────────────────
-def _material_to_text(material: dict) -> str:
-    if not material:
-        return ""
-    parts = []
-    if material.get("decision_status"):
-        parts.append(f"Status Keputusan: {material['decision_status']}")
-    if material.get("compliance_score") is not None:
-        parts.append(f"Skor Kepatuhan: {material['compliance_score']}")
-    if material.get("recommendation"):
-        parts.append(f"Rekomendasi: {material['recommendation']}")
-    if material.get("risk_analysis"):
-        parts.append(f"Analisis Risiko: {' | '.join(material['risk_analysis'])}")
-    if material.get("legal_basis"):
-        parts.append(f"Dasar Hukum: {' | '.join(material['legal_basis'])}")
-    return "\n\n".join(parts)
-
 
 # ── Helper: warna skor RAGAS ──────────────────────────────────────────────────
 def _score_color(score: float | None) -> str:
@@ -160,14 +145,13 @@ def _render_ragas_strip(ragas_result: dict):
 
 # ── Helper: render hasil material SPK ────────────────────────────────────────
 def _render_material_result(material: dict, rag_info: dict):
-    """Tampilkan hasil generate material dari pipeline RAG."""
+    """Tampilkan hasil MaterialResponse (format baru) dari pipeline RAG."""
     st.markdown("---")
-    st.markdown("### 📋 Hasil Analisis Hukum (SPK)")
+    st.markdown("### 📋 Hasil Analisis Hukum")
 
-    # Info sumber
     sources_count = rag_info.get("sources_count", 0)
-    has_context = rag_info.get("has_context", False)
-    query_used = rag_info.get("query_used", "")
+    has_context   = rag_info.get("has_context", False)
+    query_used    = rag_info.get("query_used", "")
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -179,39 +163,92 @@ def _render_material_result(material: dict, rag_info: dict):
         st.warning("⚠️ Tidak ditemukan referensi hukum yang relevan.")
         return
 
-    # Kartu material
-    decision = material.get("decision_status", "-")
-    score = material.get("compliance_score", 0)
-    recommendation = material.get("recommendation", "-")
-    risk_analysis = material.get("risk_analysis", [])
-    legal_basis = material.get("legal_basis", [])
+    summary = material.get("summary", {}) or {}
+    if summary:
+        st.markdown(f"#### 📌 {summary.get('title', 'Ringkasan')}")
+        if summary.get("overview"):
+            st.write(summary["overview"])
+        key_points = summary.get("key_points", [])
+        if key_points:
+            with st.expander("📋 Poin-Poin Penting", expanded=True):
+                for point in key_points:
+                    st.markdown(f"- {point}")
+        if summary.get("conclusion"):
+            st.info(f"💡 **Kesimpulan:** {summary['conclusion']}")
 
-    # Status keputusan
-    status_color = "success" if "MATUHI" in decision.upper() else "error"
-    if status_color == "success":
-        st.success(f"✅ **{decision}**")
-    else:
-        st.error(f"❌ **{decision}**")
+    legal_qa = material.get("legal_qa", [])
+    if legal_qa:
+        st.markdown("#### ❓ Legal Q&A")
+        for qa in legal_qa:
+            with st.expander(f"Q: {qa.get('question', '')}", expanded=True):
+                st.write(qa.get("answer", "-"))
 
-    # Skor kepatuhan
-    st.metric("Skor Kepatuhan", f"{score} / 100")
-    st.progress(min(int(score), 100) / 100)
+    risk = material.get("risk_review", {}) or {}
+    risk_status = risk.get("status", "-") or "-"
+    if risk and risk_status not in ("-", "", "ERROR_SISTEM"):
+        st.markdown("#### ⚠️ Risk Review")
+        score = risk.get("score", 0) or 0
+        col_s, col_sc = st.columns(2)
+        with col_s:
+            st.metric("Status", risk_status)
+        with col_sc:
+            st.metric("Skor Risiko", f"{score} / 100")
+        st.progress(min(int(score), 100) / 100)
+        if risk.get("analysis"):
+            st.write(risk["analysis"])
+        if risk.get("risks"):
+            with st.expander("🔴 Risiko"):
+                for r in risk["risks"]:
+                    st.markdown(f"- {r}")
+        if risk.get("mitigation_steps"):
+            with st.expander("🛡️ Langkah Mitigasi"):
+                for step in risk["mitigation_steps"]:
+                    st.markdown(f"- {step}")
+        if risk.get("recommendation"):
+            st.success(f"✅ **Rekomendasi:** {risk['recommendation']}")
 
-    # Rekomendasi
-    with st.expander("💡 Rekomendasi Tindakan", expanded=True):
-        st.write(recommendation)
+    clauses = material.get("clause_search", [])
+    if clauses:
+        with st.expander(f"📜 Pasal Terkait ({len(clauses)} ditemukan)"):
+            for clause in clauses:
+                st.markdown(
+                    f"**{clause.get('article', '')}** — {clause.get('clause_topic', '')}"
+                )
+                if clause.get("excerpt"):
+                    st.caption(clause["excerpt"])
+                st.divider()
 
-    # Analisis risiko
-    if risk_analysis:
-        with st.expander("⚠️ Analisis Risiko"):
-            for risk in risk_analysis:
-                st.markdown(f"- {risk}")
+    timeline = material.get("timeline_extraction", [])
+    if timeline:
+        with st.expander("🕐 Timeline Hukum"):
+            for item in timeline:
+                st.markdown(
+                    f"- **{item.get('date_or_period', '')}** — "
+                    f"{item.get('event', '')} "
+                    f"*(Ref: {item.get('article_reference', '-')})*"
+                )
 
-    # Dasar hukum
-    if legal_basis:
-        with st.expander("📜 Dasar Hukum"):
-            for basis in legal_basis:
-                st.markdown(f"- {basis}")
+    comparisons = material.get("comparison", [])
+    if comparisons:
+        with st.expander("⚖️ Perbandingan Ketentuan"):
+            for comp in comparisons:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.markdown(f"**{comp.get('aspect', '')}**")
+                    st.write(comp.get("option_a") or comp.get("source_a", "-"))
+                with col2:
+                    st.write(comp.get("option_b") or comp.get("source_b", "-"))
+                if comp.get("conclusion"):
+                    st.caption(f"Kesimpulan: {comp['conclusion']}")
+                st.divider()
+
+    referensi = material.get("referensi_uu", [])
+    if referensi:
+        with st.expander("📚 Referensi Undang-Undang"):
+            for ref in referensi:
+                st.markdown(
+                    f"- **{ref.get('source_name', '')}** Pasal {ref.get('article', '')}"
+                )
 
 
 # ── MAIN RENDER ───────────────────────────────────────────────────────────────
@@ -391,7 +428,7 @@ def render_audio_controls():
             _render_ragas_strip(ragas_result)
 
         st.caption(
-            f"💡 Lihat **Tab Evaluasi** untuk detail lengkap 4 metrik + tambah ground truth."
+            "💡 Lihat **Tab Evaluasi** untuk detail lengkap 4 metrik + tambah ground truth."
         )
 
 
@@ -402,14 +439,8 @@ def _run_rag_pipeline(
     provider: str,
     knowledge_base: str,
 ):
-    print(f"[RAG DEBUG] knowledge_base dikirim: '{knowledge_base}'")  # ← tambah ini
-    """
-    1. Panggil integration endpoint (STT → RAG → Material)
-    2. Simpan hasil ke session_state
-    3. Jalankan evaluasi RAGAS
-    4. Simpan hasil RAGAS ke session_state
-    5. Rerun untuk tampilkan hasil
-    """
+    print(f"[RAG DEBUG] knowledge_base dikirim: '{knowledge_base}'")
+
     # Step 1: RAG pipeline
     with st.spinner("⏳ Memproses audio → RAG → Material... (30–90 detik)"):
         rag_response = process_audio_integrated(
@@ -417,24 +448,28 @@ def _run_rag_pipeline(
             filename=filename,
             provider=provider,
             knowledge_base=knowledge_base,
+            auto_evaluate=False,
+            session_id=get_rag_session_id(),
         )
 
     if rag_response["status"] == "error":
         st.error(f"❌ Pipeline RAG gagal: {rag_response['error']}")
         return
 
-    transcription   = rag_response.get("transcription", {})
-    material        = rag_response.get("generated_material")
-    context         = rag_response.get("raw_context", "")
-    rag_meta        = rag_response.get("rag", {})
-    question        = transcription.get("repaired", transcription.get("raw", ""))
-    answer_text     = _material_to_text(material) if material else ""
+    transcription = rag_response.get("transcription", {})
+    material      = rag_response.get("generated_material")
+    context       = rag_response.get("raw_context", "")
+    rag_meta      = rag_response.get("rag", {})
+    question      = transcription.get("repaired", transcription.get("raw", ""))
 
-    # Debug log — hapus setelah fix dikonfirmasi
-    print(f"[DEBUG] has_context: {rag_meta.get('has_context')}")
-    print(f"[DEBUG] sources_count: {rag_meta.get('sources_count')}")
+    # Konversi material ke teks via backend — frontend tidak tahu format internal
+    answer_text = ""
+    if material:
+        with st.spinner("🔄 Menyiapkan data evaluasi..."):
+            answer_text = convert_material_to_text(material)
+
     print(f"[DEBUG] context length: {len(context)}")
-    print(f"[DEBUG] material: {material}")
+    print(f"[DEBUG] answer_text length: {len(answer_text)}")
 
     # Step 2: Simpan hasil RAG ke session_state
     set_last_rag_result(
@@ -444,13 +479,15 @@ def _run_rag_pipeline(
         generated_material=material,
         transcription_raw=transcription.get("raw", ""),
         knowledge_base=knowledge_base,
-        #tambah simpan rag_meta ke session
         sources_count=rag_meta.get("sources_count", 0),
         has_context=rag_meta.get("has_context", False),
         query_used=rag_meta.get("query_used", question),
+        history_id=rag_response.get("history_id"),
+        session_id=rag_response.get("session_id"),
     )
+    set_rag_session_id(rag_response.get("session_id") or get_rag_session_id())
 
-    # Step 3 & 4: Evaluasi RAGAS (jika ada context dan material)
+    # Step 3: Evaluasi RAGAS — hanya jika kedua input tersedia
     if context and answer_text:
         set_ragas_evaluating(True)
         with st.spinner("📊 Mengevaluasi kualitas RAG dengan RAGAS..."):
@@ -458,11 +495,21 @@ def _run_rag_pipeline(
                 question=question,
                 context=context,
                 answer=answer_text,
-                ground_truth=None,  # proxy otomatis dari context di backend
+                ground_truth=None,
             )
         set_last_ragas_result(ragas_response)
+        set_ragas_evaluating(False) 
     else:
+        st.warning(
+            "⚠️ Evaluasi RAGAS dilewati — "
+            + ("context kosong. " if not context else "")
+            + ("answer_text kosong." if not answer_text else "")
+        )
         set_ragas_evaluating(False)
+
+    st.session_state["_force_refresh_history"] = True
+    # ✅ Invalidate sidebar history cache agar fetch ulang dari DB
+    st.session_state.pop("_db_history_cache", None)  # double safety
 
     st.rerun()
 

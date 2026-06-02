@@ -1,42 +1,48 @@
 """
 streamlit_app/api/prompting/integration_api.py
- 
-Client untuk endpoint /prompting/integration/process-integrated.
-Mengirim audio dan menerima hasil material + metadata RAG.
 """
 
 import requests
 from config.settings import settings
 
-BASE_URL = settings.API_BASE_URL  # e.g. "http://localhost:8000/api/v1"
+BASE_URL = settings.API_BASE_URL
+
 
 def process_audio_integrated(
-        audio_bytes: bytes,
-        filename: str,
-        provider: str = "whisper",
-        knowledge_base: str = "uud_1945",
-        style: str = "formal",
+    audio_bytes: bytes,
+    filename: str,
+    provider: str = "whisper",
+    knowledge_base: str = "uud_1945",
+    style: str = "formal",
+    auto_evaluate: bool = False,
+    session_id: int | None = None,
 ) -> dict:
     """
     Kirim audio ke pipeline RAG terintegrasi.
- 
+
     Returns dict dengan key:
-        - status            (str)  "success" | "error"
-        - transcription     (dict) {"raw": str, "repaired": str}
-        - rag               (dict) {"query_used", "has_context", "context_preview", "sources_count"}
-        - generated_material(dict | None)  hasil SPK hukum
+        - status
+        - transcription     {"raw": str, "repaired": str}
+        - rag               {"query_used", "has_context", "context_preview",
+                             "sources_count", "full_context"}
+        - generated_material (dict | None)
         - fallback_message  (str | None)
-        - raw_context       (str)  konteks lengkap untuk evaluasi RAGAS
+        - raw_context       (str)  — full_context dari backend
         - error             (str | None)
     """
     try:
+        params = {
+            "provider": provider,
+            "knowledge_base": knowledge_base,
+            "style": style,
+            "auto_evaluate": str(auto_evaluate).lower(),
+        }
+        if session_id is not None:
+            params["session_id"] = session_id
+
         response = requests.post(
             f"{BASE_URL}/prompting/integration/process-integrated",
-            params={
-                "provider": provider,
-                "knowledge_base": knowledge_base,
-                "style": style,
-            },
+            params=params,
             files={"file": (filename, audio_bytes, "audio/wav")},
             timeout=120,
         )
@@ -44,6 +50,7 @@ def process_audio_integrated(
         if response.status_code == 200:
             data = response.json()
             rag_data = data.get("data", {})
+            full_context = rag_data.get("rag", {}).get("full_context", "")
 
             return {
                 "status": "success",
@@ -51,10 +58,9 @@ def process_audio_integrated(
                 "rag": rag_data.get("rag", {}),
                 "generated_material": rag_data.get("generated_material"),
                 "fallback_message": rag_data.get("fallback_message"),
-                # context_preview sudah dipotong 500 char di backend,
-                # tapi untuk RAGAS kita butuh yang lengkap — ambil dari preview dulu,
-                # karena backend hanya return preview di response ini
-                "raw_context": rag_data.get("rag", {}).get("full_context", ""),
+                "history_id": rag_data.get("history_id"),
+                "session_id": rag_data.get("session_id"),
+                "raw_context": full_context,
                 "error": None,
             }
         else:
@@ -62,45 +68,54 @@ def process_audio_integrated(
                 err_detail = response.json().get("detail", response.text)
             except Exception:
                 err_detail = response.text
-            return {
-                "status": "error",
-                "transcription": {},
-                "rag": {},
-                "generated_material": None,
-                "fallback_message": None,
-                "raw_context": "",
-                "error": f"Server error {response.status_code}: {err_detail}",
-            }
-        
+            return _error_response(f"Server error {response.status_code}: {err_detail}")
+
     except requests.exceptions.ConnectionError:
-        return {
-            "status": "error",
-            "transcription": {},
-            "rag": {},
-            "generated_material": None,
-            "fallback_message": None,
-            "raw_context": "",
-            "error": "Tidak dapat terhubung ke server. Pastikan backend berjalan.",
-        }
-    
+        return _error_response("Tidak dapat terhubung ke server. Pastikan backend berjalan.")
     except requests.exceptions.Timeout:
-        return {
-            "status": "error",
-            "transcription": {},
-            "rag": {},
-            "generated_material": None,
-            "fallback_message": None,
-            "raw_context": "",
-            "error": "Request timeout. Server terlalu lama merespons.",
-        }
-    
+        return _error_response("Request timeout. Server terlalu lama merespons.")
     except Exception as e:
-        return {
-            "status": "error",
-            "transcription": {},
-            "rag": {},
-            "generated_material": None,
-            "fallback_message": None,
-            "raw_context": "",
-            "error": str(e),
-        }
+        return _error_response(str(e))
+
+
+def convert_material_to_text(material: dict) -> str:
+    """
+    Minta backend mengkonversi MaterialResponse ke teks plain.
+
+    Frontend tidak perlu tahu format internal MaterialResponse —
+    backend (formatter.py) adalah single source of truth.
+    Jika schema MaterialResponse berubah, hanya formatter.py yang diupdate.
+
+    Returns:
+        str — teks plain hasil konversi, atau "" jika gagal
+    """
+    if not material:
+        return ""
+    try:
+        response = requests.post(
+            f"{BASE_URL}/evaluation/material-to-text",
+            json=material,
+            timeout=30,
+        )
+        if response.status_code == 200:
+            return response.json().get("text", "")
+        else:
+            print(f"[material-to-text] error {response.status_code}: {response.text}")
+            return ""
+    except Exception as e:
+        print(f"[material-to-text] exception: {e}")
+        return ""
+
+
+def _error_response(msg: str) -> dict:
+    return {
+        "status": "error",
+        "transcription": {},
+        "rag": {},
+        "generated_material": None,
+        "fallback_message": None,
+        "history_id": None,
+        "session_id": None,
+        "raw_context": "",
+        "error": msg,
+    }

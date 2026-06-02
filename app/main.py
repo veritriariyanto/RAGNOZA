@@ -33,8 +33,8 @@ app.add_middleware(
 # =========================================
 app.include_router(prompting_router, prefix="/api/v1/prompting")
 app.include_router(knowlagebase_router, prefix="/api/v1/knowledgebase")
-app.include_router(history_router, prefix="/api/v1")
-app.include_router(evaluation_router, prefix="/api/v1")
+app.include_router(history_router, prefix="/api/v1/history")
+app.include_router(evaluation_router, prefix="/api/v1/evaluation")
 
 # =========================================
 # ROOT

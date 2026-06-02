@@ -31,22 +31,12 @@ async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
             ← {question, context, answer, ground_truth?}
         → EvaluationResponse {status, metrics, error?}
     """
-    # Ground truth proxy: jika tidak dikirim, pakai kalimat pertama context
-    effective_ground_truth = request.ground_truth
-    if not effective_ground_truth and request.context:
-        first_chunk = request.context.split("\n\n")[0].strip()
-        effective_ground_truth = first_chunk if first_chunk else request.context[:500]
-        logger.info(
-            "[/evaluate:%s] Ground truth tidak ada → pakai proxy dari context",
-            request.source_label,
-        )
-
     try:
         result = await evaluation_service.run_evaluation(
             question=request.question,
             context=request.context,
             answer=request.answer,
-            ground_truth=effective_ground_truth,
+            ground_truth=request.ground_truth,
             source_label=request.source_label,
         )
         return result

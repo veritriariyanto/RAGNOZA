@@ -24,6 +24,10 @@ class EvaluationRequest(BaseModel):
         None,
         description="Jawaban kebenaran (ground truth) yang ideal untuk pertanyaan tersebut, jika tersedia. Berguna untuk evaluasi yang lebih mendalam.",
     )
+    history_id: Optional[int] = Field(
+        None,
+        description="ID history yang ingin di-update metrik RAGAS-nya setelah evaluasi sukses.",
+    )
 
 class EvaluationMetrics(BaseModel):
     """Hasil metrik dari evaluasi RAGAS."""

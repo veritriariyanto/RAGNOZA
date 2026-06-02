@@ -5,6 +5,7 @@ Schema Pydantic untuk request dan response endpoint /evaluate.
 Dipisah dari schema service utama agar tidak ada shared dependency.
 """
 
+from datetime import datetime
 from typing import Optional
 from pydantic import BaseModel, Field
 
@@ -36,3 +37,6 @@ class EvaluationResponse(BaseModel):
     metrics: Optional[EvaluationMetrics] = None
     error: Optional[str] = None
     input: Optional[dict] = None
+    timestamp: str = Field(             
+        default_factory=lambda: datetime.now().strftime("%H:%M:%S")
+    )

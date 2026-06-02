@@ -10,7 +10,6 @@ Perubahan:
 """
 
 import streamlit as st
-import uuid
 from datetime import datetime
 
 
@@ -27,6 +26,9 @@ def init_session_state():
         # Diisi oleh audio_controls setelah process-integrated berhasil.
         # Dibaca oleh evaluation_tab untuk auto-populate form.
         "last_rag_result": None,
+    # ID sesi RAG yang aktif pada Streamlit. Satu sesi dapat memiliki
+    # beberapa proses generate/evaluasi.
+    "rag_session_id": None,
         # Struktur last_rag_result:
         # {
         #   "question": str,          # repaired_text dari STT
@@ -73,6 +75,8 @@ def set_last_rag_result(
     sources_count: int = 0,
     has_context: bool = False,
     query_used: str = "",
+    history_id: int | None = None,
+    session_id: int | None = None,
 ):
     """Simpan hasil RAG pipeline ke session state."""
     st.session_state.last_rag_result = {
@@ -82,10 +86,11 @@ def set_last_rag_result(
         "generated_material": generated_material,
         "transcription_raw": transcription_raw,
         "knowledge_base": knowledge_base,
-        "timestamp": datetime.now().isoformat(),
         "sources_count": sources_count,
         "has_context": has_context,
         "query_used": query_used,
+        "history_id": history_id,
+        "session_id": session_id,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -96,6 +101,18 @@ def get_last_rag_result() -> dict | None:
 def clear_last_rag_result():
     st.session_state.last_rag_result = None
     st.session_state.last_ragas_result = None
+
+
+def set_rag_session_id(session_id: int | None):
+    st.session_state.rag_session_id = session_id
+
+
+def get_rag_session_id() -> int | None:
+    return st.session_state.get("rag_session_id")
+
+
+def clear_rag_session_id():
+    st.session_state.rag_session_id = None
 
 # =========================================
 # RAGAS RESULT HELPERS
@@ -126,23 +143,6 @@ def set_ragas_evaluating(is_evaluating: bool):
 
 def is_ragas_evaluating() -> bool:
     return st.session_state.get("ragas_evaluating", False)
- 
-
-# =========================================
-# CREATE NEW CHAT SESSION
-# =========================================
-def create_new_session():
-    session_id = str(uuid.uuid4())[:8]
-
-    new_session = {
-        "id": session_id,
-        "title": f"New Chat {datetime.now().strftime('%H:%M')}",
-        "messages": [],
-        "created_at": datetime.now(),
-    }
-
-    st.session_state.chat_sessions.insert(0, new_session)
-    st.session_state.current_session_id = session_id
 
 
 # =========================================
@@ -154,21 +154,6 @@ def get_current_session():
         if session["id"] == current_id:
             return session
     return None
-
-
-# =========================================
-# DELETE SESSION
-# =========================================
-def delete_session(session_id: str):
-    st.session_state.chat_sessions = [
-        s for s in st.session_state.chat_sessions
-        if s["id"] != session_id
-    ]
-
-    # FIX: typo 'st.session_satte' → 'st.session_state'
-    if st.session_state.current_session_id == session_id:
-        st.session_state.current_session_id = None
-
 
 # =========================================
 # SET PENDING AUDIO TEXT

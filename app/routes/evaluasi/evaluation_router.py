@@ -8,19 +8,45 @@ import os
 import logging
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
+from app.core.postgres import get_db
 from app.schemas.evaluasi.evaluation import EvaluationRequest, EvaluationResponse
+from app.services.evaluation.formatter import material_to_text
+from app.services.history.rag_history_service import RAGHistoryService
+from app.schemas.prompting.generate_content import MaterialResponse
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/evaluation", tags=["Evaluation"])
+router = APIRouter(tags=["Evaluation"])
 
 EVALUATOR_BASE_URL = os.getenv("EVALUATOR_URL", "http://localhost:8001")
 EVALUATOR_ENDPOINT = f"{EVALUATOR_BASE_URL}/api/v1/evaluate"
-EVALUATOR_TIMEOUT = float(os.getenv("EVALUATOR_TIMEOUT_SECONDS", "120"))
+# Evaluasi 4 metrik bisa memakan waktu lama, apalagi jika antre di semaphore.
+# Timeout dibuat lebih longgar agar request tidak diputus sebelum evaluator selesai.
+EVALUATOR_TIMEOUT = float(os.getenv("EVALUATOR_TIMEOUT_SECONDS", "900"))
 
+# Endpoint untuk konversi MaterialResponse ke teks plain (untuk RAGAS) dari json menjadi plain text
+@router.post(
+    "/material-to-text",
+    summary="Konversi MaterialResponse ke teks plain untuk RAGAS",
+    description="Endpoint internal — dipanggil frontend setelah generate material.",
+)
+async def convert_material_to_text(material: MaterialResponse):
+    """
+    Menerima MaterialResponse (dict) dan mengembalikan teks plain.
+    Frontend tidak perlu tahu format internal MaterialResponse.
+    Jika schema berubah, hanya formatter.py yang perlu diupdate.
+    """
+    try:
+        text = material_to_text(material)
+        return {"status": "success", "text": text}
+    except Exception as exc:
+        logger.error("material-to-text error: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc))
 
+#Endpoint utama untuk evaluasi RAGAS — menerima question, context, answer, ground_truth (opsional)
 @router.post(
     "/ragas",
     response_model=EvaluationResponse,
@@ -43,12 +69,17 @@ EVALUATOR_TIMEOUT = float(os.getenv("EVALUATOR_TIMEOUT_SECONDS", "120"))
     - Perlu Perbaikan : < 0.6
     """,
 )
-async def evaluate_ragas(payload: EvaluationRequest):
+
+async def evaluate_ragas(
+    payload: EvaluationRequest,
+    db: Session = Depends(get_db),
+):
     """
     Endpoint untuk menjalankan evaluasi RAGAS terhadap satu sample RAG.
     Mendelegasikan ke evaluator service (port 8001) via HTTP POST.
     """
     try:
+        # Langsung kirim payload apa adanya ke evaluator 
         async with httpx.AsyncClient(timeout=EVALUATOR_TIMEOUT) as client:
             response = await client.post(
                 EVALUATOR_ENDPOINT,
@@ -85,5 +116,17 @@ async def evaluate_ragas(payload: EvaluationRequest):
             status_code=500,
             detail=f"Evaluasi RAGAS gagal: {result.get('error')}",
         )
+
+    if payload.history_id is not None:
+        updated = RAGHistoryService.update_ragas(
+            db=db,
+            history_id=payload.history_id,
+            ragas_result=result,
+        )
+        if not updated:
+            logger.warning(
+                "Gagal update ragas_metrics untuk history_id=%s setelah evaluasi manual",
+                payload.history_id,
+            )
 
     return result

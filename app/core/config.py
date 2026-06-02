@@ -23,9 +23,9 @@ class Settings(BaseSettings):
 	# ── Database ─────────────────────────────────
 	PGHOST: str = "localhost"
 	PGPORT: int = 5432
-	PGDATABASE: str = "ragdb"
+	PGDATABASE: str = "ragnoza_db"
 	PGUSER: str = "postgres"
-	PGPASSWORD: str = ""
+	PGPASSWORD: str = "ragnoza123"
 	PGSSLMODE: str = "disable"
 
 	@property

@@ -8,8 +8,8 @@ Dipanggil dari frontend setelah material RAG diterima.
 import requests
 from config.settings import settings
 
-# Port evaluator berbeda dari main backend
-EVALUATOR_URL = settings.EVALUATOR_BASE_URL
+# Wajib lewat main backend agar logic update history (DB) ikut berjalan
+EVALUATION_URL = settings.API_BASE_URL
 
 
 def run_ragas_evaluation(
@@ -17,6 +17,7 @@ def run_ragas_evaluation(
     context: str,
     answer: str,
     ground_truth: str | None = None,
+    history_id: int | None = None,
 ) -> dict:
     """
     Kirim data ke endpoint evaluasi RAGAS.
@@ -37,14 +38,16 @@ def run_ragas_evaluation(
         }
         if ground_truth:
             payload["ground_truth"] = ground_truth
+        if history_id is not None:
+            payload["history_id"] = history_id
 
-        print(f"[RAGAS API] Mengirim ke {EVALUATOR_URL}/evaluate")
+        print(f"[RAGAS API] Mengirim ke {EVALUATION_URL}/evaluation/ragas")
         print(f"[RAGAS API] context length: {len(context)}, answer length: {len(answer)}")
 
         response = requests.post(
-            f"{EVALUATOR_URL}/evaluate",
+            f"{EVALUATION_URL}/evaluation/ragas",
             json=payload,
-            timeout=120,
+            timeout=900,
         )
 
         print(f"[RAGAS API] Response status: {response.status_code}")
@@ -68,7 +71,7 @@ def run_ragas_evaluation(
             "status": "error",
             "metrics": None,
             "input": {},
-            "error": "Evaluator service tidak berjalan di port 8001. Jalankan evaluator terlebih dahulu.",
+            "error": "Backend evaluasi tidak dapat dijangkau. Pastikan service backend dan evaluator berjalan.",
         }
     except requests.exceptions.Timeout:
         return {
