@@ -496,6 +496,7 @@ def _run_rag_pipeline(
                 context=context,
                 answer=answer_text,
                 ground_truth=None,
+                history_id=rag_response.get("history_id"),
             )
         set_last_ragas_result(ragas_response)
         set_ragas_evaluating(False) 
@@ -524,19 +525,3 @@ def _handle_transcription_success(transcription: str):
         height=150,
         key="transcription_preview",
     )
-
-    col_send, col_copy = st.columns(2)
-
-    with col_send:
-        if st.button("💬 Kirim ke Chat", use_container_width=True, key="btn_send_to_chat"):
-            current_session = get_current_session()
-            if current_session is None:
-                st.warning("Buat chat baru terlebih dahulu.")
-            else:
-                set_pending_audio_text(transcription)
-                st.session_state.pop(_KEY_TRANSCRIPTION, None)
-                st.info("✅ Teks dikirim ke chat input.")
-                st.rerun()
-
-    with col_copy:
-        st.code(transcription, language=None)

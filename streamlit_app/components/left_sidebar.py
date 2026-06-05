@@ -3,6 +3,7 @@
 import streamlit as st
 from api.history.history_api import (
     get_all_history,
+    get_history_detail,
     update_history_title,
 )
 
@@ -32,12 +33,13 @@ def render_left_sidebar():
         st.session_state.pop("_db_history_cache", None)
         st.rerun()
 
-    force_refresh = st.session_state.pop(
+    force_refresh = st.session_state.get(
         "_force_refresh_history",
         False,
     )
 
     if "_db_history_cache" not in st.session_state or force_refresh:
+        st.session_state.pop("_force_refresh_history", None)
         resp = get_all_history()
         st.session_state["_db_history_cache"] = (
             resp.get("data", [])
@@ -101,8 +103,20 @@ def render_left_sidebar():
                 key=f"db_hist_{h['id']}",
                 use_container_width=True,
             ):
+                # List endpoint (/history) tidak mengembalikan ragas_metrics,
+                # generate_material, retrieved_context — harus fetch detail.
+                with st.spinner("Memuat detail riwayat..."):
+                    detail_resp = get_history_detail(h["id"])
+                    # get_history_detail mengembalikan full response JSON:
+                    # {"status": "success", "data": {...}}
+                    # Ambil field "data" jika ada, fallback ke dict kosong
+                    detail = detail_resp.get("data", {}) if detail_resp else {}
+
+                print(f"[DEBUG SIDEBAR] detail ragas_status = {detail.get('ragas_status')}")
+                print(f"[DEBUG SIDEBAR] detail ragas_metrics = {detail.get('ragas_metrics')}")
+
                 st.session_state["selected_history_id"] = h["id"]
-                st.session_state["selected_history"] = h
+                st.session_state["selected_history"] = detail if detail else h
                 st.session_state.current_session_id = None
                 st.rerun()
 

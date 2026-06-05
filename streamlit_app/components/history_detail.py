@@ -166,6 +166,11 @@ def _render_ragas_section(h: dict):
     metrics  = h.get("ragas_metrics") or {}
 
     st.markdown("### 📊 Evaluasi RAGAS")
+    
+    # DEBUG SEMENTARA — hapus setelah bug ketemu
+    st.write(f"DEBUG ragas_status: `{ragas_st}`")
+    st.write(f"DEBUG ragas_metrics: `{metrics}`")
+    st.write(f"DEBUG semua keys di h: `{list(h.keys())}`")
 
     if ragas_st == "skipped":
         st.info("⬜ Evaluasi RAGAS tidak dijalankan untuk riwayat ini.")
