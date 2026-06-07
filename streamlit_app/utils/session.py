@@ -33,7 +33,6 @@ def init_session_state():
         # {
         #   "question": str,          # repaired_text dari STT
         #   "context": str,           # combined context dari Qdrant
-        #   "answer_text": str,       # material dalam format teks plain
         #   "generated_material": dict,
         #   "transcription_raw": str,
         #   "knowledge_base": str,
@@ -68,7 +67,6 @@ def init_session_state():
 def set_last_rag_result(
     question: str,
     context: str,
-    answer_text: str,
     generated_material: dict | None,
     transcription_raw: str,
     knowledge_base: str, 
@@ -82,7 +80,6 @@ def set_last_rag_result(
     st.session_state.last_rag_result = {
         "question": question,
         "context": context,
-        "answer_text": answer_text,
         "generated_material": generated_material,
         "transcription_raw": transcription_raw,
         "knowledge_base": knowledge_base,

@@ -11,12 +11,14 @@ Perubahan dari versi lama:
 """
 
 import streamlit as st
-from api.evaluasi.evaluation_api import run_ragas_evaluation
+from components.audio_controls import _inject_styles
+from api.evaluasi.evaluation_api import run_ragas_evaluation, run_ragas_reeval 
 from utils.session import (
     get_last_rag_result,
     get_last_ragas_result,
     set_last_ragas_result,
 )
+
 
 # ─────────────────────────────────────────
 # HELPERS VISUAL
@@ -42,19 +44,19 @@ def _score_emoji(score: float | None) -> str:
 
 def _border_color(color: str) -> str:
     return {
-        "green":  "#28a745",
-        "orange": "#fd7e14",
-        "red":    "#dc3545",
-        "gray":   "#6c757d",
-    }.get(color, "#6c757d")
+        "green":  "#5DBE8A",
+        "orange": "#E8934A",
+        "red":    "#E06070",
+        "gray":   "#6B6460",
+    }.get(color, "#6B6460")
 
 def _bg_color(color: str) -> str:
     return {
-        "green":  "rgba(40,167,69,0.05)",
-        "orange": "rgba(253,126,20,0.05)",
-        "red":    "rgba(220,53,69,0.05)",
-        "gray":   "rgba(108,117,125,0.05)",
-    }.get(color, "rgba(108,117,125,0.05)")
+        "green":  "rgba(93,190,138,0.08)",
+        "orange": "rgba(232,147,74,0.08)",
+        "red":    "rgba(224,96,112,0.08)",
+        "gray":   "rgba(255,255,255,0.04)",
+    }.get(color, "rgba(255,255,255,0.04)")
 
 
 def _resolve_history_id(last_rag: dict | None) -> int | None:
@@ -88,8 +90,8 @@ def _render_metric_card(label: str, description: str, score: float | None, badge
     bg     = _bg_color(color)
 
     badge_html = (
-        f'<span style="font-size:10px; background:#444; color:#ccc; '
-        f'border-radius:4px; padding:1px 6px; margin-left:6px;">{badge}</span>'
+        f'<span style="font-size:10px; background:rgba(212,168,83,0.15); color:#D4A853; '
+        f'border-radius:4px; padding:1px 6px; margin-left:6px; font-family:\'DM Sans\',sans-serif;">{badge}</span>'
         if badge else ""
     )
 
@@ -97,13 +99,13 @@ def _render_metric_card(label: str, description: str, score: float | None, badge
         f"""
         <div style="border:1px solid {border}; border-radius:10px; padding:16px 20px;
                     background:{bg}; margin-bottom:4px;">
-            <div style="font-size:13px; color:#888; margin-bottom:4px;">
+                <div style="font-size:13px; color:#A89F93; margin-bottom:4px; font-family:'DM Sans',sans-serif;">
                 {label}{badge_html}
             </div>
             <div style="font-size:28px; font-weight:700; color:{border};">
                 {emoji} {disp}
             </div>
-            <div style="font-size:12px; color:#aaa; margin-top:4px;">
+            <div style="font-size:12px; color:#aaa; margin-top:4px;"><div style="font-size:12px; color:#6B6460; margin-top:4px; font-family:'DM Sans',sans-serif;">
                 {text} · {description}
             </div>
         </div>
@@ -137,7 +139,7 @@ def _render_metrics_display(metrics: dict):
             _render_metric_card("Overall Score",    "Rata-rata 2 metrik", metrics.get("overall_score"))
 
     # Progress bar
-    st.markdown("#### 📈 Visualisasi Skor")
+    st.markdown('<div class="section-label">📈 Visualisasi Skor</div>', unsafe_allow_html=True)
     for name, score in [
         ("Faithfulness", metrics.get("faithfulness")),
         ("Answer Relevancy", metrics.get("answer_relevancy")),
@@ -148,8 +150,8 @@ def _render_metrics_display(metrics: dict):
             col_label, col_bar = st.columns([1.5, 3])
             with col_label:
                 st.markdown(
-                    f"<div style='padding-top:6px; font-size:13px;'>"
-                    f"{_score_emoji(score)} <b>{name}</b></div>",
+                    f"<div style='padding-top:6px; font-size:13px; font-family:\"DM Sans\",sans-serif; color:#A89F93;'>"
+                    f"{_score_emoji(score)} <b style='color:#F0EDE8;'>{name}</b></div>",
                     unsafe_allow_html=True,
                 )
             with col_bar:
@@ -180,11 +182,18 @@ def _render_metrics_display(metrics: dict):
 # ─────────────────────────────────────────
 
 def render_evaluation_tab():
-    st.subheader("📊 **Evaluasi RAGAS**")
-    st.caption(
-        "Evaluasi kualitas jawaban RAG. Tab ini auto-populate dari hasil audio terakhir. "
-        "Isi **ground truth** untuk mengaktifkan Context Precision & Recall."
-    )
+    _inject_styles()
+    st.markdown(
+    """
+    <div class="ac-header">📊 Evaluasi RAGAS</div>
+    <div class="ac-subheader">
+        Evaluasi kualitas jawaban RAG. Tab ini auto-populate dari hasil audio terakhir.
+        Isi <strong>ground truth</strong> untuk mengaktifkan Context Precision &amp; Recall.
+    </div>
+    <div class="ac-divider"></div>
+    """,
+    unsafe_allow_html=True,
+)
 
     st.divider()
 
@@ -227,7 +236,7 @@ def render_evaluation_tab():
     last_ragas = last_ragas if isinstance(last_ragas, dict) else None
 
     if last_rag and last_ragas and isinstance(last_ragas, dict) and last_ragas.get("status") == "success":
-        st.markdown("### 🤖 Evaluasi Otomatis — Hasil Terakhir") 
+        st.markdown('<div class="result-header">🤖 Evaluasi Otomatis — Hasil Terakhir</div>', unsafe_allow_html=True)
 
         timestamp = last_ragas.get("timestamp", "-") if last_ragas else "-"
         question  = last_rag.get("question", "-")[:80] if last_rag else "-"
@@ -238,18 +247,27 @@ def render_evaluation_tab():
 
         # ── Tambah Ground Truth untuk 4 Metrik ───────────────────────────────
         st.divider()
-        st.markdown("#### ➕ Tambah Ground Truth untuk 4 Metrik")
+        st.markdown(
+            '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.95rem;font-weight:600;'
+            'letter-spacing:0.04em;color:#D4A853;margin:16px 0 6px 0;">➕ Tambah Ground Truth untuk 4 Metrik</div>',
+            unsafe_allow_html=True,
+        )
         # SESUDAH — cek dulu apakah sudah ada context_precision:
         has_gt_already = metrics.get("context_precision") is not None
         if has_gt_already:
-            st.caption(
-                "✅ Sudah dievaluasi dengan ground truth (4 metrik aktif). "
-                "Isi ulang untuk evaluasi dengan ground truth berbeda."
+            st.markdown(
+                '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.82rem;color:#F0EDE8;margin-bottom:8px;">'
+                '✅ Sudah dievaluasi dengan ground truth (4 metrik aktif). '
+                'Isi ulang untuk evaluasi dengan ground truth berbeda.</div>',
+                unsafe_allow_html=True,
             )
         else:
-            st.caption(
+            st.markdown(
+                '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.82rem;color:#F0EDE8;margin-bottom:8px;">'
                 "Saat ini hanya 2 metrik (tanpa ground truth). "
                 "Isi di bawah untuk aktifkan Context Precision & Context Recall."
+                '</div>',
+                unsafe_allow_html=True,
             )
 
         gt_input = st.text_area(
@@ -267,12 +285,11 @@ def render_evaluation_tab():
             else:
                 with st.spinner("⏳ Menjalankan evaluasi ulang RAGAS..."):
                     history_id = _resolve_history_id(last_rag)
-                    new_result = run_ragas_evaluation(
-                        question=last_rag["question"],
-                        context=last_rag["context"],
-                        answer=last_rag["answer_text"],
+                    new_result = run_ragas_reeval(
                         ground_truth=gt_input.strip(),
                         history_id=history_id,
+                        question=last_rag["question"],
+                        context=last_rag["context"],
                     )
                 set_last_ragas_result(new_result)  # Update hasil evaluasi di session
                 _sync_history_cache_after_ragas_update(history_id, new_result)
@@ -285,14 +302,21 @@ def render_evaluation_tab():
                 st.markdown("**📄 Konteks:**")
                 st.info(last_rag.get("context", "-")[:800] + ("..." if len(last_rag.get("context", "")) > 800 else ""))
                 st.markdown("**💡 Jawaban LLM:**")
-                st.success(last_rag.get("answer_text", "-")[:600])
+                st.info(last_rag.get("generated_material", {}))
 
     elif last_ragas and last_ragas.get("status") == "error":
         st.error(f"⚠️ Evaluasi otomatis terakhir gagal: {last_ragas.get('error', 'Unknown error')}")
         st.info("Gunakan form di bawah untuk evaluasi manual.")
 
     else:
-        st.info(
-            "💡 Belum ada hasil evaluasi otomatis. "
-            "Proses audio di **tab Generate** dengan tombol 🚀 **Proses RAG & Evaluasi** terlebih dahulu."
-        )
+        st.markdown(
+    """
+    <div style="background:rgba(212,168,83,0.08);border:1px solid rgba(212,168,83,0.25);
+    border-radius:10px;padding:16px 20px;font-family:'DM Sans',sans-serif;color:#A89F93;font-size:0.88rem;">
+        💡 Belum ada hasil evaluasi otomatis.
+        Proses audio di <strong style="color:#D4A853;">tab Generate</strong>
+        dengan tombol 🚀 <strong style="color:#D4A853;">Proses RAG &amp; Evaluasi</strong> terlebih dahulu.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)

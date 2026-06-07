@@ -1,9 +1,12 @@
 # app/database/models/__init__.py
-from app.database.models.rag_history import (
-	RAGASEvaluation,
-	RAGHistory,
-	RAGProcess,
-	RAGSession,
-)
 
-__all__ = ["RAGSession", "RAGProcess", "RAGASEvaluation", "RAGHistory"]
+from .rag_session import RAGSession
+from .rag_process import RAGProcess, RAGHistory
+from .ragas_evaluation import RAGASEvaluation
+
+__all__ = [
+    "RAGSession",
+    "RAGProcess",
+    "RAGHistory",
+    "RAGASEvaluation",
+]

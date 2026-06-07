@@ -77,36 +77,6 @@ def process_audio_integrated(
     except Exception as e:
         return _error_response(str(e))
 
-
-def convert_material_to_text(material: dict) -> str:
-    """
-    Minta backend mengkonversi MaterialResponse ke teks plain.
-
-    Frontend tidak perlu tahu format internal MaterialResponse —
-    backend (formatter.py) adalah single source of truth.
-    Jika schema MaterialResponse berubah, hanya formatter.py yang diupdate.
-
-    Returns:
-        str — teks plain hasil konversi, atau "" jika gagal
-    """
-    if not material:
-        return ""
-    try:
-        response = requests.post(
-            f"{BASE_URL}/evaluation/material-to-text",
-            json=material,
-            timeout=30,
-        )
-        if response.status_code == 200:
-            return response.json().get("text", "")
-        else:
-            print(f"[material-to-text] error {response.status_code}: {response.text}")
-            return ""
-    except Exception as e:
-        print(f"[material-to-text] exception: {e}")
-        return ""
-
-
 def _error_response(msg: str) -> dict:
     return {
         "status": "error",

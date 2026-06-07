@@ -5,7 +5,9 @@ import logging
 
 from sqlalchemy.orm import Session
 
-from app.database.models import RAGASEvaluation, RAGProcess, RAGSession
+from app.database.models.rag_process import RAGProcess
+from app.database.models.rag_session import RAGSession
+from app.database.models.ragas_evaluation import RAGASEvaluation
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +127,21 @@ class RAGHistoryService:
                 question=input_payload.get("question"),
                 answer=input_payload.get("answer"),
                 ground_truth=input_payload.get("ground_truth"),
+
                 faithfulness=metrics.get("faithfulness"),
                 answer_relevancy=metrics.get("answer_relevancy"),
                 context_precision=metrics.get("context_precision"),
                 context_recall=metrics.get("context_recall"),
+
+                risk_faithfulness=metrics.get("risk_faithfulness"),
+                coverage_pct=metrics.get("coverage_pct"),
+
+                answer_qa=input_payload.get("answer_qa"),
+
+                evaluated_segments=metrics.get(
+                    "evaluated_segments", []
+                ),
+
                 overall_score=metrics.get("overall_score"),
                 status=ragas_result.get("status", "error"),
             )
@@ -197,3 +210,66 @@ class RAGHistoryService:
                 exc_info=True
             )
             return False
+        
+    @staticmethod
+    def get_ragas_metrics(
+        db: Session,
+        history_id: int,
+    ) -> dict | None:
+        """
+        Ambil metrics dari baris RAGASEvaluation terbaru untuk process_id=history_id.
+        Return dict { "metrics": {...} } atau None jika belum ada.
+        """
+        evaluation = (
+            db.query(RAGASEvaluation)
+            .filter(RAGASEvaluation.process_id == history_id)
+            .order_by(RAGASEvaluation.id.desc())
+            .first()
+        )
+        if not evaluation:
+            return None
+
+        return {
+            "metrics": {
+                "faithfulness": evaluation.faithfulness,
+                "answer_relevancy": evaluation.answer_relevancy,
+                "context_precision": evaluation.context_precision,
+                "context_recall": evaluation.context_recall,
+
+                "risk_faithfulness": evaluation.risk_faithfulness,
+                "coverage_pct": evaluation.coverage_pct,
+
+                "evaluated_segments": evaluation.evaluated_segments or [],
+            
+                "overall_score": evaluation.overall_score,
+    }
+}
+
+    @staticmethod
+    def get_by_id(
+        db: Session,
+        history_id: int,
+    ):
+        """
+        Gabungkan RAGProcess + RAGASEvaluation terbaru menjadi satu objek
+        yang dibutuhkan router reeval (question, context, answer, answer_qa).
+        """
+        from types import SimpleNamespace
+
+        process = db.query(RAGProcess).filter(RAGProcess.id == history_id).first()
+        if not process:
+            return None
+
+        evaluation = (
+            db.query(RAGASEvaluation)
+            .filter(RAGASEvaluation.process_id == history_id)
+            .order_by(RAGASEvaluation.id.desc())
+            .first()
+        )
+
+        return SimpleNamespace(
+            question=evaluation.question,
+            context=process.retrieved_context,
+            answer=evaluation.answer,
+            answer_qa=evaluation.answer_qa,
+        )

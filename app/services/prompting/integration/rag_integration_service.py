@@ -162,9 +162,6 @@ class RAGIntegrationService:
                     material_payload
                 )
 
-                # Konversi material ke teks untuk evaluasi
-                answer_text = material_to_text(final_material)
-
                 # ── Tahap 6: Simpan History ───────────────────────────────────
                 # Tahap 6: Simpan History — simpan dulu, ambil id-nya
                 session_title = (
@@ -190,12 +187,12 @@ class RAGIntegrationService:
                 rag_session_id = saved_history.session_id if saved_history else rag_session_id
 
             # ── Tahap 7: Jalankan Evaluasi di Background Task ──────────────
-                if auto_evaluate and background_tasks and combined_context and answer_text:
+                if auto_evaluate and background_tasks and combined_context and final_material:
                     background_tasks.add_task(
                         trigger_auto_evaluation,
                         question=search_query,
                         context=combined_context,
-                        answer=answer_text,
+                        material=final_material,
                         ground_truth=None,
                         source_label="rag_pipeline",
                         history_id=history_id

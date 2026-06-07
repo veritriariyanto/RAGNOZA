@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routes.prompting.prompting_routes import prompting_router
 from app.routes.knowlagebase.knowlagebase_routes import knowlagebase_router
 from app.routes.history.history_router import router as history_router
-from app.routes.evaluasi.evaluation_router import router as evaluation_router
+from app.routes.evaluasi.ragas_router import ragas_router as evaluation_router
 
 
 # =========================================

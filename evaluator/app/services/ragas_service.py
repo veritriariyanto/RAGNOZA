@@ -24,6 +24,8 @@ class RagasService:
         self._availability_error = None
         self.evaluator_llm = None
         self.evaluator_embeddings = None
+        self.is_v2 = False
+        self._adapted_metrics: dict = {} 
 
         try:
             from ragas.llms import LangchainLLMWrapper
@@ -59,6 +61,39 @@ class RagasService:
         nest_asyncio.apply(loop)
 
         try:
+            # ─────────────────────────────────────────────────────────────────
+            # OPTIMASI: Paksa Metrik Adaptasi ke Bahasa Indonesia & Ikat ke LLM Groq
+            # ─────────────────────────────────────────────────────────────────
+            for metric in metrics:
+                if hasattr(metric, "llm"):
+                    metric.llm = self.evaluator_llm
+                if hasattr(metric, "embeddings") and self.evaluator_embeddings:
+                    metric.embeddings = self.evaluator_embeddings
+
+                metric_name = metric.__class__.__name__
+                if metric_name not in self._adapted_metrics:
+                    if not hasattr(metric, "adapt_prompts"):
+                        logger.debug("Metrik %s tidak mendukung adapt_prompts — skip.", metric_name)
+                        self._adapted_metrics[metric_name] = False
+                    else:
+                        try:
+                            logger.info("Menerjemahkan prompt metrik %s ke Bahasa Indonesia...", metric_name)
+                            metric.adapt_prompts(language="indonesian", llm=self.evaluator_llm)
+                            self._adapted_metrics[metric_name] = True
+                            logger.info("✅ Cache adaptasi %s tersimpan.", metric_name)
+                        except Exception as adapt_err:
+                            logger.warning("Gagal adaptasi %s: %s.", metric_name, adapt_err)
+                            self._adapted_metrics[metric_name] = False
+                else:
+                    logger.debug("Cache hit — skip adapt_prompts untuk %s.", metric_name)
+
+            # Di _run_evaluate_sync, sebelum baris Dataset.from_dict(data)
+            logger.info(
+                "[RagasService] Dataset keys=%s | gt=%s | answer_len=%d",
+                list(data.keys()),
+                data.get("reference", [None])[0] is not None,
+                len(data.get("answer", [""])[0]),
+            )
             dataset = Dataset.from_dict(data)
             result = evaluate(
                 dataset=dataset,
@@ -74,65 +109,45 @@ class RagasService:
             return result
         finally:
             loop.close()
+    
+    async def evaluate_rag_custom(
+            self,
+            question: str,
+            context: str,
+            answer: str,
+            metric_types: list[str],
+            ground_truth: Optional[str] = None,
+        ):
+            """Fungsi pembantu baru untuk mengevaluasi jenis metrik tertentu saja."""
+            from ragas.metrics import Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall
+            
+            # Inisialisasi metrik dinamis berdasarkan request
+            metrics = []
+            if "faithfulness" in metric_types:
+                metrics.append(Faithfulness(llm=self.evaluator_llm))
+            if "answer_relevancy" in metric_types:
+                metrics.append(AnswerRelevancy(llm=self.evaluator_llm, embeddings=self.evaluator_embeddings))
+            if "context_precision" in metric_types:
+                metrics.append(ContextPrecision(llm=self.evaluator_llm))
+            if "context_recall" in metric_types:
+                metrics.append(ContextRecall(llm=self.evaluator_llm))
 
-    async def evaluate_rag(
-        self,
-        question: str,
-        context: str,
-        answer: str,
-        ground_truth: Optional[str] = None,
-    ):
-        if not self._available:
-            raise RuntimeError(
-                f"RagasService tidak tersedia: {self._availability_error}"
+            data = {
+                "question": [question],
+                "answer": [answer],
+                "contexts": [[context]],      # list of list — WAJIB
+            }
+            if ground_truth:
+                data["ground_truths"] = [[ground_truth]]   # list of list — WAJIB untuk ContextRecall 0.1.x
+                data["ground_truth"]  = [ground_truth]     # list biasa — untuk ContextPrecision 0.1.x
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                _ragas_executor,
+                self._run_evaluate_sync,
+                data,
+                metrics,
             )
-
-        try:
-            from ragas.metrics import (
-                Faithfulness, AnswerRelevancy,
-                ContextPrecision, ContextRecall,
-            )
-            faithfulness_metric      = Faithfulness()
-            answer_relevancy_metric  = AnswerRelevancy()
-            context_precision_metric = ContextPrecision()
-            context_recall_metric    = ContextRecall()
-            logger.info("RAGAS: menggunakan API 0.2+ (class-based metrics)")
-        except ImportError:
-            from ragas.metrics import (
-                faithfulness, answer_relevancy,
-                context_precision, context_recall,
-            )
-            faithfulness_metric      = faithfulness
-            answer_relevancy_metric  = answer_relevancy
-            context_precision_metric = context_precision
-            context_recall_metric    = context_recall
-            logger.info("RAGAS: menggunakan API 0.1.x (singleton metrics)")
-
-        data = {
-            "question":           [question],
-            "answer":             [answer],
-            "contexts":           [[context]],
-            "retrieved_contexts": [[context]],
-        }
-
-        if ground_truth:
-            data["reference"]    = [ground_truth]
-            data["ground_truth"] = [ground_truth]
-            metrics = [
-                faithfulness_metric, answer_relevancy_metric,
-                context_precision_metric, context_recall_metric,
-            ]
-        else:
-            metrics = [faithfulness_metric, answer_relevancy_metric]
-
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            _ragas_executor,
-            self._run_evaluate_sync,
-            data,
-            metrics,
-        )
-        return result
 
 
 ragas_service = RagasService()

@@ -4,9 +4,14 @@ app/services/evaluation/auto_evaluation_hook.py
 Modul ini menjalankan evaluasi RAGAS secara otomatis di background setelah
 RAG pipeline selesai menjawab pertanyaan user.
 
-PERUBAHAN ARSITEKTUR:
+PERUBAHAN ARSITEKTUR V1:
     Sebelumnya → import langsung EvaluationService (menyebabkan konflik ragas vs langchain)
     Sekarang   → HTTP POST ke evaluator service (port 8001) via httpx
+
+PERUBAHAN ARSITEKTUR V2:
+    Telah di-update untuk mendukung ekstraksi segmen material (Summary, QA, Risk)
+    sebelum menembak HTTP POST ke evaluator service (port 8001).
+
 
 Alur:
     User Question
@@ -30,6 +35,9 @@ import os
 from typing import Optional
 
 import httpx
+
+from app.services.evaluation.formatter import material_to_text, extract_segments_for_ragas
+from app.schemas.prompting.generate_content import MaterialResponse
 
 logger = logging.getLogger(__name__)
 
@@ -86,11 +94,10 @@ def _update_ragas_in_db(history_id: int, result: dict) -> None:
             history_id, exc, exc_info=True,
         )
 
-
 async def trigger_auto_evaluation(
     question: str,
     context: str,
-    answer: str,
+    material: MaterialResponse,
     ground_truth: Optional[str] = None,
     source_label: str = "rag_pipeline",
     history_id: Optional[int] = None,
@@ -103,15 +110,27 @@ async def trigger_auto_evaluation(
     PENTING: db session TIDAK diteruskan dari request karena sudah closed
     saat background task berjalan. Gunakan SessionLocal() baru di dalam.
     """
+    # 1. Ekstrak segmen jawaban teks hukum menggunakan formatter baru kita
+    segments = extract_segments_for_ragas(material)
+    
+    # 2. Ambil teks lengkap untuk cadangan log ( backward compatibility )
+    full_answer = material_to_text(material)
+
     logger.info(
-        "[AutoEval:%s] Mengirim ke evaluator | q=%d chars | ctx=%d chars | ans=%d chars",
-        source_label, len(question), len(context), len(answer),
+        "[AutoEval:%s] Mengirim data tersegmentasi ke evaluator | q=%d chars | ctx=%d chars | ans_full=%d chars",
+        source_label, len(question), len(context), len(full_answer),
     )
 
+    # 3. Bentuk payload yang COCOK dengan EvaluationRequest schema baru
     payload = {
         "question": question,
         "context": context,
-        "answer": answer,
+        "answer": full_answer,
+
+        "faithfulness_text": segments["faithfulness"],
+        "answer_qa": segments["qa"],
+        "answer_risk": segments["risk"],
+
         "ground_truth": ground_truth,
         "source_label": source_label,
     }

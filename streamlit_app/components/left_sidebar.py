@@ -1,6 +1,7 @@
 # streamlit_app/components/left_sidebar.py
 
 import streamlit as st
+from components.audio_controls import _inject_styles
 from api.history.history_api import (
     get_all_history,
     get_history_detail,
@@ -9,18 +10,22 @@ from api.history.history_api import (
 
 
 def render_left_sidebar():
-    st.title("🧠 RAGNOZA")
-    st.caption("AI Legal Assistant")
+    _inject_styles()
+    st.markdown(
+    """
+    <div class="ac-header">🧠 RAGNOZA</div>
+    <div class="ac-subheader">AI Legal Assistant</div>
+    """,
+    unsafe_allow_html=True,
+)
     st.divider()
 
-    search_query = st.text_input(
-        "Search",
-        placeholder="Cari riwayat..."
-    )
+    st.markdown('<div class="ac-label">Cari Riwayat</div>', unsafe_allow_html=True)
+    search_query = st.text_input("Search", placeholder="Cari riwayat...", label_visibility="collapsed")
 
     st.divider()
 
-    st.markdown("#### 📋 Riwayat Generate")
+    st.markdown('<div class="result-header">📋 Riwayat Generate</div>', unsafe_allow_html=True)
 
     # =====================================
     # Refresh History
@@ -66,7 +71,11 @@ def render_left_sidebar():
     ]
 
     if not filtered_db:
-        st.caption("Belum ada riwayat generate.")
+        st.markdown(
+            '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.78rem;'
+            'color:#6B6460;text-align:center;padding:12px 0;">Belum ada riwayat generate.</div>',
+            unsafe_allow_html=True,
+        )
 
     # =====================================
     # List History
@@ -92,7 +101,7 @@ def render_left_sidebar():
             or "Session Tanpa Judul"
         )
 
-        col1, col2 = st.columns([8, 1])
+        col1, col2 = st.columns([7, 1.5], vertical_alignment="center")
 
         # ==========================
         # Open Detail
@@ -131,8 +140,11 @@ def render_left_sidebar():
             ):
                 st.session_state["editing_history_id"] = h["id"]
 
-        st.caption(
-            f"🗂 {kb} · {created} · {status}"
+        st.markdown(
+            f'<div style="font-family:\'DM Sans\',sans-serif;font-size:0.72rem;'
+            f'color:#6B6460;padding:2px 0 6px 2px;letter-spacing:0.02em;">'
+            f'🗂 {kb} &nbsp;·&nbsp; {created} &nbsp;·&nbsp; {status}</div>',
+            unsafe_allow_html=True,
         )
 
         # ==========================
@@ -197,12 +209,13 @@ def render_left_sidebar():
                     )
                     st.rerun()
 
-        st.markdown("---")
+        st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
 
     # =====================================
     # Summary Metrics
     # =====================================
     st.divider()
+    st.markdown('<div class="section-label">📈 Ringkasan</div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
 

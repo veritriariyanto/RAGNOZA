@@ -13,7 +13,7 @@ Struktur h (history object dari DB):
 """
 
 import streamlit as st
-
+from components.audio_controls import _inject_styles
 
 # ── Helper: warna/emoji skor ─────────────────────────────────────────────────
 def _score_emoji(score) -> str:
@@ -29,18 +29,17 @@ def _score_emoji(score) -> str:
 
 
 def _badge(label: str, value, good_thresh=0.8, warn_thresh=0.6):
-    """Render badge berwarna untuk skor 0–1."""
     try:
         v = float(value)
         if v >= good_thresh:
-            bg, fg = "rgba(40,167,69,0.12)", "#1a7a35"
+            bg, fg = "rgba(93,190,138,0.12)", "#5DBE8A"
         elif v >= warn_thresh:
-            bg, fg = "rgba(253,126,20,0.12)", "#b35c00"
+            bg, fg = "rgba(232,147,74,0.12)", "#E8934A"
         else:
-            bg, fg = "rgba(220,53,69,0.12)", "#a01020"
+            bg, fg = "rgba(224,96,112,0.12)", "#E06070"
         display = f"{v:.2f}"
     except (TypeError, ValueError):
-        bg, fg, display = "rgba(150,150,150,0.12)", "#555", str(value) if value else "N/A"
+        bg, fg, display = "rgba(255,255,255,0.06)", "#A89F93", str(value) if value else "N/A"
 
     return (
         f'<span style="background:{bg};color:{fg};padding:2px 10px;'
@@ -55,11 +54,13 @@ def _render_material(material: dict, rag_info: dict):
     has_context   = rag_info.get("has_context", False)
     query_used    = rag_info.get("query_used", "-")
 
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.caption(f"🔍 Query: *{query_used}*")
-    with col_b:
-        st.caption(f"📚 Sumber: {sources_count} chunk")
+    st.markdown(
+    f'<div style="margin-bottom:14px;">'
+    f'<span class="info-pill">🔍 {query_used or "—"}</span>'
+    f'<span class="info-pill">📚 {sources_count} chunk ditemukan</span>'
+    f'</div>',
+    unsafe_allow_html=True,
+)
 
     if not has_context or not material:
         st.warning("⚠️ Tidak ditemukan referensi hukum yang relevan.")
@@ -68,7 +69,12 @@ def _render_material(material: dict, rag_info: dict):
     # Summary
     summary = material.get("summary") or {}
     if summary:
-        st.markdown(f"#### 📌 {summary.get('title', 'Ringkasan')}")
+        st.markdown('<div class="section-label">📌 Ringkasan</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"<p style='font-family:DM Serif Display,serif;font-size:1.1rem;"
+            f"color:#F0EDE8;margin:0 0 8px 0;'>{summary.get('title','Ringkasan')}</p>",
+            unsafe_allow_html=True,
+        )
         if summary.get("overview"):
             st.write(summary["overview"])
         key_points = summary.get("key_points", [])
@@ -82,7 +88,7 @@ def _render_material(material: dict, rag_info: dict):
     # Legal Q&A
     legal_qa = material.get("legal_qa", [])
     if legal_qa:
-        st.markdown("#### ❓ Legal Q&A")
+        st.markdown('<div class="section-label">❓ Legal Q&A</div>', unsafe_allow_html=True)
         for qa in legal_qa:
             with st.expander(f"Q: {qa.get('question', '')}", expanded=False):
                 st.write(qa.get("answer", "-"))
@@ -91,7 +97,7 @@ def _render_material(material: dict, rag_info: dict):
     risk = material.get("risk_review") or {}
     risk_status = risk.get("status", "-") or "-"
     if risk and risk_status not in ("-", "", "ERROR_SISTEM"):
-        st.markdown("#### ⚠️ Risk Review")
+        st.markdown('<div class="section-label">⚠️ Risk Review</div>', unsafe_allow_html=True)
         score = risk.get("score", 0) or 0
         col_s, col_sc = st.columns(2)
         with col_s:
@@ -165,7 +171,7 @@ def _render_ragas_section(h: dict):
     ragas_st = h.get("ragas_status", "skipped")
     metrics  = h.get("ragas_metrics") or {}
 
-    st.markdown("### 📊 Evaluasi RAGAS")
+    st.markdown('<div class="result-header">📊 Evaluasi RAGAS</div>', unsafe_allow_html=True)
     
     # DEBUG SEMENTARA — hapus setelah bug ketemu
     st.write(f"DEBUG ragas_status: `{ragas_st}`")
@@ -213,15 +219,17 @@ def render_history_detail():
     Dipanggil dari app.py ketika st.session_state["selected_history"] terisi.
     Menampilkan semua detail history yang dipilih dari sidebar.
     """
+    _inject_styles()   # ← tambah ini
     h = st.session_state.get("selected_history")
 
     if not h:
         # Placeholder saat belum ada history dipilih
         st.markdown(
             """
-            <div style='text-align:center; padding:4rem 1rem; opacity:0.4;'>
+            <div style='text-align:center; padding:4rem 1rem;'>
                 <div style='font-size:3rem;'>📋</div>
-                <p style='font-size:1.1rem; margin-top:0.5rem;'>
+                <p style='font-family:"DM Sans",sans-serif; font-size:1rem;
+                        color:#6B6460; margin-top:0.5rem; letter-spacing:0.02em;'>
                     Pilih riwayat dari sidebar untuk melihat detailnya.
                 </p>
             </div>
@@ -233,7 +241,10 @@ def render_history_detail():
     # ── Header ────────────────────────────────────────────────────────────────
     col_title, col_back = st.columns([6, 1])
     with col_title:
-        st.subheader("📋 Detail Riwayat Generate")
+        st.markdown(
+            '<div class="ac-header">📋 Detail Riwayat Generate</div>',
+            unsafe_allow_html=True,
+        )
     with col_back:
         if st.button("✖ Tutup", use_container_width=True, key="btn_close_history"):
             st.session_state.pop("selected_history", None)
@@ -258,7 +269,7 @@ def render_history_detail():
 
     # ── Query / Pertanyaan ────────────────────────────────────────────────────
     query = h.get("search_query") or h.get("repaired_text") or "-"
-    st.markdown("### 🔍 Pertanyaan / Query")
+    st.markdown('<div class="result-header">🔍 Pertanyaan / Query</div>', unsafe_allow_html=True)
     st.info(query)
 
     # Raw transcription (jika berbeda)
@@ -270,7 +281,7 @@ def render_history_detail():
     st.divider()
 
     # ── Material Hasil Generate ───────────────────────────────────────────────
-    st.markdown("### 📋 Hasil Analisis Hukum")
+    st.markdown('<div class="result-header">📋 Hasil Analisis Hukum</div>', unsafe_allow_html=True)
 
     material = h.get("generate_material")
     if material:

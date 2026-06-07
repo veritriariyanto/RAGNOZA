@@ -7,7 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.postgres import get_db
-from app.database.models import RAGASEvaluation, RAGProcess, RAGSession
+from app.database.models.rag_process import RAGProcess
+from app.database.models.rag_session import RAGSession
+from app.database.models.ragas_evaluation import RAGASEvaluation
 from app.schemas.history.update_title_request import UpdateHistoryTitleRequest
 from app.services.history.rag_history_service import RAGHistoryService
 
@@ -36,7 +38,17 @@ def _serialize_evaluation(item: RAGASEvaluation) -> dict:
         "answer_relevancy": item.answer_relevancy,
         "context_precision": item.context_precision,
         "context_recall": item.context_recall,
+
+        "risk_faithfulness": item.risk_faithfulness,
+        "coverage_pct": item.coverage_pct,
+        "evaluated_segments": (
+            json.loads(item.evaluated_segments)
+            if item.evaluated_segments
+            else []
+        ),
+
         "overall_score": item.overall_score,
+
         "status": item.status,
         "created_at": item.created_at,
     }
@@ -61,8 +73,17 @@ def _serialize_process(item: RAGProcess) -> dict:
             "answer_relevancy": latest_eval.answer_relevancy,
             "context_precision": latest_eval.context_precision,
             "context_recall": latest_eval.context_recall,
+
+            "risk_faithfulness": latest_eval.risk_faithfulness,
+            "coverage_pct": latest_eval.coverage_pct,
+            "evaluated_segments": (
+                json.loads(latest_eval.evaluated_segments)
+                if latest_eval.evaluated_segments
+                else []
+            ),
+
             "overall_score": latest_eval.overall_score,
-        }
+}
 
     return {
         "id": item.id,
