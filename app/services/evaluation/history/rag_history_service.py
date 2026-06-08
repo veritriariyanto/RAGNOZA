@@ -20,7 +20,8 @@ class RAGHistoryService:
         repaired_text: str,
         search_query: str,
         retrieved_context: str,
-        final_material
+        final_material,
+        fallback_message: str | None = None,
     ):
         try:
             # 2. Bikin default title agar bisa kamu edit sewaktu-waktu lewat Python
@@ -51,8 +52,8 @@ class RAGHistoryService:
                 # Catatan: compliance_score & decision_status otomatis ikut tersimpan 
                 # di dalam payload JSONB `generated_material.risk_review` bawaan LLM Anda.
                 evaluation={
-                    "status": "running_in_background",
-                    "note": "Evaluasi RAGAS berjalan otomatis di background."
+                    "status": "running_in_background" if final_material else "failed",
+                    "note": fallback_message if fallback_message else "Evaluasi RAGAS berjalan otomatis di background."
                 }
             )
 

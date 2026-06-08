@@ -5,6 +5,14 @@ import json  # 🛠️ Tambahkan import ini untuk membongkar string JSON
 from api.history.history_api import get_history_by_id, get_all_history
 from components.left_sidebar import render_left_sidebar
 
+# 1. Ambil ID session aktif yang dikirim dari audio_controls
+session_id = st.session_state.get("current_session_id")
+
+if not session_id:
+    res_all = get_all_history()
+    if res_all.get("status") == "success" and res_all.get("data"):
+        session_id = res_all["data"][0]["id"]
+
 # =========================================
 # PAGE CONFIG
 # =========================================
