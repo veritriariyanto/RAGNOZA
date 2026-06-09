@@ -52,15 +52,14 @@ def process_audio_integrated(
             rag_data = data.get("data", {})
 
             return {
-                "status": status,
+                "status": "success",   # ← perbaikan di sini
                 "session_id": data.get("session_id"),
                 "transcription": rag_data.get("transcription", {}),
                 "rag": rag_data.get("rag", {}),
                 "generated_material": rag_data.get("generated_material"),
                 "fallback_message": rag_data.get("fallback_message"),
                 "history_id": rag_data.get("history_id"),
-                "session_id": rag_data.get("session_id"),
-                "raw_context": full_context,
+                "raw_context": rag_data.get("full_context", ""),  # perhatikan juga variabel full_context
                 "error": None,
             }
         else:

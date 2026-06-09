@@ -18,6 +18,7 @@ Perubahan dari versi lama:
 """
 
 from pathlib import Path
+import json
 import streamlit as st
 import requests
 from streamlit_mic_recorder import mic_recorder
@@ -40,6 +41,8 @@ from api.evaluasi.evaluation_api import run_ragas_evaluation
 from config.settings import settings
 from api.prompting.integration_api import process_audio_integrated
 
+def _material_to_text(material):
+    return json.dumps(material, ensure_ascii=False, indent=2)
 
 BASE_URL = settings.API_BASE_URL
 
@@ -116,6 +119,71 @@ def _badge_class(score: float | None) -> str:
         return "badge badge-orange"
     return "badge badge-red"
 
+def _material_to_text(material: dict) -> str:
+    """
+    Mengubah generated_material menjadi plain text
+    agar dapat dievaluasi oleh RAGAS.
+    """
+
+    if not material:
+        return ""
+
+    parts = []
+
+    # Summary
+    summary = material.get("summary", {})
+    if summary:
+        if summary.get("title"):
+            parts.append(summary["title"])
+
+        if summary.get("overview"):
+            parts.append(summary["overview"])
+
+        for point in summary.get("key_points", []):
+            parts.append(f"- {point}")
+
+        if summary.get("conclusion"):
+            parts.append(f"Kesimpulan: {summary['conclusion']}")
+
+    # Legal QA
+    for qa in material.get("legal_qa", []):
+        q = qa.get("question", "")
+        a = qa.get("answer", "")
+        parts.append(f"Q: {q}")
+        parts.append(f"A: {a}")
+
+    # Risk Review
+    risk = material.get("risk_review", {})
+    if risk:
+        if risk.get("analysis"):
+            parts.append(risk["analysis"])
+
+        for item in risk.get("risks", []):
+            parts.append(f"Risiko: {item}")
+
+        for item in risk.get("mitigation_steps", []):
+            parts.append(f"Mitigasi: {item}")
+
+        if risk.get("recommendation"):
+            parts.append(f"Rekomendasi: {risk['recommendation']}")
+
+    # Clause Search
+    for clause in material.get("clause_search", []):
+        if clause.get("excerpt"):
+            parts.append(clause["excerpt"])
+
+    # Timeline
+    for item in material.get("timeline_extraction", []):
+        event = item.get("event", "")
+        date = item.get("date_or_period", "")
+        parts.append(f"{date}: {event}")
+
+    # Comparison
+    for comp in material.get("comparison", []):
+        if comp.get("conclusion"):
+            parts.append(comp["conclusion"])
+
+    return "\n".join(parts)
 
 # ── Helper: render RAGAS strip di bawah material ──────────────────────────────
 def _render_ragas_strip(ragas_result: dict):

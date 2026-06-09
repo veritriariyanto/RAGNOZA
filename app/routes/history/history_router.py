@@ -1,7 +1,13 @@
 # history_router.py (moved to app/routes/evaluasi)
-import logging, json
+import logging, json, datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from app.database.models import (
+    RAGHistory,
+    RAGProcess,
+    RAGSession,
+    RAGASEvaluation
+)
 
 from app.core.postgres import get_db
 from app.database.models import RAGHistory
@@ -136,13 +142,11 @@ def get_history_detail(history_id: int, db: Session = Depends(get_db)):
         "status": "success",
         "data": {
             "id": history.id,
-            "knowledge_base": history.knowledge_base,
-            "provider": history.provider,
             "raw_transcribe": history.raw_transcribe,
             "repaired_text": history.repaired_text,
             "search_query": history.search_query,
             "retrieved_context": history.retrieved_context,
-            "generate_material": history.generate_material,
+            "generated_material": history.generated_material,
             "compliance_score": history.compliance_score,
             "decision_status": history.decision_status,
             "created_at": history.created_at
