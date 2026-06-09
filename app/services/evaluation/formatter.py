@@ -2,6 +2,45 @@
 
 from app.schemas.prompting.generate_content import MaterialResponse
 
+def extract_segments_for_ragas(text: str, max_segment_length: int = 1000) -> list[str]:
+    """
+    Memecah teks panjang menjadi segmen-segmen kecil untuk evaluasi RAGAS.
+    
+    Args:
+        text: Teks (context atau material) yang akan dievaluasi
+        max_segment_length: Panjang maksimal per segmen (karakter)
+    
+    Returns:
+        List of segmen teks
+    """
+    if not text:
+        return []
+    
+    if len(text) <= max_segment_length:
+        return [text]
+    
+    # Potong berdasarkan kalimat (., !, ?) atau newline
+    import re
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    segments = []
+    current = []
+    current_len = 0
+    
+    for sent in sentences:
+        if current_len + len(sent) <= max_segment_length:
+            current.append(sent)
+            current_len += len(sent)
+        else:
+            if current:
+                segments.append(' '.join(current))
+            current = [sent]
+            current_len = len(sent)
+    
+    if current:
+        segments.append(' '.join(current))
+    
+    return segments
+
 def material_to_text(material: MaterialResponse) -> str:
     # 1. Ambil objek utama dengan fallback aman
     summary = material.summary

@@ -202,16 +202,15 @@ class RAGIntegrationService:
             return RAGIntegrationResponse(
                 raw_transcribe=raw_transcribe,
                 final_repaired_text=repaired_text,
-                user_scenario=repaired_text,         # 💡 TAMBAHKAN INI: Memenuhi kewajiban schema Pydantic
+                user_scenario=repaired_text, 
                 search_query_used=search_query,
-                has_context=bool(contexts),
+                has_context=len(contexts) > 0,  # Gunakan ini saja (lebih eksplisit)
                 retrieved_context=combined_context,
                 source_details=kb_results.get("results", []), 
                 history_id=history_id,
                 session_id=rag_session_id,
                 final_material=final_material,
                 fallback_message=fallback_message,
-                has_context=len(contexts) > 0,
             )
 
         except Exception as exc:
