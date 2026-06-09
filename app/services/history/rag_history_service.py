@@ -52,10 +52,10 @@ class RAGHistoryService:
         retrieved_context: str,
         final_material,
         session_id: int | None = None,
-    ) -> RAGProcess | None:
+    ) -> int | None:   # ← ubah return type
         """
-        Menyimpan rekaman penuh alur RAG Pipeline (Mulai dari teks suara hingga materi hukum final).
-        Menghubungkan tabel RAGProcess dengan tabel induk RAGSession.
+        Menyimpan rekaman penuh alur RAG Pipeline.
+        Mengembalikan ID dari RAGProcess yang baru dibuat, atau None jika gagal.
         """
         try:
             session = RAGHistoryService._get_or_create_session(
@@ -99,13 +99,13 @@ class RAGHistoryService:
                 process.compliance_score,
                 process.decision_status,
             )
-            return process
+            return process.id   # ← kembalikan ID integer
 
         except Exception as exc:
             db.rollback()
             logger.error("[RAGHistory] Gagal simpan: %s", exc, exc_info=True)
             return None
-
+        
     @staticmethod
     def update_ragas(
         db: Session,
