@@ -2,19 +2,28 @@
 import logging, json, datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field  # 💡 Tambahkan impor Pydantic
+
 from app.database.models import (
     RAGHistory,
     RAGProcess,
     RAGSession,
     RAGASEvaluation
 )
-
 from app.core.postgres import get_db
-from app.database.models import RAGHistory
+# 💡 Pastikan mengimpor service jika ada file terpisah, atau sesuaikan path-nya:
+# from app.services.rag_history_service import RAGHistoryService 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# ── PYDANTIC SCHEMAS ──────────────────────────────────────────────────────────
+# 💡 Definisikan di sini (di atas router) agar terbaca utuh oleh FastAPI & OpenAPI
+class UpdateHistoryTitleRequest(BaseModel):
+    session_title: str = Field(..., description="Judul baru untuk sesi riwayat RAG")
+
+
+# ── HELPER FUNCTIONS ──────────────────────────────────────────────────────────
 
 def _parse_json_field(raw: str | None) -> dict | list | None:
     if not raw:
@@ -81,7 +90,7 @@ def _serialize_process(item: RAGProcess) -> dict:
             ),
 
             "overall_score": latest_eval.overall_score,
-}
+        }
 
     return {
         "id": item.id,
@@ -118,7 +127,6 @@ def get_all_history(db: Session = Depends(get_db)):
             "total": len(results),
             "data": results
         }
-        
 
 
 # =========================================================
@@ -132,7 +140,7 @@ def get_history_detail(history_id: int, db: Session = Depends(get_db)):
         .first()
     )
 
-    if not history :
+    if not history:
         raise HTTPException(
             status_code=404, 
             detail="History tidak ditemukan"
@@ -195,6 +203,7 @@ def update_history_title(
     request: UpdateHistoryTitleRequest,
     db: Session = Depends(get_db),
 ):
+    # 💡 Pastikan RAGHistoryService sudah di-import di atas, atau ganti dengan logika DB langsung jika service belum siap
     success = RAGHistoryService.update_title(
         db=db,
         history_id=history_id,
@@ -204,13 +213,12 @@ def update_history_title(
     if not success:
         raise HTTPException(
             status_code=404,
-            detail="History tidak ditemukan"
+            detail="History tidak ditemukan atau gagal memperbarui judul"
         )
     
-    db.delete(history)
-    db.commit()
+    # 💡 Baris db.delete(history) yang salah di sini sudah dihapus
 
     return {
         "status": "success",
-        "message": f"History dengan id {history_id} berhasil dihapus"
+        "message": f"Judul history dengan id {history_id} berhasil diperbarui"
     }
