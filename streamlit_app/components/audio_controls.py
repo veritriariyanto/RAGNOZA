@@ -158,65 +158,8 @@ def _render_ragas_strip(ragas_result: dict):
     )
 
 
-# ── Helper: render hasil material SPK ────────────────────────────────────────
-def _render_material_result(material: dict, rag_info: dict):
-    """Tampilkan hasil generate material dari pipeline RAG."""
-    st.markdown("---")
-    st.markdown("### 📋 Hasil Analisis Hukum (SPK)")
-
-    # Info sumber
-    sources_count = rag_info.get("sources_count", 0)
-    has_context = rag_info.get("has_context", False)
-    query_used = rag_info.get("query_used", "")
-
-    col_a, col_b = st.columns(2)
-    with col_a:
-        st.caption(f"🔍 Query: *{query_used}*")
-    with col_b:
-        st.caption(f"📚 Sumber ditemukan: {sources_count} chunk")
-
-    if not has_context or not material:
-        st.warning("⚠️ Tidak ditemukan referensi hukum yang relevan.")
-        return
-
-    # Kartu material
-    decision = material.get("decision_status", "-")
-    score = material.get("compliance_score", 0)
-    recommendation = material.get("recommendation", "-")
-    risk_analysis = material.get("risk_analysis", [])
-    legal_basis = material.get("legal_basis", [])
-
-    # Status keputusan
-    status_color = "success" if "MATUHI" in decision.upper() else "error"
-    if status_color == "success":
-        st.success(f"✅ **{decision}**")
-    else:
-        st.error(f"❌ **{decision}**")
-
-    # Skor kepatuhan
-    st.metric("Skor Kepatuhan", f"{score} / 100")
-    st.progress(min(int(score), 100) / 100)
-
-    # Rekomendasi
-    with st.expander("💡 Rekomendasi Tindakan", expanded=True):
-        st.write(recommendation)
-
-    # Analisis risiko
-    if risk_analysis:
-        with st.expander("⚠️ Analisis Risiko"):
-            for risk in risk_analysis:
-                st.markdown(f"- {risk}")
-
-    # Dasar hukum
-    if legal_basis:
-        with st.expander("📜 Dasar Hukum"):
-            for basis in legal_basis:
-                st.markdown(f"- {basis}")
-
-
 # ── MAIN RENDER ───────────────────────────────────────────────────────────────
 def render_audio_controls():
-
     st.divider()
     st.subheader("🎙️ Audio ke Analisis Hukum")
     st.caption("Upload atau rekam audio — sistem akan mentranskrip, mencari referensi hukum, dan menghasilkan analisis SPK otomatis.")
@@ -273,42 +216,16 @@ def render_audio_controls():
             with col_rag:
                 # Tombol utama — pipeline RAG lengkap + evaluasi
                 process_rag = st.button(
-                    "🚀 Proses RAG & Evaluasi",
+                    "🚀 Proses RAG",
                     use_container_width=True,
                     key="btn_rag_upload",
                     type="primary",
                     help="STT → RAG → Generate Material → Evaluasi RAGAS otomatis",
                 )
 
-            with col_stt:
-                # Tombol lama — hanya transkripsi
-                transcribe_only = st.button(
-                    "📝 Transkripsi Saja",
-                    use_container_width=True,
-                    key="btn_transcribe_upload",
-                )
-
-            with col_clear:
-                if st.button("🗑️", use_container_width=True, key="btn_clear_upload"):
-                    st.session_state.pop(_KEY_UPLOAD_BYTES, None)
-                    st.session_state.pop(_KEY_UPLOAD_NAME, None)
-                    st.session_state.pop(_KEY_TRANSCRIPTION, None)
-                    st.rerun()
-
             # ── Proses RAG lengkap ─────────────────────────────────────────
             if process_rag:
                 _run_rag_pipeline(upload_bytes, upload_name, provider, knowledge_base)
-
-            # ── Transkripsi saja (flow lama) ───────────────────────────────
-            if transcribe_only:
-                st.session_state.pop(_KEY_TRANSCRIPTION, None)
-                with st.spinner("Sedang memproses transkripsi..."):
-                    transcription, error = _transcribe(upload_bytes, upload_name, provider)
-                if error:
-                    st.error(f"⚠️ {error}")
-                else:
-                    st.session_state[_KEY_TRANSCRIPTION] = transcription
-                    st.rerun()
 
     # ── TAB RECORD ────────────────────────────────────────────────────────────
     with tab_record:
@@ -335,55 +252,26 @@ def render_audio_controls():
 
             with col_rag:
                 process_rag_rec = st.button(
-                    "🚀 Proses RAG & Evaluasi",
+                    "🚀 Proses RAG",
                     use_container_width=True,
                     key="btn_rag_record",
                     type="primary",
                 )
 
-            with col_stt:
-                transcribe_record = st.button(
-                    "📝 Transkripsi Saja",
-                    use_container_width=True,
-                    key="btn_transcribe_record",
-                )
-
-            with col_clear:
-                if st.button("🗑️", use_container_width=True, key="btn_clear_record"):
-                    st.session_state.pop(_KEY_RECORD_BYTES, None)
-                    st.session_state.pop(_KEY_TRANSCRIPTION, None)
-                    st.rerun()
 
             if process_rag_rec:
                 _run_rag_pipeline(record_bytes, "recording.wav", provider, knowledge_base)
 
-            if transcribe_record:
-                st.session_state.pop(_KEY_TRANSCRIPTION, None)
-                with st.spinner("Sedang memproses transkripsi rekaman..."):
-                    transcription, error = _transcribe(record_bytes, "recording.wav", provider)
-                if error:
-                    st.error(f"⚠️ {error}")
-                else:
-                    st.session_state[_KEY_TRANSCRIPTION] = transcription
-                    st.rerun()
 
     # ── Hasil transkripsi saja (flow lama, tidak berubah) ─────────────────────
     transcription = st.session_state.get(_KEY_TRANSCRIPTION)
     if transcription is not None:
         _handle_transcription_success(transcription)
 
-    # ── Tampilkan hasil RAG + RAGAS strip (jika ada) ──────────────────────────
+# ── Tampilkan hasil RAG + RAGAS strip (jika ada) ──────────────────────────
     rag_result = get_last_rag_result()
     if rag_result:
-        _render_material_result(
-            material=rag_result.get("generated_material"),
-            rag_info={"has_context": rag_result.get("has_context", False),
-                      "sources_count": rag_result.get("sources_count", 0), 
-                      "query_used": rag_result.get("query_used", "")
-                    },
-        )
-
-        # RAGAS strip
+        # Jika evaluasi RAGAS background masih jalan, beri info tipis
         ragas_result = get_last_ragas_result()
         if is_ragas_evaluating():
             st.info("⏳ Evaluasi RAGAS sedang berjalan...")
@@ -391,7 +279,7 @@ def render_audio_controls():
             _render_ragas_strip(ragas_result)
 
         st.caption(
-            f"💡 Lihat **Tab Evaluasi** untuk detail lengkap 4 metrik + tambah ground truth."
+            f"💡 Analisis selesai. Lihat detail lengkap di **Halaman Hasil Generate**."
         )
 
 
@@ -402,15 +290,9 @@ def _run_rag_pipeline(
     provider: str,
     knowledge_base: str,
 ):
-    print(f"[RAG DEBUG] knowledge_base dikirim: '{knowledge_base}'")  # ← tambah ini
-    """
-    1. Panggil integration endpoint (STT → RAG → Material)
-    2. Simpan hasil ke session_state
-    3. Jalankan evaluasi RAGAS
-    4. Simpan hasil RAGAS ke session_state
-    5. Rerun untuk tampilkan hasil
-    """
-    # Step 1: RAG pipeline
+    print(f"[RAG DEBUG] knowledge_base dikirim: '{knowledge_base}'")
+    
+    # ── Step 1: Jalankan RAG Pipeline ─────────────────────────────────────────
     with st.spinner("⏳ Memproses audio → RAG → Material... (30–90 detik)"):
         rag_response = process_audio_integrated(
             audio_bytes=audio_bytes,
@@ -426,17 +308,24 @@ def _run_rag_pipeline(
     transcription   = rag_response.get("transcription", {})
     material        = rag_response.get("generated_material")
     context         = rag_response.get("raw_context", "")
+    fallback_message = rag_response.get("fallback_message")
+
+    if rag_response["status"] == "failed" and fallback_message:
+        st.warning(f"⚠️ Tidak bisa menghasilkan material: {fallback_message}")
     rag_meta        = rag_response.get("rag", {})
     question        = transcription.get("repaired", transcription.get("raw", ""))
     answer_text     = _material_to_text(material) if material else ""
 
-    # Debug log — hapus setelah fix dikonfirmasi
+    new_session_id = rag_response.get("session_id") or rag_response.get("id")
+
+    # Debug log
     print(f"[DEBUG] has_context: {rag_meta.get('has_context')}")
     print(f"[DEBUG] sources_count: {rag_meta.get('sources_count')}")
     print(f"[DEBUG] context length: {len(context)}")
     print(f"[DEBUG] material: {material}")
+    print(f"[DEBUG] new_session_id didapat: {new_session_id}")
 
-    # Step 2: Simpan hasil RAG ke session_state
+    # ── Step 2: Simpan hasil RAG ke session_state ─────────────────────────────
     set_last_rag_result(
         question=question,
         context=context,
@@ -444,13 +333,12 @@ def _run_rag_pipeline(
         generated_material=material,
         transcription_raw=transcription.get("raw", ""),
         knowledge_base=knowledge_base,
-        #tambah simpan rag_meta ke session
         sources_count=rag_meta.get("sources_count", 0),
         has_context=rag_meta.get("has_context", False),
         query_used=rag_meta.get("query_used", question),
     )
 
-    # Step 3 & 4: Evaluasi RAGAS (jika ada context dan material)
+    # ── Step 3 & 4: Evaluasi RAGAS (jika ada context dan material) ─────────────
     if context and answer_text:
         set_ragas_evaluating(True)
         with st.spinner("📊 Mengevaluasi kualitas RAG dengan RAGAS..."):
@@ -458,13 +346,23 @@ def _run_rag_pipeline(
                 question=question,
                 context=context,
                 answer=answer_text,
-                ground_truth=None,  # proxy otomatis dari context di backend
+                ground_truth=None, 
             )
         set_last_ragas_result(ragas_response)
     else:
         set_ragas_evaluating(False)
 
-    st.rerun()
+# ── Step 5: Auto Redirect ke Halaman Riwayat Baru ─────────────────────────
+    if new_session_id:
+        # Masukkan ID ke session state global agar bisa dibaca oleh halaman Hasil_Generate
+        st.session_state["current_session_id"] = new_session_id
+        
+        st.toast("🚀 Analisis Selesai! Mengalihkan ke dashboard...")
+        
+        # Pindah ke file 1_Hasil_Generate.py
+        st.switch_page("pages/1_Hasil_Generate.py")
+    else:
+        st.rerun()
 
 
 # ── HELPER: transkripsi berhasil (flow lama, tidak berubah) ──────────────────

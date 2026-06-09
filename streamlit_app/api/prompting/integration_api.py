@@ -44,9 +44,13 @@ def process_audio_integrated(
         if response.status_code == 200:
             data = response.json()
             rag_data = data.get("data", {})
+            status = data.get("status", "success")
+            if status == "success" and rag_data.get("generated_material") is None and rag_data.get("fallback_message"):
+                status = "failed"
 
             return {
-                "status": "success",
+                "status": status,
+                "session_id": data.get("session_id"),
                 "transcription": rag_data.get("transcription", {}),
                 "rag": rag_data.get("rag", {}),
                 "generated_material": rag_data.get("generated_material"),

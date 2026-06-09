@@ -115,6 +115,7 @@ class RAGIntegrationService:
             # ── Tahap 5: Generate Material ────────────────────────────────────
             final_material = None
             fallback_message = None
+            session_id = None
 
             if contexts:
                 material_payload = MaterialRequest(
@@ -132,7 +133,7 @@ class RAGIntegrationService:
                 answer_text = material_to_text(final_material)
 
                 # ── Tahap 6: Simpan History ───────────────────────────────────
-                RAGHistoryService.save_history(
+                history = RAGHistoryService.save_history(
                     db=self.db,
                     knowledge_base=knowledge_base,
                     provider=provider,
@@ -142,6 +143,7 @@ class RAGIntegrationService:
                     retrieved_context=combined_context,
                     final_material=final_material,
                 )
+                session_id = history.id if history is not None else None
 
                 # ── Tahap 7: Evaluasi RAGAS (Background — tidak blocking) ─────
                 #
@@ -175,6 +177,18 @@ class RAGIntegrationService:
                     "Maaf, jawaban tidak dapat dibuat karena tidak ada "
                     "referensi hukum yang cocok."
                 )
+                history = RAGHistoryService.save_history(
+                    db=self.db,
+                    knowledge_base=knowledge_base,
+                    provider=provider,
+                    raw_transcribe=raw_transcribe,
+                    repaired_text=repaired_text,
+                    search_query=search_query,
+                    retrieved_context=combined_context,
+                    final_material=None,
+                    fallback_message=fallback_message,
+                )
+                session_id = history.id if history is not None else None
 
             return RAGIntegrationResponse(
                 raw_transcribe=raw_transcribe,
@@ -186,6 +200,7 @@ class RAGIntegrationService:
                 final_material=final_material,
                 fallback_message=fallback_message,
                 has_context=len(contexts) > 0,
+                session_id=session_id,
             )
 
         except Exception as exc:
