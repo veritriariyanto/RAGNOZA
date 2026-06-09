@@ -159,6 +159,29 @@ def get_current_session():
 def set_pending_audio_text(text: str):
     st.session_state.pending_audio_text = text
 
+def create_new_session():
+    """Membuat sesi chat baru."""
+    new_id = len(st.session_state.chat_sessions) + 1
+    new_session = {
+        "id": new_id,
+        "name": f"Sesi {new_id}",
+        "created_at": datetime.now().isoformat(),
+        "messages": []
+    }
+    st.session_state.chat_sessions.append(new_session)
+    st.session_state.current_session_id = new_id
+    return new_session
+
+def delete_session(session_id: int):
+    """Menghapus sesi chat berdasarkan ID."""
+    st.session_state.chat_sessions = [
+        s for s in st.session_state.chat_sessions if s["id"] != session_id
+    ]
+    if st.session_state.current_session_id == session_id:
+        if st.session_state.chat_sessions:
+            st.session_state.current_session_id = st.session_state.chat_sessions[0]["id"]
+        else:
+            st.session_state.current_session_id = None
 
 # =========================================
 # POP PENDING AUDIO TEXT

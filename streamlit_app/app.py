@@ -2,8 +2,6 @@ import streamlit as st
 
 from components.left_sidebar import render_left_sidebar
 from components.top_tabs import render_top_tabs
-from components.chat_area import render_chat_area
-from components.bottom_input import render_bottom_input
 from components.audio_controls import render_audio_controls
 from components.evaluation_tab import render_evaluation_tab
 from components.knowledgebase_tab import render_knowledgebase_tab
@@ -77,9 +75,6 @@ with center_col:
             # Mode normal — form audio + generate baru
             render_audio_controls()
 
-        render_bottom_input()
-
-        render_chat_area()
 
     # =====================================
     # TAB EVALUASI
