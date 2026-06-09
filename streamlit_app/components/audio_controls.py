@@ -8,8 +8,16 @@ Perubahan dari versi lama:
 - Tampilkan RAGAS strip kecil di bawah material
 - Simpan semua hasil ke session_state agar Tab Evaluasi bisa auto-populate
 - UI/UX redesign: elegant, refined, professional legal-tech aesthetic
+
+[PATCH] Fix 5 bug UI vs schema MaterialResponse:
+  BUG-1: Timeline — ganti item["article_reference"] → item["relevance"]
+  BUG-2: Comparison — tambah render similarities & differences
+  BUG-3: Clause Search — tambah render source_name & relevance
+  BUG-4: Referensi UU — tambah render excerpt & relevance
+  WARN-1: Comparison — hapus fallback option_a/option_b, pakai source_a/source_b langsung
 """
 
+from pathlib import Path
 import streamlit as st
 import requests
 from streamlit_mic_recorder import mic_recorder
@@ -41,332 +49,18 @@ _KEY_UPLOAD_NAME   = "_audio_upload_name"
 _KEY_RECORD_BYTES  = "_audio_record_bytes"
 _KEY_TRANSCRIPTION = "_audio_transcription"
 
+#CSS
 
-# ── CSS Injection ─────────────────────────────────────────────────────────────
 def _inject_styles():
+    css_path = Path("streamlit_app/assets/styles/main.css")
+
+    with open(css_path, "r", encoding="utf-8") as f:
+        css = f.read()
+
     st.markdown(
-        """
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap');
-
-        /* ── Root Variables — Dark Theme ── */
-        :root {
-            --gold:        #D4A853;
-            --gold-light:  #F0CC80;
-            --gold-dim:    #C49A3C;
-            --gold-glow:   rgba(212,168,83,0.18);
-            --text-primary:   #F0EDE8;
-            --text-secondary: #A89F93;
-            --text-muted:     #6B6460;
-            --surface-0:   #0D0D0D;
-            --surface-1:   #161616;
-            --surface-2:   #1E1E1E;
-            --surface-3:   #272727;
-            --border:      rgba(212,168,83,0.22);
-            --border-soft: rgba(240,237,232,0.08);
-            --shadow:      0 4px 24px rgba(0,0,0,0.5);
-            --shadow-lg:   0 12px 48px rgba(0,0,0,0.7);
-            --green:       #5DBE8A;
-            --orange:      #E8934A;
-            --red:         #E06070;
-            --green-bg:    rgba(93,190,138,0.12);
-            --orange-bg:   rgba(232,147,74,0.12);
-            --red-bg:      rgba(224,96,112,0.12);
-            --radius: 12px;
-        }
-
-        /* ── Section Header ── */
-        .ac-header {
-            font-family: 'DM Serif Display', Georgia, serif;
-            font-size: 1.55rem;
-            color: var(--text-primary);
-            letter-spacing: -0.02em;
-            margin-bottom: 2px;
-            line-height: 1.2;
-        }
-        .ac-subheader {
-            font-family: 'DM Sans', sans-serif;
-            font-size: 0.82rem;
-            color: var(--text-secondary);
-            font-weight: 400;
-            margin-bottom: 18px;
-            letter-spacing: 0.01em;
-        }
-
-        /* ── Divider ── */
-        .ac-divider {
-            height: 1px;
-            background: linear-gradient(90deg, transparent, var(--gold), transparent);
-            margin: 20px 0;
-            opacity: 0.6;
-        }
-
-        /* ── Card wrapper ── */
-        .ac-card {
-            background: var(--surface-1);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 20px 22px;
-            box-shadow: var(--shadow);
-            margin-bottom: 16px;
-        }
-
-        /* ── Select label override ── */
-        .ac-label {
-            font-family: 'DM Sans', sans-serif;
-            font-size: 0.72rem;
-            font-weight: 600;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: var(--gold-dim);
-            margin-bottom: 4px;
-        }
-
-        /* ── Action buttons ── */
-        div[data-testid="stButton"] > button {
-            font-family: 'DM Sans', sans-serif !important;
-            font-weight: 500 !important;
-            letter-spacing: 0.02em !important;
-            border-radius: 8px !important;
-            transition: all 0.18s ease !important;
-        }
-        div[data-testid="stButton"] > button[kind="primary"] {
-            background: linear-gradient(135deg, #D4A853 0%, #B8873A 100%) !important;
-            border: none !important;
-            color: #0D0D0D !important;
-            font-weight: 700 !important;
-            box-shadow: 0 2px 16px rgba(212,168,83,0.4) !important;
-        }
-        div[data-testid="stButton"] > button[kind="primary"]:hover {
-            box-shadow: 0 4px 28px rgba(212,168,83,0.6) !important;
-            transform: translateY(-1px) !important;
-        }
-        div[data-testid="stButton"] > button:not([kind="primary"]) {
-            background: var(--surface-2) !important;
-            border: 1px solid var(--border-soft) !important;
-            color: var(--text-secondary) !important;
-        }
-        div[data-testid="stButton"] > button:not([kind="primary"]):hover {
-            border-color: var(--gold) !important;
-            color: var(--text-primary) !important;
-            background: var(--surface-3) !important;
-        }
-
-        /* ── Tabs ── */
-        div[data-testid="stTabs"] button[role="tab"] {
-            font-family: 'DM Sans', sans-serif !important;
-            font-size: 0.82rem !important;
-            font-weight: 500 !important;
-            letter-spacing: 0.04em !important;
-            color: var(--text-muted) !important;
-        }
-        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
-            color: var(--gold-light) !important;
-            border-bottom: 2px solid var(--gold) !important;
-        }
-
-        /* ── Analysis section header ── */
-        .result-header {
-            font-family: 'DM Serif Display', serif;
-            font-size: 1.25rem;
-            color: var(--text-primary);
-            letter-spacing: -0.01em;
-            padding: 14px 0 6px 0;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 14px;
-        }
-
-        /* ── RAGAS strip ── */
-        .ragas-strip {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 10px 16px;
-            margin-top: 12px;
-            display: flex;
-            flex-wrap: wrap;
-            align-items: center;
-            gap: 8px;
-            font-family: 'DM Sans', sans-serif;
-            font-size: 12px;
-        }
-        .ragas-label {
-            color: var(--text-secondary);
-            font-weight: 600;
-            letter-spacing: 0.05em;
-            margin-right: 4px;
-        }
-        .badge {
-            padding: 3px 10px;
-            border-radius: 6px;
-            font-weight: 600;
-            font-size: 11.5px;
-            letter-spacing: 0.02em;
-        }
-        .badge-green  { background: var(--green-bg);  color: var(--green);  border: 1px solid rgba(93,190,138,0.25); }
-        .badge-orange { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(232,147,74,0.25); }
-        .badge-red    { background: var(--red-bg);    color: var(--red);    border: 1px solid rgba(224,96,112,0.25); }
-        .badge-gray   { background: rgba(255,255,255,0.06); color: var(--text-secondary); border: 1px solid var(--border-soft); }
-        .ragas-meta {
-            color: var(--text-muted);
-            margin-left: auto;
-            font-size: 10.5px;
-        }
-
-        /* ── Metric cards ── */
-        .metric-row {
-            display: flex;
-            gap: 12px;
-            margin: 12px 0;
-        }
-        .metric-card {
-            flex: 1;
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 12px 14px;
-            text-align: center;
-        }
-        .metric-card .metric-label {
-            font-family: 'DM Sans', sans-serif;
-            font-size: 10px;
-            font-weight: 600;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            color: var(--text-muted);
-            margin-bottom: 4px;
-        }
-        .metric-card .metric-value {
-            font-family: 'DM Serif Display', serif;
-            font-size: 1.4rem;
-            color: var(--text-primary);
-        }
-
-        /* ── Section label inside results ── */
-        .section-label {
-            font-family: 'DM Sans', sans-serif;
-            font-size: 10.5px;
-            font-weight: 700;
-            letter-spacing: 0.1em;
-            text-transform: uppercase;
-            color: var(--gold);
-            margin: 16px 0 6px 0;
-        }
-
-        /* ── Info pill ── */
-        .info-pill {
-            display: inline-block;
-            background: var(--gold-glow);
-            border: 1px solid rgba(212,168,83,0.35);
-            color: var(--gold-light);
-            border-radius: 20px;
-            padding: 3px 12px;
-            font-family: 'DM Sans', sans-serif;
-            font-size: 11.5px;
-            font-weight: 500;
-            margin-right: 6px;
-            margin-bottom: 4px;
-        }
-
-        /* ── Expander override ── */
-        details summary {
-            font-family: 'DM Sans', sans-serif !important;
-            font-weight: 500 !important;
-            font-size: 0.88rem !important;
-            color: var(--text-secondary) !important;
-        }
-
-        /* ── Text area ── */
-        div[data-testid="stTextArea"] textarea {
-            font-family: 'DM Sans', sans-serif !important;
-            font-size: 0.9rem !important;
-            border-radius: 8px !important;
-            border-color: var(--border-soft) !important;
-            background: var(--surface-2) !important;
-            color: var(--text-primary) !important;
-        }
-        div[data-testid="stTextArea"] textarea:focus {
-            border-color: var(--gold) !important;
-            box-shadow: 0 0 0 2px rgba(212,168,83,0.2) !important;
-        }
-
-        /* ── File uploader ── */
-        div[data-testid="stFileUploader"] {
-            border-radius: var(--radius) !important;
-        }
-        div[data-testid="stFileUploadDropzone"] {
-            border: 2px dashed rgba(212,168,83,0.3) !important;
-            border-radius: var(--radius) !important;
-            background: var(--surface-1) !important;
-            transition: border-color 0.2s, background 0.2s !important;
-        }
-        div[data-testid="stFileUploadDropzone"]:hover {
-            border-color: var(--gold) !important;
-            background: var(--gold-glow) !important;
-        }
-
-        /* ── Selectbox ── */
-        div[data-testid="stSelectbox"] > div > div {
-            border-radius: 8px !important;
-            border-color: var(--border-soft) !important;
-            background-color: var(--surface-2) !important;
-            color: var(--text-primary) !important;
-            font-family: 'DM Sans', sans-serif !important;
-        }
-
-        /* ── Progress bar ── */
-        div[data-testid="stProgress"] > div > div {
-            background: linear-gradient(90deg, var(--gold), var(--gold-dim)) !important;
-            border-radius: 4px !important;
-        }
-        div[data-testid="stProgress"] > div {
-            background: var(--surface-3) !important;
-            border-radius: 4px !important;
-        }
-
-        /* ── Caption override ── */
-        div[data-testid="stCaptionContainer"] p {
-            font-family: 'DM Sans', sans-serif !important;
-            font-size: 0.78rem !important;
-            color: var(--text-muted) !important;
-        }
-
-        /* ── Audio player ── */
-        div[data-testid="stAudio"] audio {
-            border-radius: 8px !important;
-            width: 100% !important;
-        }
-
-        /* ── Alert boxes ── */
-        div[data-testid="stAlert"] {
-            border-radius: 10px !important;
-            font-family: 'DM Sans', sans-serif !important;
-            border-left-color: var(--gold) !important;
-        }
-
-        /* ── Metric widget ── */
-        div[data-testid="stMetric"] label {
-            color: var(--text-muted) !important;
-            font-family: 'DM Sans', sans-serif !important;
-            font-size: 0.75rem !important;
-            letter-spacing: 0.06em !important;
-            text-transform: uppercase !important;
-        }
-        div[data-testid="stMetricValue"] {
-            color: var(--text-primary) !important;
-            font-family: 'DM Serif Display', serif !important;
-        }
-
-        /* ── Spinner ── */
-        div[data-testid="stSpinner"] p {
-            color: var(--text-secondary) !important;
-            font-family: 'DM Sans', sans-serif !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
+        f"<style>{css}</style>",
+        unsafe_allow_html=True
     )
-
 
 # ── Helper: transkripsi saja (endpoint lama, tetap dipakai) ───────────────────
 def _transcribe(audio_bytes: bytes, filename: str, provider: str) -> tuple[str | None, str | None]:
@@ -433,13 +127,26 @@ def _render_ragas_strip(ragas_result: dict):
     if not metrics:
         return
 
-    faith   = metrics.get("faithfulness")
-    relev   = metrics.get("answer_relevancy")
-    overall = metrics.get("overall_score")
-    ts      = ragas_result.get("timestamp", "")
+    faith    = metrics.get("faithfulness")
+    relev    = metrics.get("answer_relevancy")
+    risk_f   = metrics.get("risk_faithfulness")
+    overall  = metrics.get("overall_score")
+    coverage = metrics.get("coverage_pct")
+    segments = metrics.get("answer_faithfulness_segment", [])
+    ts       = ragas_result.get("timestamp", "")
 
     def _fmt(v):
         return f"{v:.2f}" if v is not None else "N/A"
+
+    seg_html = ""
+    if segments:
+        seg_labels = {"faithfulness": "Summary", "qa": "QA", "risk": "Risk"}
+        seg_html = " ".join(
+            f'<span style="background:rgba(212,168,83,0.12);color:#D4A853;'
+            f'padding:2px 7px;border-radius:4px;font-size:10.5px;">'
+            f'{seg_labels.get(s, s)}</span>'
+            for s in segments
+        )
 
     st.markdown(
         f"""
@@ -451,10 +158,16 @@ def _render_ragas_strip(ragas_result: dict):
             <span class="{_badge_class(relev)}">
                 {_score_emoji(relev)} Relevancy &nbsp;{_fmt(relev)}
             </span>
+            <span class="{_badge_class(risk_f)}">
+                {_score_emoji(risk_f)} Risk Faith &nbsp;{_fmt(risk_f)}
+            </span>
             <span class="{_badge_class(overall)}">
                 {_score_emoji(overall)} Overall &nbsp;{_fmt(overall)}
             </span>
-            <span class="ragas-meta">Detail lengkap → Tab Evaluasi &nbsp;·&nbsp; {ts}</span>
+            {'<span class="ragas-label" style="margin-left:8px;">Coverage</span>' if coverage is not None else ''}
+            {'<span class="badge badge-gray">' + f'{coverage*100:.0f}%' + '</span>' if coverage is not None else ''}
+            {'<span class="ragas-label" style="margin-left:8px;">Segmen</span>' + seg_html if seg_html else ''}
+            <span class="ragas-meta">Detail → Tab Evaluasi &nbsp;·&nbsp; {ts}</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -488,9 +201,9 @@ def _render_material_result(material: dict, rag_info: dict):
     # ── Summary ──────────────────────────────────────────────────────────────
     summary = material.get("summary", {}) or {}
     if summary:
-        st.markdown(f'<div class="section-label">📌 Ringkasan</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-label">📌 Ringkasan</div>', unsafe_allow_html=True)
         st.markdown(
-            f"<p style='font-family:DM Serif Display,serif;font-size:1.1rem;color:#F0EDE8;margin:0 0 8px 0;'>"
+            f"<p style='font-family:DM Serif Display,serif;font-size:1.1rem;color:white;margin:0 0 8px 0;'>"
             f"{summary.get('title', 'Ringkasan')}</p>",
             unsafe_allow_html=True,
         )
@@ -541,6 +254,7 @@ def _render_material_result(material: dict, rag_info: dict):
             st.success(f"✅ **Rekomendasi:** {risk['recommendation']}")
 
     # ── Clauses ───────────────────────────────────────────────────────────────
+    # [BUG-3 FIX] Tambah render source_name & relevance
     clauses = material.get("clause_search", [])
     if clauses:
         with st.expander(f"📜 Pasal Terkait ({len(clauses)} ditemukan)"):
@@ -548,44 +262,74 @@ def _render_material_result(material: dict, rag_info: dict):
                 st.markdown(
                     f"**{clause.get('article', '')}** — {clause.get('clause_topic', '')}"
                 )
+                if clause.get("source_name"):
+                    st.caption(f"🏛️ Sumber: {clause['source_name']}")
                 if clause.get("excerpt"):
                     st.caption(clause["excerpt"])
+                if clause.get("relevance"):
+                    st.info(f"📎 Relevansi: {clause['relevance']}")
                 st.divider()
 
     # ── Timeline ──────────────────────────────────────────────────────────────
+    # [BUG-1 FIX] Ganti item["article_reference"] → item["relevance"]
     timeline = material.get("timeline_extraction", [])
     if timeline:
         with st.expander("🕐 Timeline Hukum"):
             for item in timeline:
                 st.markdown(
                     f"- **{item.get('date_or_period', '')}** — "
-                    f"{item.get('event', '')} "
-                    f"*(Ref: {item.get('article_reference', '-')})*"
+                    f"{item.get('event', '')}"
                 )
+                if item.get("relevance"):
+                    st.caption(f"📎 {item['relevance']}")
 
     # ── Comparisons ───────────────────────────────────────────────────────────
+    # [BUG-2 FIX] Tambah render similarities & differences
+    # [WARN-1 FIX] Hapus fallback option_a/option_b, pakai source_a/source_b langsung
     comparisons = material.get("comparison", [])
     if comparisons:
         with st.expander("⚖️ Perbandingan Ketentuan"):
             for comp in comparisons:
+                st.markdown(f"**Aspek: {comp.get('aspect', '')}**")
+
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown(f"**{comp.get('aspect', '')}**")
-                    st.write(comp.get("option_a") or comp.get("source_a", "-"))
+                    st.markdown("**Ketentuan A**")
+                    st.write(comp.get("source_a", "-"))
                 with col2:
-                    st.write(comp.get("option_b") or comp.get("source_b", "-"))
+                    st.markdown("**Ketentuan B**")
+                    st.write(comp.get("source_b", "-"))
+
+                similarities = comp.get("similarities", [])
+                if similarities:
+                    with st.expander("🟰 Persamaan", expanded=False):
+                        for s in similarities:
+                            st.markdown(f"- {s}")
+
+                differences = comp.get("differences", [])
+                if differences:
+                    with st.expander("↔️ Perbedaan", expanded=False):
+                        for d in differences:
+                            st.markdown(f"- {d}")
+
                 if comp.get("conclusion"):
                     st.caption(f"Kesimpulan: {comp['conclusion']}")
                 st.divider()
 
     # ── Referensi UU ──────────────────────────────────────────────────────────
+    # [BUG-4 FIX] Tambah render excerpt & relevance
     referensi = material.get("referensi_uu", [])
     if referensi:
         with st.expander("📚 Referensi Undang-Undang"):
             for ref in referensi:
                 st.markdown(
-                    f"- **{ref.get('source_name', '')}** Pasal {ref.get('article', '')}"
+                    f"**{ref.get('source_name', '')}** — Pasal {ref.get('article', '')}"
                 )
+                if ref.get("excerpt"):
+                    st.caption(f'"{ref["excerpt"]}"')
+                if ref.get("relevance"):
+                    st.info(f"📎 {ref['relevance']}")
+                st.divider()
 
 
 # ── MAIN RENDER ───────────────────────────────────────────────────────────────
@@ -708,7 +452,7 @@ def render_audio_controls():
     # ── TAB RECORD ────────────────────────────────────────────────────────────
     with tab_record:
         st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-        st.caption("Klik **Start** untuk mulai merekam, **Stop** untuk menyelesaikan.")
+        st.markdown("<div class='white-caption'>Klik **Start** untuk mulai merekam, **Stop** untuk menyelesaikan.</div>", unsafe_allow_html=True)
 
         audio_data = mic_recorder(
             start_prompt="🔴  Start Rekam",

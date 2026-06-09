@@ -114,68 +114,84 @@ def _render_metric_card(label: str, description: str, score: float | None, badge
     )
 
 def _render_metrics_display(metrics: dict):
-    """Render kartu metrik + progress bar dari dict metrics."""
     has_gt = metrics.get("context_precision") is not None
 
-    if has_gt: 
+    if has_gt:
         col1, col2 = st.columns(2)
         with col1:
             _render_metric_card("Faithfulness",      "Faktual vs konteks",          metrics.get("faithfulness"))
-            _render_metric_card("Context Precision", "Presisi konteks vs reference", metrics.get("context_precision"), badge="+ ground truth")
+            _render_metric_card("Context Precision", "Presisi konteks vs ground truth", metrics.get("context_precision"), badge="+ ground truth")
+            _render_metric_card("Risk Faithfulness", "Faktualitas segmen risiko",    metrics.get("risk_faithfulness"))
         with col2:
             _render_metric_card("Answer Relevancy",  "Relevansi jawaban",           metrics.get("answer_relevancy"))
-            _render_metric_card("Context Recall",    "Kelengkapan konteks",         metrics.get("context_recall"),    badge="+ ground truth")
-
-            st.markdown("<div style='margin-top:8px;'>", unsafe_allow_html=True)
-            _render_metric_card("Overall Score", "Rata-rata semua 4 metrik", metrics.get("overall_score"))
-            st.markdown("</div>", unsafe_allow_html=True)
+            _render_metric_card("Context Recall",    "Kelengkapan konteks",         metrics.get("context_recall"), badge="+ ground truth")
+            _render_metric_card("Overall Score (Weighted)", "Rata-rata semua metrik berbobot", metrics.get("overall_score"))
     else:
-        col1, col2, col3 = st.columns(3)  
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            _render_metric_card("Faithfulness",     "Faktual vs konteks", metrics.get("faithfulness"))
+            _render_metric_card("Faithfulness",      "Faktual vs konteks", metrics.get("faithfulness"))
         with col2:
-            _render_metric_card("Answer Relevancy", "Relevansi jawaban",  metrics.get("answer_relevancy"))
+            _render_metric_card("Answer Relevancy",  "Relevansi jawaban",  metrics.get("answer_relevancy"))
         with col3:
-            _render_metric_card("Overall Score",    "Rata-rata 2 metrik", metrics.get("overall_score"))
+            _render_metric_card("Risk Faithfulness", "Faktualitas segmen risiko", metrics.get("risk_faithfulness"))
+        with col4:
+            _render_metric_card("Overall Score (Weighted)", "Rata-rata metrik berbobot", metrics.get("overall_score"))
 
-    # Progress bar
+    # ── Coverage + Segments ──────────────────────────────────────────────────
+    coverage = metrics.get("coverage_pct")
+    segments = metrics.get("answer_faithfulness_segment", [])
+
+    if coverage is not None or segments:
+        st.markdown('<div class="section-label">🧩 Coverage & Segmen Terevaluasi</div>', unsafe_allow_html=True)
+        cov_col, seg_col = st.columns([1, 2])
+        with cov_col:
+            cov_display = f"{coverage * 100:.0f}%" if coverage is not None else "N/A"
+            st.metric("Coverage", cov_display, help="Persentase fitur material yang berhasil dievaluasi")
+        with seg_col:
+            if segments:
+                seg_labels = {"faithfulness": "📌 Summary", "qa": "❓ QA", "risk": "⚠️ Risk"}
+                pills = " ".join(
+                    f'<span style="background:rgba(212,168,83,0.12);color:#D4A853;'
+                    f'padding:3px 10px;border-radius:6px;font-family:\'DM Sans\',sans-serif;'
+                    f'font-size:12px;font-weight:600;margin-right:4px;">'
+                    f'{seg_labels.get(s, s)}</span>'
+                    for s in segments
+                )
+                st.markdown(
+                    f'<div style="padding-top:28px;">{pills}</div>',
+                    unsafe_allow_html=True,
+                )
+
+    # ── Progress bar ─────────────────────────────────────────────────────────
     st.markdown('<div class="section-label">📈 Visualisasi Skor</div>', unsafe_allow_html=True)
     for name, score in [
-        ("Faithfulness", metrics.get("faithfulness")),
-        ("Answer Relevancy", metrics.get("answer_relevancy")),
+        ("Faithfulness",      metrics.get("faithfulness")),
+        ("Answer Relevancy",  metrics.get("answer_relevancy")),
+        ("Risk Faithfulness", metrics.get("risk_faithfulness")),
         ("Context Precision", metrics.get("context_precision")),
-        ("Context Recall", metrics.get("context_recall")),
+        ("Context Recall",    metrics.get("context_recall")),
     ]:
         if score is not None:
             col_label, col_bar = st.columns([1.5, 3])
             with col_label:
                 st.markdown(
                     f"<div style='padding-top:6px; font-size:13px; font-family:\"DM Sans\",sans-serif; color:#A89F93;'>"
-                    f"{_score_emoji(score)} <b style='color:#F0EDE8;'>{name}</b></div>",
+                    f"{_score_emoji(score)} <b style='color:white;'>{name}</b></div>",
                     unsafe_allow_html=True,
                 )
             with col_bar:
                 st.progress(float(score), text=f"{score:.4f}")
 
-    #Rekomendasi
+    # ── Rekomendasi ───────────────────────────────────────────────────────────
     overall = metrics.get("overall_score")
     if overall is not None:
         st.divider()
         if overall >= 0.8:
-            st.success(
-                "✅ **Sistem RAG Anda bekerja dengan sangat baik!** "
-                "Jawaban akurat, faktual, dan relevan."
-            )
+            st.success("✅ **Sistem RAG Anda bekerja dengan sangat baik!** Jawaban akurat, faktual, dan relevan.")
         elif overall >= 0.6:
-            st.warning(
-                "⚠️ **Performa cukup, ada ruang perbaikan.** "
-                "Pertimbangkan meningkatkan kualitas chunk atau sistem prompt."
-            )
+            st.warning("⚠️ **Performa cukup, ada ruang perbaikan.** Pertimbangkan meningkatkan kualitas chunk atau sistem prompt.")
         else:
-            st.error(
-                "❌ **Performa rendah, perlu peningkatan.** "
-                "Analisis lebih lanjut diperlukan untuk mengidentifikasi penyebab."
-            )
+            st.error("❌ **Performa rendah, perlu peningkatan.** Analisis lebih lanjut diperlukan.")
 
 # ─────────────────────────────────────────
 # MAIN RENDER
@@ -200,32 +216,51 @@ def render_evaluation_tab():
     # ── PANDUAN METRIK ──────────────────────────────────
     with st.expander("📖 Panduan Metrik RAGAS", expanded=False):
         col_a, col_b = st.columns(2)
+
         with col_a:
             st.markdown("""
-                **🎯 Faithfulness**  
-                Seberapa faktual jawaban berdasarkan konteks.  
-                Skor tinggi = jawaban tidak "mengarang" di luar konteks.
+            **🎯 Faithfulness**  
+            Seberapa faktual jawaban berdasarkan konteks yang diberikan.  
+            Skor tinggi = jawaban tidak mengandung informasi yang tidak didukung konteks.
 
-                **📐 Context Precision** *(butuh ground truth)*  
-                Seberapa presisi konteks yang di-retrieve.  
-                Skor tinggi = chunk yang relevan muncul di posisi atas.
+            **📐 Context Precision** *(butuh ground truth)*  
+            Seberapa relevan konteks yang berhasil di-retrieve.  
+            Skor tinggi = konteks yang paling relevan muncul di urutan atas.
+
+            ⚠️ Nilai rendah dapat disebabkan retrieval yang kurang tepat
+            atau ground truth yang tidak cocok.
             """)
+
         with col_b:
             st.markdown("""
-                **💬 Answer Relevancy**  
-                Seberapa relevan jawaban terhadap pertanyaan.  
-                Skor tinggi = jawaban langsung menjawab inti pertanyaan.
+            **💬 Answer Relevancy**  
+            Seberapa baik jawaban menjawab pertanyaan pengguna.  
+            Skor tinggi = jawaban fokus pada inti pertanyaan.
 
-                **🔁 Context Recall** *(butuh ground truth)*  
-                Seberapa lengkap konteks mencakup ground truth.  
-                Skor tinggi = tidak ada informasi penting yang terlewat.
+            **🔁 Context Recall** *(butuh ground truth)*  
+            Seberapa lengkap konteks mencakup informasi yang diperlukan.  
+            Skor tinggi = tidak ada informasi penting yang terlewat.
+
+            ⚠️ Interpretasikan bersama Coverage.
             """)
-        st.markdown(
-            "**Interpretasi:** " \
-            "🟢 `≥ 0.8` Sangat Baik &nbsp; "
-            "🟡 `0.6–0.79` Cukup Baik &nbsp; " \
-            "🔴 `< 0.6` Perlu Perbaikan"
-        )
+
+        st.markdown("""
+        **🧩 Coverage**  
+        Persentase sampel yang berhasil dievaluasi.
+
+        - 🟢 `≥ 80%` Hasil sangat dapat dipercaya
+        - 🟡 `50–79%` Hasil cukup dapat dipercaya
+        - 🔴 `< 50%` Interpretasi skor perlu hati-hati
+        """)
+
+        st.markdown("""
+        **Interpretasi Skor**
+
+        - 🟢 `≥ 0.85` Sangat Baik
+        - 🟡 `0.70 – 0.84` Baik
+        - 🟠 `0.50 – 0.69` Cukup
+        - 🔴 `< 0.50` Perlu Perbaikan
+        """)
 
     # ── SEKSI 1: HASIL OTOMATIS (dari RAG pipeline terakhir) ─────────────────
     last_rag = get_last_rag_result()
@@ -248,22 +283,25 @@ def render_evaluation_tab():
         # ── Tambah Ground Truth untuk 4 Metrik ───────────────────────────────
         st.divider()
         st.markdown(
-            '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.95rem;font-weight:600;'
-            'letter-spacing:0.04em;color:#D4A853;margin:16px 0 6px 0;">➕ Tambah Ground Truth untuk 4 Metrik</div>',
+            """
+            <div class="gt-header">
+                ➕ Tambah Ground Truth untuk 4 Metrik
+            </div>
+            """,
             unsafe_allow_html=True,
         )
         # SESUDAH — cek dulu apakah sudah ada context_precision:
         has_gt_already = metrics.get("context_precision") is not None
         if has_gt_already:
             st.markdown(
-                '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.82rem;color:#F0EDE8;margin-bottom:8px;">'
+                '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.82rem;color:white;margin-bottom:8px;">'
                 '✅ Sudah dievaluasi dengan ground truth (4 metrik aktif). '
                 'Isi ulang untuk evaluasi dengan ground truth berbeda.</div>',
                 unsafe_allow_html=True,
             )
         else:
             st.markdown(
-                '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.82rem;color:#F0EDE8;margin-bottom:8px;">'
+                '<div style="font-family:\'DM Sans\',sans-serif;font-size:0.82rem;color:white;margin-bottom:8px;">'
                 "Saat ini hanya 2 metrik (tanpa ground truth). "
                 "Isi di bawah untuk aktifkan Context Precision & Context Recall."
                 '</div>',
@@ -310,13 +348,10 @@ def render_evaluation_tab():
 
     else:
         st.markdown(
-    """
-    <div style="background:rgba(212,168,83,0.08);border:1px solid rgba(212,168,83,0.25);
-    border-radius:10px;padding:16px 20px;font-family:'DM Sans',sans-serif;color:#A89F93;font-size:0.88rem;">
-        💡 Belum ada hasil evaluasi otomatis.
-        Proses audio di <strong style="color:#D4A853;">tab Generate</strong>
-        dengan tombol 🚀 <strong style="color:#D4A853;">Proses RAG &amp; Evaluasi</strong> terlebih dahulu.
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+            """
+            <div class="info-box">
+                💡 Belum ada hasil evaluasi otomatis.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )

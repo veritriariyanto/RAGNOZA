@@ -22,6 +22,10 @@ class RAGHistoryService:
         knowledge_base: str,
         provider: str,
     ) -> RAGSession | None:
+        """
+        FUNGSI INTERNAL (Helper): Mencari sesi percakapan yang sudah ada berdasarkan ID,
+        atau otomatis membuat baris sesi (RAGSession) baru jika belum terdaftar.
+        """
         if session_id is not None:
             existing_session = db.query(RAGSession).filter(RAGSession.id == session_id).first()
             if existing_session:
@@ -49,6 +53,10 @@ class RAGHistoryService:
         final_material,
         session_id: int | None = None,
     ) -> RAGProcess | None:
+        """
+        Menyimpan rekaman penuh alur RAG Pipeline (Mulai dari teks suara hingga materi hukum final).
+        Menghubungkan tabel RAGProcess dengan tabel induk RAGSession.
+        """
         try:
             session = RAGHistoryService._get_or_create_session(
                 db=db,
@@ -105,8 +113,8 @@ class RAGHistoryService:
         ragas_result: dict,
     ) -> bool:
         """
-        Simpan satu baris evaluasi baru pada ragas_evaluation untuk satu proses.
-        Dipanggil setelah evaluasi RAGAS selesai (background task).
+        Memasukkan satu baris evaluasi metrik baru ke dalam tabel RAGASEvaluation.
+        Fungsi ini dipanggil oleh background task sesaat setelah mesin evaluator (:8001) selesai berhitung.
         """
         try:
             process = db.query(RAGProcess).filter(RAGProcess.id == history_id).first()
@@ -168,6 +176,10 @@ class RAGHistoryService:
         history_id: int,
         session_title: str,
     ) -> bool:
+        """
+        Mengubah judul sesi percakapan RAG berdasarkan history_id terkait.
+        Digunakan saat user mengganti judul chat di panel UI sidebar Streamlit.
+        """
         try:
             process = (
                 db.query(RAGProcess)
@@ -217,8 +229,8 @@ class RAGHistoryService:
         history_id: int,
     ) -> dict | None:
         """
-        Ambil metrics dari baris RAGASEvaluation terbaru untuk process_id=history_id.
-        Return dict { "metrics": {...} } atau None jika belum ada.
+        Mengambil rekaman metrik evaluasi RAGAS paling mutakhir/terbaru 
+        untuk satu ID proses tertentu (Menggunakan pengurutan ID Terbesar / Terbaru).
         """
         evaluation = (
             db.query(RAGASEvaluation)
@@ -251,8 +263,9 @@ class RAGHistoryService:
         history_id: int,
     ):
         """
-        Gabungkan RAGProcess + RAGASEvaluation terbaru menjadi satu objek
-        yang dibutuhkan router reeval (question, context, answer, answer_qa).
+        Menggabungkan informasi teks mentah dari tabel RAGProcess dengan data 
+        dari rekaman tabel RAGASEvaluation terbaru menjadi satu kesatuan objek ringkas.
+        Fungsi ini sangat penting bagi Router Re-evaluasi untuk mendapatkan basis teks lama.
         """
         from types import SimpleNamespace
 

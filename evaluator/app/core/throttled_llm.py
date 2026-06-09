@@ -134,6 +134,7 @@ class ThrottledChatGroq(ChatGroq):
         """Sync path — dipanggil oleh RAGAS saat run di thread."""
         estimated = _estimate_tokens(messages)
         _throttle.wait_and_record(estimated)
+        kwargs["n"] = 1
         logger.debug("🔄 _generate: ~%d token", estimated)
         return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
@@ -151,5 +152,6 @@ class ThrottledChatGroq(ChatGroq):
         import asyncio
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, _throttle.wait_and_record, estimated)
+        kwargs["n"] = 1
         logger.debug("🔄 _agenerate: ~%d token", estimated)
         return await super()._agenerate(messages, stop=stop, run_manager=run_manager, **kwargs)

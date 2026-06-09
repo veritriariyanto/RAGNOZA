@@ -46,9 +46,16 @@ EVALUATOR_ENDPOINT = f"{EVALUATOR_BASE_URL}/api/v1/evaluate"
 # Auto-eval bisa ikut antre di semaphore evaluator, jadi timeout perlu cukup longgar.
 EVALUATOR_TIMEOUT  = float(os.getenv("EVALUATOR_TIMEOUT_SECONDS", "900"))
 
+# =============================================================================
+# HELPER FUNCTIONS (Fungsi Internal)
+# =============================================================================
 
 async def _call_evaluator(payload: dict, source_label: str) -> dict:
-    """HTTP POST ke evaluator service, return hasil atau dict error."""
+    """
+    Fungsi Asinkron untuk melakukan HTTP POST Request ke service Evaluator (:8001).
+    Fungsi ini dirancang agar 'safe-fail' (tidak melempar HTTPException yang membuat aplikasi mati), 
+    melainkan menangkap error jaringan dan mengembalikannya dalam bentuk dictionary berstatus 'error'.
+    """
     try:
         async with httpx.AsyncClient(timeout=EVALUATOR_TIMEOUT) as client:
             response = await client.post(EVALUATOR_ENDPOINT, json=payload)
@@ -75,8 +82,11 @@ async def _call_evaluator(payload: dict, source_label: str) -> dict:
 
 def _update_ragas_in_db(history_id: int, result: dict) -> None:
     """
-    Buka DB session BARU (bukan dari request) khusus untuk background task.
-    Session request sudah tidak valid saat background task berjalan.
+    Menyimpan atau memperbarui skor metrik hasil RAGAS ke dalam database PostgreSQL.
+    
+    PENTING: Fungsi ini membuka session database BARU (SessionLocal). 
+    Jangan pernah menggunakan session DB dari HTTP request utama di sini, karena fungsi ini 
+    berjalan di background task setelah HTTP request user selesai dan ditutup (closed).
     """
     try:
         from app.core.postgres import SessionLocal
@@ -94,6 +104,10 @@ def _update_ragas_in_db(history_id: int, result: dict) -> None:
             history_id, exc, exc_info=True,
         )
 
+# =============================================================================
+# CORE FUNCTION (Fungsi Utama / Hook)
+# =============================================================================
+
 async def trigger_auto_evaluation(
     question: str,
     context: str,
@@ -104,13 +118,13 @@ async def trigger_auto_evaluation(
     # CATATAN: jangan terima 'db' dari request — buat session baru di dalam
 ) -> dict:
     """
-    Kirim request evaluasi ke evaluator service (port 8001) secara async.
-    Jika history_id diberikan, update baris DB yang sama setelah evaluasi selesai.
-
-    PENTING: db session TIDAK diteruskan dari request karena sudah closed
-    saat background task berjalan. Gunakan SessionLocal() baru di dalam.
+    Fungsi Entry-Point utama (Hook) untuk memicu evaluasi otomatis RAGAS secara asinkron.
+    Fungsi ini dieksekusi sebagai FastAPI BackgroundTask agar user di frontend tidak perlu 
+    menunggu proses hitung LLM yang lama saat selesai men-generate materi hukum.
     """
-    # 1. Ekstrak segmen jawaban teks hukum menggunakan formatter baru kita
+    # 1. SEGMENTASI TEKS HUKUM:
+    # Memecah objek MaterialResponse yang kompleks menjadi komponen teks spesifik 
+    # (Summary untuk faithfulness, LegalQA untuk relevancy, RiskReview untuk risk_faithfulness)
     segments = extract_segments_for_ragas(material)
     
     # 2. Ambil teks lengkap untuk cadangan log ( backward compatibility )
@@ -121,7 +135,8 @@ async def trigger_auto_evaluation(
         source_label, len(question), len(context), len(full_answer),
     )
 
-    # 3. Bentuk payload yang COCOK dengan EvaluationRequest schema baru
+    # 3. STRUKTURISASI PAYLOAD JSON:
+    # Menyusun kamus data (dictionary) yang sesuai dengan kontrak skema API Evaluator :8001
     payload = {
         "question": question,
         "context": context,
@@ -135,9 +150,11 @@ async def trigger_auto_evaluation(
         "source_label": source_label,
     }
 
+    # 4. EKSEKUSI PANGGILAN HTTP:
+    # Menembak microservice evaluator secara asinkron dan menunggu hasilnya kembali
     result = await _call_evaluator(payload, source_label)
 
-    # ── Log hasil ──────────────────────────────────────────────────────────
+    # 5. PENCATATAN LOG HASIL EVALUASI:
     if result.get("status") == "success":
         metrics = result.get("metrics") or {}
         logger.info(
@@ -156,7 +173,8 @@ async def trigger_auto_evaluation(
             source_label, result.get("error"),
         )
 
-    # ── Update DB jika history_id tersedia ────────────────────────────────
+    # 6. SINKRONISASI DATABASE (PERSISTENCE):
+    # Jika history_id dikirimkan, jalankan helper untuk menyimpan skor akhir ke dalam database PostgreSQL
     if history_id is not None:
         _update_ragas_in_db(history_id, result)
     else:

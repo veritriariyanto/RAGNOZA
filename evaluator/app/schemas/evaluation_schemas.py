@@ -44,7 +44,7 @@ class EvaluationRequest(BaseModel):
         None, description="Skor risk_faithfulness dari auto eval sebelumnya"
     )
     existing_overall: Optional[float] = Field(
-        None, description="Overall score dari auto eval sebelumnya (akan dihitung ulang)"
+        None, description="Overall Quality Score (Weighted) dari auto eval sebelumnya (akan dihitung ulang)"
     )
     existing_segments: Optional[List[str]] = Field(
         default_factory=list,

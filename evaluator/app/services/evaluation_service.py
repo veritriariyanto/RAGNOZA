@@ -33,22 +33,66 @@ from app.services.ragas_service import ragas_service
 
 logger = logging.getLogger(__name__)
 
-_TOTAL_FEATURES = 7
 _eval_semaphore = asyncio.Semaphore(1)
 
 
-def _compute_coverage(answer_faithfulness_segment: list[str]) -> float:
-    feature_map = {
-    "faithfulness": 4,  # Summary + Timeline + Comparison + Reference
-    "qa": 2,            # ClauseSearch + LegalQA
-    "risk": 1,          # RiskReview
-}
-    covered = sum(feature_map.get(s, 0) for s in answer_faithfulness_segment)
-    return round(covered / _TOTAL_FEATURES, 4)
+def _compute_coverage(
+    faithfulness=None,
+    answer_relevancy=None,
+    context_precision=None,
+    context_recall=None,
+    risk_faithfulness=None,
+) -> float:
+    metrics = [
+        faithfulness,
+        answer_relevancy,
+        context_precision,
+        context_recall,
+        risk_faithfulness,
+    ]
+
+    available = sum(m is not None for m in metrics)
+
+    return round(available / len(metrics), 4)
 
 def _safe_round(val) -> Optional[float]:
     return round(float(val), 4) if val is not None else None
 
+def _weighted_overall(
+    faithfulness=None,
+    answer_relevancy=None,
+    context_precision=None,
+    context_recall=None,
+    risk_faithfulness=None,
+):
+    weights = {
+        "faithfulness": 0.40,
+        "answer_relevancy": 0.25,
+        "risk_faithfulness": 0.20,
+        "context_precision": 0.10,
+        "context_recall": 0.05,
+    }
+
+    scores = {
+        "faithfulness": faithfulness,
+        "answer_relevancy": answer_relevancy,
+        "risk_faithfulness": risk_faithfulness,
+        "context_precision": context_precision,
+        "context_recall": context_recall,
+    }
+
+    weighted_sum = 0
+    total_weight = 0
+
+    for key, score in scores.items():
+        if score is not None:
+            weighted_sum += score * weights[key]
+            total_weight += weights[key]
+
+    if total_weight == 0:
+        return 0.0
+
+    return round(weighted_sum / total_weight, 4)
 
 class EvaluationService:
 
@@ -69,6 +113,7 @@ class EvaluationService:
         existing_risk_faithfulness: Optional[float] = None,
         existing_overall: Optional[float] = None,
         existing_segments: Optional[list] = None,
+        context_chunks: Optional[list[str]] = None,
     ) -> EvaluationResponse:
 
         input_payload = {
@@ -141,6 +186,7 @@ class EvaluationService:
                         existing_answer_relevancy=existing_answer_relevancy,
                         existing_risk_faithfulness=existing_risk_faithfulness,
                         existing_segments=existing_segments or [],
+                        context_chunks=context_chunks,
                     )
 
                 # ─────────────────────────────────────────────────────────────
@@ -156,6 +202,7 @@ class EvaluationService:
                     ground_truth=ground_truth,
                     source_label=source_label,
                     input_payload=input_payload,
+                    context_chunks=context_chunks,
                 )
 
         except Exception as exc:
@@ -181,6 +228,7 @@ class EvaluationService:
         ground_truth, 
         source_label, 
         input_payload,
+        context_chunks: Optional[list[str]] = None, 
     ) -> EvaluationResponse:
         """
         Evaluasi lengkap: faithfulness (summary) + relevancy (qa) + risk_faithfulness (risk).
@@ -198,6 +246,7 @@ class EvaluationService:
                 answer=faithfulness_text,
                 metric_types=["faithfulness"],
                 ground_truth=ground_truth,
+                context_chunks=context_chunks,
             )
             faithfulness_score = result.to_pandas().to_dict(orient="records")[0].get("faithfulness")
             evaluated_segments.append("faithfulness")
@@ -211,8 +260,11 @@ class EvaluationService:
                 metric_types.extend(["context_precision", "context_recall"])
 
             result = await ragas_service.evaluate_rag_custom(
-                question=question, context=context, answer=answer_qa,
-                metric_types=metric_types, ground_truth=ground_truth,
+                question=question, 
+                context=context, 
+                answer=answer_qa,
+                metric_types=metric_types, 
+                ground_truth=ground_truth,
             )
             scores = result.to_pandas().to_dict(orient="records")[0]
             answer_relevancy_score   = scores.get("answer_relevancy")
@@ -225,8 +277,12 @@ class EvaluationService:
         if answer_risk.strip() not in ("-", "", "None"):
             logger.info("[EvalService][full] [3/3] Faithfulness segmen risk...")
             result = await ragas_service.evaluate_rag_custom(
-                question=question, context=context, answer=answer_risk,
-                metric_types=["faithfulness"], ground_truth=ground_truth,
+                question=question, 
+                context=context,
+                answer=answer_risk,
+                metric_types=["faithfulness"],
+                ground_truth=ground_truth,
+                context_chunks=context_chunks,
             )
             risk_faithfulness_score = result.to_pandas().to_dict(orient="records")[0].get("faithfulness")
             evaluated_segments.append("risk")
@@ -245,9 +301,20 @@ class EvaluationService:
         c  = _safe_round(context_recall_score)
         rf = _safe_round(risk_faithfulness_score)
 
-        available = [s for s in [f, r, p, c, rf] if s is not None]
-        overall   = round(sum(available) / len(available), 4) if available else None
-        coverage  = _compute_coverage(evaluated_segments)
+        overall = _weighted_overall(
+            faithfulness=f,
+            answer_relevancy=r,
+            context_precision=p,
+            context_recall=c,
+            risk_faithfulness=rf,
+        )
+        coverage = _compute_coverage(
+            faithfulness=f,
+            answer_relevancy=r,
+            context_precision=p,
+            context_recall=c,
+            risk_faithfulness=rf,
+        )
 
         logger.info(
             "[EvalService:%s][full] faith=%.4f | rel=%.4f | risk_faith=%.4f | "
@@ -291,6 +358,7 @@ class EvaluationService:
         existing_answer_relevancy,
         existing_risk_faithfulness, 
         existing_segments,
+        context_chunks: Optional[list[str]] = None,
     ) -> EvaluationResponse:
         """
         Re-evaluasi EFISIEN: hanya hitung context_precision + context_recall.
@@ -313,6 +381,7 @@ class EvaluationService:
                 answer=answer_qa,
                 metric_types=["context_precision", "context_recall"],
                 ground_truth=ground_truth,
+                context_chunks=context_chunks,
             )
             scores = result.to_pandas().to_dict(orient="records")[0]
             context_precision_score = scores.get("context_precision")
@@ -327,9 +396,22 @@ class EvaluationService:
         rf = _safe_round(existing_risk_faithfulness)
 
         # Overall dihitung ulang dari SEMUA metrik yang tersedia (merged)
-        available = [s for s in [f, r, p, c, rf] if s is not None]
-        overall   = round(sum(available) / len(available), 4) if available else None
-        coverage  = _compute_coverage(existing_segments)
+        overall = _weighted_overall(
+            faithfulness=f,
+            answer_relevancy=r,
+            context_precision=p,
+            context_recall=c,
+            risk_faithfulness=rf,
+        )
+
+        merged_segments = list(set(existing_segments + ["qa"]))
+        coverage = _compute_coverage(
+            faithfulness=f,
+            answer_relevancy=r,
+            context_precision=p,
+            context_recall=c,
+            risk_faithfulness=rf,
+        )
 
         logger.info(
             "[EvalService:%s][reeval] prec=%.4f | rec=%.4f | "
@@ -348,7 +430,7 @@ class EvaluationService:
                 context_recall=c,
                 risk_faithfulness=rf,
                 overall_score=overall,
-                answer_faithfulness_segment=existing_segments,
+                answer_faithfulness_segment=merged_segments,
                 coverage_pct=coverage,
             ),
             input=input_payload,

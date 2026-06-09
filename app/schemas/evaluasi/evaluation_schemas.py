@@ -4,13 +4,16 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any
 
+# =============================================================================
+# REQUEST SCHEMAS (Data yang Masuk dari Frontend ke Backend)
+# =============================================================================
+
 # Model/Schema ini digunakan pada router / ragas-auto-2metriks
 class MaterialEvaluationRequest(BaseModel):
     """
-    Request body untuk endpoint BARU /evaluation/ragas-auto-2metriks.
-
-    Menerima MaterialResponse sebagai dict — backend melakukan ekstraksi segmen.
-    Ini adalah cara yang benar untuk evaluasi dari Streamlit frontend.
+    Skema data untuk Request Body endpoint Path A: `/evaluation/ragas-auto-2metriks`.
+    Digunakan saat Frontend Streamlit meminta evaluasi otomatis pertama kali 
+    tepat setelah AI selesai men-generate materi dokumen hukum.
     """
     question: str = Field(..., description="Pertanyaan user")
     context: str = Field(..., description="Konteks dokumen dari RAG pipeline")
@@ -21,7 +24,11 @@ class MaterialEvaluationRequest(BaseModel):
 
 # Model/Schema ini digunakan pada router / ragas-auto-2metriks
 class ReevalRequest(BaseModel):
-    """Request body untuk endpoint /evaluation/ragas-ground-truth."""
+    """
+    Skema data untuk Request Body endpoint Path B: `/evaluation/ragas-ground-truth`.
+    Digunakan ketika user memasukkan kunci jawaban ideal (ground_truth) secara manual 
+    pada aplikasi Streamlit untuk melakukan hitung ulang metrik presisi dan recall.
+    """
     history_id: int = Field(..., description="ID history yang ingin di-re-evaluasi")
     ground_truth: str = Field(..., description="Jawaban ideal dari user/legal expert")
     question: Optional[str] = Field(None, description="Override pertanyaan (opsional, diambil dari DB jika kosong)")
@@ -30,7 +37,9 @@ class ReevalRequest(BaseModel):
 # Model/Schema hasil evaluasi 
 class EvaluationMetrics(BaseModel):
     """
-    Hasil metrik dari evaluasi RAGAS tersegmentasi.
+    Struktur data untuk menampung seluruh skor angka hasil evaluasi RAGAS.
+    Semua skor menggunakan tipe 'Optional[float]' (angka desimal 0.0 - 1.0) 
+    karena tidak semua metrik akan dihitung secara bersamaan (tergantung endpoint mana yang dipanggil).
 
     PERUBAHAN:
         + risk_faithfulness   : faithfulness khusus segmen Risk Review (FIX #2)
@@ -51,7 +60,7 @@ class EvaluationMetrics(BaseModel):
         None, description="Recall retrieval vs ground truth (0–1, butuh ground_truth)"
     )
 
-    # BARU: metrik untuk segmen Risk (FIX #2)
+    # BARU (FIX #2): Metrik krusial untuk domain hukum guna mendeteksi halusinasi pada analisis risiko
     risk_faithfulness: Optional[float] = Field(
         None,
         description=(
@@ -61,10 +70,11 @@ class EvaluationMetrics(BaseModel):
         ),
     )
 
-    # BARU: metadata coverage
+    # Metadata Skor Akhir & Cakupan Fitur
     overall_score: Optional[float] = Field(
-        None, description="Rata-rata semua metrik yang tersedia"
+        None, description="Rata-rata semua metrik yang tersedia (berdasarkan bobot)"
     )
+    # default_factory=list digunakan agar jika datanya kosong, otomatis terbuat array kosong [] bukan None
     answer_faithfulness_segment: List[str] = Field(
         default_factory=list,
         description="Segmen yang dievaluasi, misal: ['summary', 'qa', 'risk']",
@@ -80,6 +90,10 @@ class EvaluationMetrics(BaseModel):
 
 
 class EvaluationInput(BaseModel):
+    """
+    Skema data internal untuk membungkus kembali teks input asli 
+    yang dikirimkan ke mesin Evaluator (sebagai rekaman/log audit data input).
+    """
     question: str
     context: str
     answer: str
@@ -87,8 +101,15 @@ class EvaluationInput(BaseModel):
     answer_qa: Optional[str] = None      # ← tambah ini
     source_label: Optional[str] = None 
 
+# =============================================================================
+# RESPONSE SCHEMA (Format Data yang Keluar/Dikembalikan ke Frontend)
+# =============================================================================
 
 class EvaluationResponse(BaseModel):
+    """
+    Skema respons akhir yang akan diterima oleh Frontend Streamlit.
+    Menyediakan format yang konsisten: status sukses/gagal, metrik skor, data input balik, dan detail error.
+    """
     status: str
     metrics: Optional[EvaluationMetrics] = None
     input: EvaluationInput
