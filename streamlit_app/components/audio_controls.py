@@ -316,8 +316,6 @@ def _run_rag_pipeline(
     question        = transcription.get("repaired", transcription.get("raw", ""))
     answer_text     = _material_to_text(material) if material else ""
 
-    # 📌 KUNCI UTAMA: Ambil ID sesi/history yang baru saja dibuat oleh backend
-    # Pastikan backend Anda mengembalikan ID ini di dalam response JSON-nya!
     new_session_id = rag_response.get("session_id") or rag_response.get("id")
 
     # Debug log
