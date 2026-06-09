@@ -1,5 +1,7 @@
+# app/services/prompting/integration/rag_integration_service.py
+
 """
-rag_integration_service.py  (updated)
+rag_integration_service.py  (final fix)
 
 Perubahan dari versi lama:
 - Evaluasi RAGAS dipindah ke BackgroundTask → tidak blocking response user
@@ -10,6 +12,7 @@ Perubahan dari versi lama:
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from fastapi import BackgroundTasks
@@ -22,8 +25,7 @@ from app.schemas.prompting.generate_content import MaterialRequest
 from app.schemas.prompting.integration import RAGIntegrationResponse
 
 from sqlalchemy.orm import Session
-from app.services.evaluation.history.rag_history_service import RAGHistoryService
-from app.services.evaluation.formatter import material_to_text
+from app.services.history.rag_history_service import RAGHistoryService
 from app.services.evaluation.auto_evaluation_hook import trigger_auto_evaluation
 
 logger = logging.getLogger(__name__)
@@ -52,6 +54,8 @@ class RAGIntegrationService:
         provider: str = "whisper",
         style: str = "formal",
         background_tasks: Optional[BackgroundTasks] = None,
+        auto_evaluate: bool = True,
+        session_id: int | None = None,
     ) -> RAGIntegrationResponse:
         """
         Alur Terintegrasi Penuh: STT → Repair → Search → Generate Material
@@ -89,25 +93,45 @@ class RAGIntegrationService:
                 limit=3,
             )
 
-            # rag_integration_service.py — Tahap 4, GANTI SELURUH BLOK INI:
+            # DEBUG: lihat struktur hasil Qdrant
+            if kb_results.get("results"):
+                first = kb_results["results"][0]
+                print(f"[QDRANT DEBUG] child keys: {list(first.get('child', {}).keys())}")
+                print(f"[QDRANT DEBUG] parent keys: {list(first.get('parent', {}).keys())}")
+                print(f"[QDRANT DEBUG] child full: {first.get('child', {})}")
+                print(f"[QDRANT DEBUG] parent full: {first.get('parent', {})}")
 
-            # ── Tahap 4: Ekstraksi Konteks ────────────────────────────────────────
+            # ── Tahap 4: Ekstraksi Konteks ────────────────────────────────────
             contexts = []
             for res in kb_results.get("results", []):
-                # Coba parent dulu (lebih lengkap)
-                parent_content = res.get("parent", {}).get("content")
-                if parent_content:
-                    contexts.append(parent_content)
-                    continue
-                
-                # Fallback ke child content jika parent kosong
-                child_content = res.get("child", {}).get("content")
-                if child_content:
-                    contexts.append(child_content)
+                parent_content = res.get("parent", {}).get("content", "")
+                child_content = res.get("child", {}).get("content", "")
+                child_raw = res.get("child", {}).get("raw_text", "")
+
+                content = None
+                if parent_content and len(parent_content.strip()) > 30:
+                    content = parent_content.strip()
+                elif child_content and len(child_content.strip()) > 30:
+                    content = child_content.strip()
+                elif child_raw and len(child_raw.strip()) > 30:
+                    content = child_raw.strip()
+
+                if content:
+                    contexts.append(content)
+                else:
+                    logger.warning(
+                        "[RAGIntegration] Hasil Qdrant diabaikan — semua field terlalu pendek. "
+                        "score=%.3f | child_content=%r | parent_content=%r",
+                        res.get("score", 0),
+                        child_content[:50],
+                        parent_content[:50],
+                    )
 
             combined_context = "\n\n".join(contexts)
-
-            # Debug sementara
+            logger.info(
+                "[RAGIntegration] Context terkumpul: %d chunk, total %d chars",
+                len(contexts), len(combined_context)
+            )
             print(f"[SERVICE DEBUG] contexts count: {len(contexts)}")
             print(f"[SERVICE DEBUG] combined_context length: {len(combined_context)}")
             print(f"[SERVICE DEBUG] sample: {combined_context[:200]}")
@@ -115,7 +139,7 @@ class RAGIntegrationService:
             # ── Tahap 5: Generate Material ────────────────────────────────────
             final_material = None
             fallback_message = None
-            session_id = None
+            history_id = None  # inisialisasi
 
             if contexts:
                 material_payload = MaterialRequest(
@@ -129,12 +153,18 @@ class RAGIntegrationService:
                     material_payload
                 )
 
-                # Konversi material ke teks untuk evaluasi
-                answer_text = material_to_text(final_material)
-
                 # ── Tahap 6: Simpan History ───────────────────────────────────
-                history = RAGHistoryService.save_history(
+                # Tentukan session_title
+                if session_id is None:
+                    session_title = f"Audio Session {datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                else:
+                    session_title = f"Session {session_id}"
+
+                # Simpan history dan ambil history_id yang dikembalikan
+                history_id = RAGHistoryService.save_history(
                     db=self.db,
+                    session_id=session_id,
+                    session_title=session_title,
                     knowledge_base=knowledge_base,
                     provider=provider,
                     raw_transcribe=raw_transcribe,
@@ -143,64 +173,37 @@ class RAGIntegrationService:
                     retrieved_context=combined_context,
                     final_material=final_material,
                 )
-                session_id = history.id if history is not None else None
 
                 # ── Tahap 7: Evaluasi RAGAS (Background — tidak blocking) ─────
-                #
-                # Jika background_tasks tersedia (diteruskan dari router),
-                # evaluasi dijalankan SETELAH response dikirim ke user.
-                #
-                # ground_truth = None → auto_evaluation_hook akan pakai
-                # context pertama sebagai proxy ground truth secara otomatis.
-                if background_tasks is not None:
+                if background_tasks is not None and auto_evaluate:
                     background_tasks.add_task(
                         trigger_auto_evaluation,
-                        question=repaired_text,
+                        question=search_query,
                         context=combined_context,
-                        answer=answer_text,
-                        ground_truth=None,          # proxy otomatis dari context
-                        source_label="audio_rag",
+                        material=final_material,
+                        ground_truth=None,
+                        source_label="rag_pipeline",
+                        history_id=history_id
                     )
-                    logger.info(
-                        "[RAGIntegration] Evaluasi RAGAS dijadwalkan di background "
-                        "untuk query: %s...",
-                        repaired_text[:60],
-                    )
-                else:
-                    logger.debug(
-                        "[RAGIntegration] background_tasks tidak tersedia — "
-                        "evaluasi RAGAS dilewati."
-                    )
-
             else:
                 fallback_message = (
                     "Maaf, jawaban tidak dapat dibuat karena tidak ada "
                     "referensi hukum yang cocok."
                 )
-                history = RAGHistoryService.save_history(
-                    db=self.db,
-                    knowledge_base=knowledge_base,
-                    provider=provider,
-                    raw_transcribe=raw_transcribe,
-                    repaired_text=repaired_text,
-                    search_query=search_query,
-                    retrieved_context=combined_context,
-                    final_material=None,
-                    fallback_message=fallback_message,
-                )
-                session_id = history.id if history is not None else None
 
+            # ── Tahap 8: Return Response ──────────────────────────────────────
             return RAGIntegrationResponse(
                 raw_transcribe=raw_transcribe,
                 final_repaired_text=repaired_text,
                 user_scenario=repaired_text,
                 search_query_used=search_query,
+                has_context=len(contexts) > 0,
                 retrieved_context=combined_context,
                 source_details=kb_results.get("results", []),
+                history_id=history_id,
+                session_id=session_id,  # perbaiki: pakai session_id, bukan rag_session_id
                 final_material=final_material,
                 fallback_message=fallback_message,
-                has_context=len(contexts) > 0,
-                session_id=session_id,
             )
 
         except Exception as exc:

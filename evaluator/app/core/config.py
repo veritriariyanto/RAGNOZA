@@ -10,16 +10,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class EvaluatorSettings(BaseSettings):
-    # LLM untuk RAGAS evaluator
-    GROQ_API_KEY: str = ""
+    GROQ_API_KEY: str = "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"
+    
+    # Model untuk RAG pipeline (generate jawaban)
     evaluator_llm_model: str = "llama-3.1-8b-instant"
     evaluator_llm_temperature: float = 0.0
 
-    # Embedding untuk RAGAS
+    # ← TAMBAH: Model terpisah khusus untuk RAGAS evaluator
+    ragas_llm_model: str = "llama-3.3-70b-versatile"  # model lebih besar, masih gratis di Groq
+    ragas_llm_temperature: float = 0.0
+
     evaluator_embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     evaluator_embedding_device: str = "cpu"
-
-    # Logging
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(

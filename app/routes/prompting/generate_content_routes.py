@@ -63,12 +63,8 @@ async def create_material(
     "/generate-with-eval",
     response_model=MaterialResponse,
     status_code=status.HTTP_200_OK,
-    summary="Generate Legal Material + Evaluasi RAGAS Otomatis (Background)",
+    summary="Generate Legal Material (evaluasi dilakukan oleh frontend)",
     description="""
-    Generate material hukum dari konteks teks, lalu **otomatis mengevaluasi** 
-    kualitas jawaban menggunakan RAGAS di background.
-
-    **Evaluasi berjalan setelah response dikirim** — tidak memperlambat user.
 
     **Metrik yang dievaluasi:**
     - Faithfulness
@@ -76,7 +72,6 @@ async def create_material(
     - Context Precision *(proxy ground truth dari context)*
     - Context Recall *(proxy ground truth dari context)*
 
-    Lihat log server untuk hasil metrik evaluasi.
     """,
 )
 async def create_material_with_evaluation(
@@ -94,23 +89,7 @@ async def create_material_with_evaluation(
     """
     try:
         result = await material_service.generate_legal_material(payload)
-
-        # Konversi material ke teks plain untuk evaluasi
-        answer_text = material_to_text(result)
-
-        # Daftarkan evaluasi sebagai background task
-        # ground_truth=None → auto_evaluation_hook pakai context sebagai proxy
-        background_tasks.add_task(
-            trigger_auto_evaluation,
-            question=payload.user_scenario,
-            context=payload.context_text,
-            answer=answer_text,
-            ground_truth=None,
-            source_label="text_rag",
-        )
-
-        return result
-
+        return result  # evaluasi dilakukan frontend, tidak perlu di sini
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

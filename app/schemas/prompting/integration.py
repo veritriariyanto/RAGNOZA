@@ -11,6 +11,8 @@ class RAGIntegrationResponse(BaseModel):
     search_query_used: str
     retrieved_context: str
     source_details: List[Any]
+    history_id: Optional[int] = None
+    session_id: Optional[int] = None
     # Tambahkan field untuk hasil akhir generate material
     final_material: Optional[MaterialResponse] = None
     fallback_message: Optional[str] = None

@@ -9,14 +9,13 @@ import logging
 
 from fastapi import APIRouter, HTTPException
 
-from app.schemas import EvaluationRequest, EvaluationResponse
+from app.schemas.evaluation_schemas import EvaluationResponse, EvaluationRequest
 from app.services.evaluation_service import EvaluationService
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 evaluation_service = EvaluationService()
-
 
 @router.post("/evaluate", response_model=EvaluationResponse)
 async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
@@ -31,23 +30,23 @@ async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
             ← {question, context, answer, ground_truth?}
         → EvaluationResponse {status, metrics, error?}
     """
-    # Ground truth proxy: jika tidak dikirim, pakai kalimat pertama context
-    effective_ground_truth = request.ground_truth
-    if not effective_ground_truth and request.context:
-        first_chunk = request.context.split("\n\n")[0].strip()
-        effective_ground_truth = first_chunk if first_chunk else request.context[:500]
-        logger.info(
-            "[/evaluate:%s] Ground truth tidak ada → pakai proxy dari context",
-            request.source_label,
-        )
-
     try:
         result = await evaluation_service.run_evaluation(
             question=request.question,
             context=request.context,
             answer=request.answer,
-            ground_truth=effective_ground_truth,
-            source_label=request.source_label,
+            faithfulness_text=request.faithfulness_text,
+            answer_qa=request.answer_qa,
+            answer_risk=request.answer_risk,
+            ground_truth=request.ground_truth,
+            source_label=request.source_label or "rag_pipeline",
+            # FIX #3 — teruskan semua field reeval
+            is_reeval=request.is_reeval,
+            existing_faithfulness=request.existing_faithfulness,
+            existing_answer_relevancy=request.existing_answer_relevancy,
+            existing_risk_faithfulness=request.existing_risk_faithfulness,
+            existing_overall=request.existing_overall,
+            existing_segments=request.existing_segments or [],
         )
         return result
 

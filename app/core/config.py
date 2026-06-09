@@ -23,9 +23,9 @@ class Settings(BaseSettings):
 	# ── Database ─────────────────────────────────
 	PGHOST: str = "localhost"
 	PGPORT: int = 5432
-	PGDATABASE: str = "ragdb"
+	PGDATABASE: str = "ragnoza_db"
 	PGUSER: str = "postgres"
-	PGPASSWORD: str = ""
+	PGPASSWORD: str = "ragnoza123"
 	PGSSLMODE: str = "disable"
 
 	@property
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 	QDRANT_PORT: int = 6333
 
 	# ── OpenRouter LLM / API keys ────────────────
-	openrouter_api_key: str = ""
+	openrouter_api_key: str = "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"
 	cleaning_llm_model: str = "meta-llama/llama-3.1-8b-instruct:free"
 	cleaning_llm_temperature: float = 0.1
 	cleaning_llm_concurrency: int = 2

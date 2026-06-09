@@ -2,10 +2,10 @@ import streamlit as st
 
 from components.left_sidebar import render_left_sidebar
 from components.top_tabs import render_top_tabs
-from components.bottom_input import render_bottom_input
 from components.audio_controls import render_audio_controls
 from components.evaluation_tab import render_evaluation_tab
 from components.knowledgebase_tab import render_knowledgebase_tab
+from components.history_detail import render_history_detail   # ← BARU
 
 from utils.session import init_session_state
 
@@ -39,9 +39,7 @@ if st.session_state.get("trigger_redirect_hasil"):
 # =========================================
 # MAIN LAYOUT
 # =========================================
-left_col, center_col, right_col = st.columns(
-    [1.2, 3.8, 1.4]
-)
+left_col, center_col, right_col = st.columns([1.2, 3.8, 1.4])
 
 # =========================================
 # LEFT SIDEBAR
@@ -67,12 +65,50 @@ with center_col:
     # =====================================
     with tab2:
 
-        render_audio_controls()
+        # ── ROUTING: jika ada history yang dipilih, tampilkan detailnya ──────
+        # Ketika user klik item di sidebar "Riwayat Generate",
+        # left_sidebar.py menyimpan data ke selected_history.
+        # Di sini kita cek keberadaannya dan route ke komponen yang sesuai.
+        if st.session_state.get("selected_history"):
+            render_history_detail()
+        else:
+            # Mode normal — form audio + generate baru
+            render_audio_controls()
 
-        render_bottom_input()
 
     # =====================================
     # TAB EVALUASI
     # =====================================
     with tab3:
         render_evaluation_tab()
+
+# =========================================
+# RIGHT PANEL
+# =========================================
+with right_col:
+
+    st.subheader("📄 Detail Sumber")
+
+    st.divider()
+
+    st.write("### Pasal 1")
+
+    st.success("Similarity Score: 0.94")
+
+    st.write("### Isi Teks")
+
+    st.info("""
+    Negara Indonesia ialah Negara Kesatuan
+    yang berbentuk Republik.
+    """)
+
+    st.write("### Metadata")
+
+    st.write("Pasal: 1")
+    st.write("Bab: BAB I")
+    st.write("Sumber: UUD 1945")
+
+    st.button(
+        "📄 Lihat Dokumen Asli",
+        use_container_width=True
+    )

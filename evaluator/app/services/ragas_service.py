@@ -1,20 +1,21 @@
 """
 evaluator/app/services/ragas_service.py
 
-Fix: RAGAS menggunakan nest_asyncio yang tidak kompatibel dengan uvloop.
-Solusi: jalankan evaluate() di thread terpisah via run_in_executor,
-sehingga ia mendapat event loop asyncio standar (bukan uvloop).
+Bersihkan semua wrapper throttle lama — throttle sekarang ada di ThrottledChatGroq.
 """
 
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
+from ragas.run_config import RunConfig
 
 logger = logging.getLogger(__name__)
 
-# Thread pool khusus untuk RAGAS — 1 worker cukup karena evaluasi sequential
 _ragas_executor = ThreadPoolExecutor(max_workers=1)
+
+# ── HAPUS semua kode _TokenBucket, _PerRequestThrottle,
+#    _ThrottledLLMWrapper yang ada di sini. Tidak diperlukan lagi. ──
 
 
 class RagasService:
@@ -23,21 +24,31 @@ class RagasService:
         self._availability_error = None
         self.evaluator_llm = None
         self.evaluator_embeddings = None
+        self.is_v2 = False
+        self._adapted_metrics: dict = {} 
 
         try:
             from ragas.llms import LangchainLLMWrapper
             from ragas.embeddings import LangchainEmbeddingsWrapper
-            from app.core.llm_provider import llm
+            from app.core.llm_provider import llm          # ← sudah ThrottledChatGroq
+            from app.core.throttled_llm import ThrottledChatGroq
+            from app.core.config import settings
             from app.core.embeddings import embeddings
 
-            if llm is None or embeddings is None:
-                raise RuntimeError("LLM atau embeddings gagal diinisialisasi")
+            eval_llm_raw = ThrottledChatGroq(
+                temperature=settings.ragas_llm_temperature,
+                groq_api_key=settings.GROQ_API_KEY,
+                model_name=settings.ragas_llm_model,       # llama-3.1-70b-versatile
+            )
 
-            self.evaluator_llm = LangchainLLMWrapper(llm)
+            # Tidak perlu wrapper tambahan — throttle sudah di dalam llm
+            self.evaluator_llm = LangchainLLMWrapper(eval_llm_raw)
             self.evaluator_embeddings = LangchainEmbeddingsWrapper(embeddings)
             self._available = True
-            logger.info("✅ RagasService siap")
-
+            logger.info(
+                "✅ RagasService siap | evaluator_model=%s",
+                settings.ragas_llm_model,
+            )
         except Exception as exc:
             self._availability_error = str(exc)
             logger.warning("⚠️ RAGAS tidak tersedia: %s", exc)
@@ -47,105 +58,99 @@ class RagasService:
         return self._available
 
     def _run_evaluate_sync(self, data: dict, metrics: list):
-        """
-        Jalankan ragas.evaluate() secara synchronous di thread terpisah.
-        Thread ini mendapat event loop asyncio standar (bukan uvloop),
-        sehingga nest_asyncio bisa bekerja normal.
-        """
         import asyncio
         import nest_asyncio
         from ragas import evaluate
         from datasets import Dataset
 
-        # Buat event loop baru di thread ini (asyncio standar, bukan uvloop)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         nest_asyncio.apply(loop)
 
+        logger.info(
+            "[RagasDebug] contexts n_chunks=%d | first_chunk_len=%d | gt=%s",
+            len(data["contexts"][0]),
+            len(data["contexts"][0][0]) if data["contexts"][0] else 0,
+            data.get("ground_truth", [None])[0][:80] if data.get("ground_truth") else "NONE",
+        )
+        
         try:
+            # Ikat LLM & embeddings ke tiap metrik — TANPA adapt_prompts (tidak ada di v0.1.21)
+            for metric in metrics:
+                if hasattr(metric, "llm"):
+                    metric.llm = self.evaluator_llm
+                if hasattr(metric, "embeddings") and self.evaluator_embeddings:
+                    metric.embeddings = self.evaluator_embeddings
+
+            # Di _run_evaluate_sync, sebelum baris Dataset.from_dict(data)
+            logger.info(
+                "[RagasService] Dataset keys=%s | gt=%s | answer_len=%d",
+                list(data.keys()),
+                data.get("ground_truth", [None])[0] is not None,
+                len(data.get("answer", [""])[0]),
+            )
             dataset = Dataset.from_dict(data)
             result = evaluate(
                 dataset=dataset,
                 metrics=metrics,
                 llm=self.evaluator_llm,
                 embeddings=self.evaluator_embeddings,
+                run_config=RunConfig(
+                    max_workers=1,
+                    max_retries=5,
+                    timeout=500,
+                ),
             )
             return result
         finally:
             loop.close()
+    
+    async def evaluate_rag_custom(
+            self,
+            question: str,
+            context: str, #faithfulness
+            answer: str,
+            metric_types: list[str],
+            ground_truth: Optional[str] = None,
+            context_chunks: Optional[list[str]] = None, #yang dipakai untuk precision + recall
+        ):
+            """Fungsi pembantu baru untuk mengevaluasi jenis metrik tertentu saja."""
+            from ragas.metrics import Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall
+            
+            # Inisialisasi metrik dinamis berdasarkan request
+            metrics = []
+            if "faithfulness" in metric_types:
+                metrics.append(Faithfulness(llm=self.evaluator_llm))
+            if "answer_relevancy" in metric_types:
+                metrics.append(AnswerRelevancy(llm=self.evaluator_llm, embeddings=self.evaluator_embeddings))
+            if "context_precision" in metric_types:
+                metrics.append(ContextPrecision(llm=self.evaluator_llm))
+            if "context_recall" in metric_types:
+                metrics.append(ContextRecall(llm=self.evaluator_llm))
 
-    async def evaluate_rag(
-        self,
-        question: str,
-        context: str,
-        answer: str,
-        ground_truth: Optional[str] = None,
-    ):
-        if not self._available:
-            raise RuntimeError(
-                f"RagasService tidak tersedia: {self._availability_error}"
+            if context_chunks and len(context_chunks) > 1:
+                chunks_for_eval = context_chunks
+            else:
+                # Pecah context besar jadi paragraf — minimal ada beberapa item untuk diranking
+                chunks_for_eval = [c.strip() for c in context.split("\n\n") if c.strip()]
+                if not chunks_for_eval:
+                    chunks_for_eval = [context]
+
+            data = {
+                "question": [question],
+                "answer": [answer],
+                "contexts": [chunks_for_eval],  # ✅ list of chunks, bukan [[big_string]]
+            }
+            if ground_truth:
+                data["ground_truth"] = [ground_truth]     # (benar untuk v0.1.21)
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                _ragas_executor,
+                self._run_evaluate_sync,
+                data,
+                metrics,
             )
 
-        # Import metrik — deteksi versi ragas
-        try:
-            from ragas.metrics import (
-                Faithfulness,
-                AnswerRelevancy,
-                ContextPrecision,
-                ContextRecall,
-            )
-            faithfulness_metric      = Faithfulness()
-            answer_relevancy_metric  = AnswerRelevancy()
-            context_precision_metric = ContextPrecision()
-            context_recall_metric    = ContextRecall()
-            logger.info("RAGAS: menggunakan API 0.2+ (class-based metrics)")
-        except ImportError:
-            from ragas.metrics import (
-                faithfulness,
-                answer_relevancy,
-                context_precision,
-                context_recall,
-            )
-            faithfulness_metric      = faithfulness
-            answer_relevancy_metric  = answer_relevancy
-            context_precision_metric = context_precision
-            context_recall_metric    = context_recall
-            logger.info("RAGAS: menggunakan API 0.1.x (singleton metrics)")
 
-        # Dataset — kirim kedua nama kolom agar kompatibel lintas versi ragas
-        data = {
-            "question":           [question],
-            "answer":             [answer],
-            "contexts":           [[context]],
-            "retrieved_contexts": [[context]],
-        }
-
-        if ground_truth:
-            data["reference"]    = [ground_truth]
-            data["ground_truth"] = [ground_truth]
-            metrics = [
-                faithfulness_metric,
-                answer_relevancy_metric,
-                context_precision_metric,
-                context_recall_metric,
-            ]
-        else:
-            metrics = [
-                faithfulness_metric,
-                answer_relevancy_metric,
-            ]
-
-        # Jalankan di thread terpisah agar nest_asyncio tidak bentrok uvloop
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            _ragas_executor,
-            self._run_evaluate_sync,
-            data,
-            metrics,
-        )
-
-        return result
-
-
-# Singleton
 ragas_service = RagasService()

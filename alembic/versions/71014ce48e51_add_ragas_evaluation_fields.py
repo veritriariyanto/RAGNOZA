@@ -1,8 +1,8 @@
-"""migration start
+"""add ragas evaluation fields
 
-Revision ID: 332ebde9ada4
-Revises: 4f700b827c23
-Create Date: 2026-05-28 06:35:14.693027
+Revision ID: 71014ce48e51
+Revises: 164a0942ee5d
+Create Date: 2026-06-06 09:16:33.323458
 
 """
 from typing import Sequence, Union
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '332ebde9ada4'
-down_revision: Union[str, Sequence[str], None] = '4f700b827c23'
+revision: str = '71014ce48e51'
+down_revision: Union[str, Sequence[str], None] = '164a0942ee5d'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
