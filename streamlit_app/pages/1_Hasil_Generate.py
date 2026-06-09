@@ -4,6 +4,10 @@ import streamlit as st
 import json  # 🛠️ Tambahkan import ini untuk membongkar string JSON
 from api.history.history_api import get_history_by_id, get_all_history
 from components.left_sidebar import render_left_sidebar
+from utils.session import init_session_state
+
+# Inisialisasi session state agar sidebar tidak error saat properti belum ada
+init_session_state()
 
 # 1. Ambil ID session aktif yang dikirim dari audio_controls
 session_id = st.session_state.get("current_session_id")
@@ -49,12 +53,18 @@ if session_id:
     
     if res.get("status") == "success":
         data = res.get("data")
-        material = data.get("generate_material") or {}
+        material = data.get("generate_material") or data.get("generated_material") or {}
+        if isinstance(material, str):
+            try:
+                material = json.loads(material)
+            except json.JSONDecodeError:
+                material = {"summary": {"overview": material}}
 
         # =========================================
         # HEADER INFORMASI KASUS
         # =========================================
-        st.subheader(f"📁 {data.get('title', 'Analisis Tanpa Judul')}")
+        case_title = data.get('title') or data.get('session_title') or 'Analisis Tanpa Judul'
+        st.subheader(f"📁 {case_title}")
         st.caption(f"Waktu Eksekusi: {data.get('created_at')} | STT Provider: {data.get('provider')}")
         
         col_txt1, col_txt2 = st.columns(2)
@@ -188,9 +198,10 @@ if session_id:
         # --- TAB 5: REFERENCES ---
         with tab4:
             st.write("### 📂 Referensi Pasal Konstitusi (Qdrant)")
-            if data.get("retrieved_context_preview"):
+            retrieved_preview = data.get("retrieved_context_preview") or data.get("retrieved_context")
+            if retrieved_preview:
                 st.write(f"**Query Pencarian:** `{data.get('search_query')}`")
-                st.markdown(data.get("retrieved_context_preview"))
+                st.markdown(retrieved_preview)
             else:
                 st.warning("Tidak ada lampiran pasal spesifik.")
 

@@ -605,11 +605,13 @@ def _run_rag_pipeline(
         knowledge_base=knowledge_base,
         sources_count=rag_meta.get("sources_count", 0),
         has_context=rag_meta.get("has_context", False),
-        query_used=rag_meta.get("query_used", question),
+        query_used=rag_meta.get("query_used") or question,
         history_id=rag_response.get("history_id"),
         session_id=rag_response.get("session_id"),
     )
     set_rag_session_id(rag_response.get("session_id") or get_rag_session_id())
+    st.session_state.current_session_id = rag_response.get("session_id") or st.session_state.get("current_session_id")
+    st.session_state["trigger_redirect_hasil"] = True
 
     # Step 3 & 4: Evaluasi RAGAS (jika ada context dan material)
     if context and answer_text:

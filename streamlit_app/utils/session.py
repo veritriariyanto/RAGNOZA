@@ -11,7 +11,7 @@ Perubahan:
 
 import streamlit as st
 from datetime import datetime
-
+import uuid
 
 # =========================================
 # INIT SESSION STATE
@@ -22,6 +22,8 @@ def init_session_state():
         "current_session_id": None,
         # Teks transkripsi audio yang menunggu dikirim ke chat input
         "pending_audio_text": "",
+        # Trigger ke halaman hasil generate setelah pipeline selesai
+        "trigger_redirect_hasil": False,
     # ── Hasil RAG pipeline terakhir ──────────────────────────────
         # Diisi oleh audio_controls setelah process-integrated berhasil.
         # Dibaca oleh evaluation_tab untuk auto-populate form.
@@ -159,18 +161,51 @@ def get_current_session():
 def set_pending_audio_text(text: str):
     st.session_state.pending_audio_text = text
 
+
+
 def create_new_session():
-    """Membuat sesi chat baru."""
-    new_id = len(st.session_state.chat_sessions) + 1
+    """Membuat sesi chat baru dan langsung mengarahkan ke halaman utama."""
+    # Lebih baik gunakan ID unik (UUID) untuk menghindari duplikat
+    new_id = str(uuid.uuid4())  # atau tetap pakai integer, tapi pastikan unik
+    # Jika tetap ingin integer, hitung dari max id + 1
+    # existing_ids = [s["id"] for s in st.session_state.get("chat_sessions", [])]
+    # new_id = max(existing_ids) + 1 if existing_ids else 1
+    
     new_session = {
         "id": new_id,
-        "name": f"Sesi {new_id}",
+        "title": f"Sesi Baru",  # biarkan sederhana atau pakai timestamp
         "created_at": datetime.now().isoformat(),
         "messages": []
     }
+    
+    if "chat_sessions" not in st.session_state:
+        st.session_state.chat_sessions = []
     st.session_state.chat_sessions.append(new_session)
     st.session_state.current_session_id = new_id
-    return new_session
+    
+    # Arahkan ke halaman utama (root)
+    st.switch_page("app.py")
+
+
+def load_history_sessions(history_items: list[dict]):
+    """Load history items from backend API into session_state chat_sessions."""
+    sessions = []
+    for item in history_items:
+        sessions.append({
+            "id": item.get("id"),
+            "title": item.get("session_title") or item.get("title") or f"Sesi {item.get('id')}",
+            "created_at": item.get("created_at"),
+            "messages": [],
+            "raw_transcribe": item.get("raw_transcribe"),
+            "repaired_text": item.get("repaired_text"),
+            "provider": item.get("provider"),
+            "knowledge_base": item.get("knowledge_base"),
+            "raw_data": item,
+        })
+    st.session_state.chat_sessions = sessions
+    if sessions and st.session_state.get("current_session_id") is None:
+        st.session_state.current_session_id = sessions[0]["id"]
+
 
 def delete_session(session_id: int):
     """Menghapus sesi chat berdasarkan ID."""

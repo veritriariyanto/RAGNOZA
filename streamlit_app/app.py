@@ -27,14 +27,13 @@ init_session_state()
 # =========================================
 # TRIGGER REDIRECT (KUNCI PENYELESAIAN)
 # =========================================
-# Cek apakah ada trigger dari audio_controls untuk pindah halaman
+# Cek apakah ada trigger dari audio_controls atau sidebar untuk pindah halaman
 if st.session_state.get("trigger_redirect_hasil"):
     # Hapus flag agar tidak terjadi looping redirect nantinya
     st.session_state["trigger_redirect_hasil"] = False
     
     # Jalankan pengalihan halaman di level root
     st.switch_page("pages/1_Hasil_Generate.py")
-
 
 # =========================================
 # MAIN LAYOUT
@@ -81,34 +80,3 @@ with center_col:
     # =====================================
     with tab3:
         render_evaluation_tab()
-
-# =========================================
-# RIGHT PANEL
-# =========================================
-with right_col:
-
-    st.subheader("📄 Detail Sumber")
-
-    st.divider()
-
-    st.write("### Pasal 1")
-
-    st.success("Similarity Score: 0.94")
-
-    st.write("### Isi Teks")
-
-    st.info("""
-    Negara Indonesia ialah Negara Kesatuan
-    yang berbentuk Republik.
-    """)
-
-    st.write("### Metadata")
-
-    st.write("Pasal: 1")
-    st.write("Bab: BAB I")
-    st.write("Sumber: UUD 1945")
-
-    st.button(
-        "📄 Lihat Dokumen Asli",
-        use_container_width=True
-    )
