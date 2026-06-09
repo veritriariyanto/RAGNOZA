@@ -1,4 +1,4 @@
-# app/services/evaluation/formatter.py
+# formatter.py
 
 from app.schemas.prompting.generate_content import MaterialResponse
 
@@ -62,109 +62,11 @@ def material_to_text(material: MaterialResponse) -> str:
     {mitigation_steps}
 
     Rekomendasi Tindakan:
-    {recommendation}
+    {material.recommendation}
 
-    Timeline Extraction:
-    {timeline_extraction}
+    Analisis Resiko:
+    {' | '.join(material.risk_analysis)}
 
-    Comparison:
-    {comparison}
-
-    Referensi UU:
-    {referensi_uu}
+    Dasar Hukum:
+    {' | '.join(material.legal_basis)}
     """
-
-def extract_segments_for_ragas(material: MaterialResponse) -> dict:
-    """
-    FUNGSI BARU: Memecah MaterialResponse menjadi segmen terpisah 
-    agar evaluasi Ragas tidak bias dan overload.
-    """
-
-    # =====================================================
-    # SUMMARY
-    # =====================================================
-
-    summary = material.summary
-
-
-    # 1. Segmen Summary (Untuk Uji Halusinasi / Faithfulness)
-    overview = summary.overview if (summary and summary.overview) else "-"
-    conclusion = summary.conclusion if (summary and summary.conclusion) else "-"
-    key_points = ' | '.join(str(p) for p in summary.key_points) if (summary and summary.key_points) else "-"
-    
-    segment_summary = f"Overview: {overview}\nPoin Penting: {key_points}\nKesimpulan: {conclusion}"
-
-    # =====================================================
-    # CLAUSE SEARCH + LEGAL QA
-    # =====================================================
-    # 2. Segmen QA & Search (Untuk Uji Relevansi Jawaban / Answer Relevancy)
-    clause_search = ' | '.join([f'{item.clause_topic} => {item.article}' for item in material.clause_search]) if material.clause_search else "-"
-    legal_qa = ' | '.join([f'{item.question} => {item.answer}' for item in material.legal_qa]) if material.legal_qa else "-"
-    
-    segment_qa = f"Clause Search: {clause_search}\nLegal Q&A: {legal_qa}"
-
-    # =====================================================
-    # RISK REVIEW
-    # =====================================================
-
-    risk = material.risk_review
-
-    # 3. Segmen Risiko (Untuk Uji Penalaran Asisten / Aspect Critic / Relevancy)
-    risk_status = risk.status if (risk and risk.status) else "-"
-    risk_analysis = risk.analysis if (risk and risk.analysis) else "-"
-    risks_list = ' | '.join(str(r) for r in risk.risks) if (risk and risk.risks) else "-"
-    recommendation = risk.recommendation if (risk and risk.recommendation) else "-"
-    
-    segment_risk = f"Status Kepatuhan: {risk_status}\nAnalisis: {risk_analysis}\nRisiko: {risks_list}\nRekomendasi: {recommendation}"
-
-    # =====================================================
-    # TIMELINE
-    # =====================================================
-
-    segment_timeline = (
-        " | ".join(
-            str(item)
-            for item in material.timeline_extraction
-        )
-        if material.timeline_extraction
-        else "-"
-    )
-
-    # =====================================================
-    # COMPARISON
-    # =====================================================
-
-    segment_comparison = (
-        " | ".join(
-            str(item)
-            for item in material.comparison
-        )
-        if material.comparison
-        else "-"
-    )
-
-    # =====================================================
-    # LEGAL REFERENCES
-    # =====================================================
-
-    segment_reference = (
-        " | ".join(
-            f"{item.source_name} Pasal {item.article}"
-            for item in material.referensi_uu
-        )
-        if material.referensi_uu
-        else "-"
-    )
-
-    segment_faithfulness = "\n".join([
-    segment_summary,
-    f"Timeline: {segment_timeline}",
-    f"Comparison: {segment_comparison}",
-    f"Legal Reference: {segment_reference}"
-])
-
-    return {
-        "faithfulness": segment_faithfulness,
-        "qa": segment_qa,
-        "risk": segment_risk
-}

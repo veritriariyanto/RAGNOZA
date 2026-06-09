@@ -147,8 +147,6 @@ class RAGIntegrationService:
             # ── Tahap 5: Generate Material ────────────────────────────────────
             final_material = None
             fallback_message = None
-            history_id = None
-            rag_session_id = session_id
 
             if contexts:
                 material_payload = MaterialRequest(
@@ -163,15 +161,7 @@ class RAGIntegrationService:
                 )
 
                 # ── Tahap 6: Simpan History ───────────────────────────────────
-                # Tahap 6: Simpan History — simpan dulu, ambil id-nya
-                session_title = (
-                    repaired_text[:80]
-                    if repaired_text
-                    else raw_transcribe[:80]
-                    if raw_transcribe
-                    else "Session Tanpa Judul"
-                )
-                saved_history = RAGHistoryService.save_history(
+                RAGHistoryService.save_history(
                     db=self.db,
                     session_id=rag_session_id,
                     session_title=session_title,
@@ -183,11 +173,15 @@ class RAGIntegrationService:
                     retrieved_context=combined_context,
                     final_material=final_material,
                 )
-                history_id = saved_history.id if saved_history else None
-                rag_session_id = saved_history.session_id if saved_history else rag_session_id
 
-            # ── Tahap 7: Jalankan Evaluasi di Background Task ──────────────
-                if auto_evaluate and background_tasks and combined_context and final_material:
+                # ── Tahap 7: Evaluasi RAGAS (Background — tidak blocking) ─────
+                #
+                # Jika background_tasks tersedia (diteruskan dari router),
+                # evaluasi dijalankan SETELAH response dikirim ke user.
+                #
+                # ground_truth = None → auto_evaluation_hook akan pakai
+                # context pertama sebagai proxy ground truth secara otomatis.
+                if background_tasks is not None:
                     background_tasks.add_task(
                         trigger_auto_evaluation,
                         question=search_query,
@@ -199,7 +193,10 @@ class RAGIntegrationService:
                     )
 
             else:
-                fallback_message = "Tidak ada konteks hukum yang cukup relevan ditemukan di Knowledge Base."
+                fallback_message = (
+                    "Maaf, jawaban tidak dapat dibuat karena tidak ada "
+                    "referensi hukum yang cocok."
+                )
 
            # ── Tahap 8: Return Response Ter validasi ─────────────────────────
             return RAGIntegrationResponse(
@@ -213,7 +210,8 @@ class RAGIntegrationService:
                 history_id=history_id,
                 session_id=rag_session_id,
                 final_material=final_material,
-                fallback_message=fallback_message
+                fallback_message=fallback_message,
+                has_context=len(contexts) > 0,
             )
 
         except Exception as exc:

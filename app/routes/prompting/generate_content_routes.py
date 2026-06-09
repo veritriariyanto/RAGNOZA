@@ -19,24 +19,41 @@ router = APIRouter()
 
 # ── Endpoint Lama (tidak berubah, backward compatible) ────────────────────────
 
-@router.post(
-    "/generate",
-    response_model=MaterialResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Generate Legal Material (tanpa evaluasi)",
-)
-async def create_material(payload: MaterialRequest):
-    """
-    Generate material hukum dari konteks teks.
-    Tidak menjalankan evaluasi RAGAS.
-    """
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from app.core.postgres import get_db # Pastikan import ini ada
+from app.services.evaluation.history.rag_history_service import RAGHistoryService
+from app.schemas.prompting.generate_content import MaterialRequest, MaterialResponse
+
+router = APIRouter()
+
+@router.post("/generate", response_model=MaterialResponse)
+async def create_material(
+    payload: MaterialRequest, 
+    db: Session = Depends(get_db)  # 1. Tambahkan dependency DB
+):
     try:
+        # 2. Panggil service generate
         result = await material_service.generate_legal_material(payload)
+        
+        # 3. Simpan ke database menggunakan RAGHistoryService
+        # Sesuaikan argumen sesuai kebutuhan schema database Anda
+        RAGHistoryService.save_history(
+            db=db,
+            knowledge_base="default_kb", # Sesuaikan dengan KB yang digunakan
+            provider="llm_provider_name", # Contoh: "groq" atau "openai"
+            raw_transcribe=payload.user_scenario, # Asumsi user_scenario sebagai input
+            repaired_text=payload.user_scenario,  # Sesuaikan jika ada proses perbaikan
+            search_query=payload.user_scenario,   # Sesuaikan
+            retrieved_context=payload.context_text,
+            final_material=result
+        )
+        
         return result
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Gagal generate material: {str(exc)}",
+            detail=f"Gagal generate dan simpan material: {str(exc)}",
         )
 
 

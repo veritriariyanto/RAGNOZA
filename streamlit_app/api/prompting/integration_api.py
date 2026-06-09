@@ -50,10 +50,10 @@ def process_audio_integrated(
         if response.status_code == 200:
             data = response.json()
             rag_data = data.get("data", {})
-            full_context = rag_data.get("rag", {}).get("full_context", "")
 
             return {
-                "status": "success",
+                "status": status,
+                "session_id": data.get("session_id"),
                 "transcription": rag_data.get("transcription", {}),
                 "rag": rag_data.get("rag", {}),
                 "generated_material": rag_data.get("generated_material"),

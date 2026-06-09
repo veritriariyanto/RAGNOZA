@@ -108,6 +108,7 @@ async def process_audio_rag(
             "status": "success",
             "provider": provider,
             "knowledge_base": knowledge_base,
+            "session_id": result.session_id,
             "data": {
                 "transcription": {
                     "raw": getattr(result, "raw_transcribe", None),

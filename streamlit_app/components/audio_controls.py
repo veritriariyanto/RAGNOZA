@@ -463,149 +463,66 @@ def _render_ragas_strip(ragas_result: dict):
 
 # ── Helper: render hasil material SPK ────────────────────────────────────────
 def _render_material_result(material: dict, rag_info: dict):
+    """Tampilkan hasil generate material dari pipeline RAG."""
+    st.markdown("---")
+    st.markdown("### 📋 Hasil Analisis Hukum (SPK)")
+
+    # Info sumber
     sources_count = rag_info.get("sources_count", 0)
-    has_context   = rag_info.get("has_context", False)
-    query_used    = rag_info.get("query_used", "")
+    has_context = rag_info.get("has_context", False)
+    query_used = rag_info.get("query_used", "")
 
-    st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
-    st.markdown('<div class="result-header">📋 Hasil Analisis Hukum</div>', unsafe_allow_html=True)
-
-    # Meta pills
-    st.markdown(
-        f"""
-        <div style="margin-bottom:14px;">
-            <span class="info-pill">🔍 {query_used or '—'}</span>
-            <span class="info-pill">📚 {sources_count} chunk ditemukan</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.caption(f"🔍 Query: *{query_used}*")
+    with col_b:
+        st.caption(f"📚 Sumber ditemukan: {sources_count} chunk")
 
     if not has_context or not material:
         st.warning("⚠️ Tidak ditemukan referensi hukum yang relevan.")
         return
 
-    # ── Summary ──────────────────────────────────────────────────────────────
-    summary = material.get("summary", {}) or {}
-    if summary:
-        st.markdown(f'<div class="section-label">📌 Ringkasan</div>', unsafe_allow_html=True)
-        st.markdown(
-            f"<p style='font-family:DM Serif Display,serif;font-size:1.1rem;color:#F0EDE8;margin:0 0 8px 0;'>"
-            f"{summary.get('title', 'Ringkasan')}</p>",
-            unsafe_allow_html=True,
-        )
-        if summary.get("overview"):
-            st.write(summary["overview"])
+    # Kartu material
+    decision = material.get("decision_status", "-")
+    score = material.get("compliance_score", 0)
+    recommendation = material.get("recommendation", "-")
+    risk_analysis = material.get("risk_analysis", [])
+    legal_basis = material.get("legal_basis", [])
 
-        key_points = summary.get("key_points", [])
-        if key_points:
-            with st.expander("📋 Poin-Poin Penting", expanded=True):
-                for point in key_points:
-                    st.markdown(f"- {point}")
-        if summary.get("conclusion"):
-            st.info(f"💡 **Kesimpulan:** {summary['conclusion']}")
+    # Status keputusan
+    status_color = "success" if "MATUHI" in decision.upper() else "error"
+    if status_color == "success":
+        st.success(f"✅ **{decision}**")
+    else:
+        st.error(f"❌ **{decision}**")
 
-    # ── Legal Q&A ─────────────────────────────────────────────────────────────
-    legal_qa = material.get("legal_qa", [])
-    if legal_qa:
-        st.markdown('<div class="section-label">❓ Legal Q&A</div>', unsafe_allow_html=True)
-        for qa in legal_qa:
-            with st.expander(f"Q: {qa.get('question', '')}", expanded=True):
-                st.write(qa.get("answer", "-"))
+    # Skor kepatuhan
+    st.metric("Skor Kepatuhan", f"{score} / 100")
+    st.progress(min(int(score), 100) / 100)
 
-    # ── Risk Review ───────────────────────────────────────────────────────────
-    risk        = material.get("risk_review", {}) or {}
-    risk_status = risk.get("status", "-") or "-"
-    if risk and risk_status not in ("-", "", "ERROR_SISTEM"):
-        st.markdown('<div class="section-label">⚠️ Risk Review</div>', unsafe_allow_html=True)
-        score = risk.get("score", 0) or 0
+    # Rekomendasi
+    with st.expander("💡 Rekomendasi Tindakan", expanded=True):
+        st.write(recommendation)
 
-        col_s, col_sc = st.columns(2)
-        with col_s:
-            st.metric("Status", risk_status)
-        with col_sc:
-            st.metric("Skor Risiko", f"{score} / 100")
-        st.progress(min(int(score), 100) / 100)
+    # Analisis risiko
+    if risk_analysis:
+        with st.expander("⚠️ Analisis Risiko"):
+            for risk in risk_analysis:
+                st.markdown(f"- {risk}")
 
-        if risk.get("analysis"):
-            st.write(risk["analysis"])
-        if risk.get("risks"):
-            with st.expander("🔴 Risiko"):
-                for r in risk["risks"]:
-                    st.markdown(f"- {r}")
-        if risk.get("mitigation_steps"):
-            with st.expander("🛡️ Langkah Mitigasi"):
-                for step in risk["mitigation_steps"]:
-                    st.markdown(f"- {step}")
-        if risk.get("recommendation"):
-            st.success(f"✅ **Rekomendasi:** {risk['recommendation']}")
-
-    # ── Clauses ───────────────────────────────────────────────────────────────
-    clauses = material.get("clause_search", [])
-    if clauses:
-        with st.expander(f"📜 Pasal Terkait ({len(clauses)} ditemukan)"):
-            for clause in clauses:
-                st.markdown(
-                    f"**{clause.get('article', '')}** — {clause.get('clause_topic', '')}"
-                )
-                if clause.get("excerpt"):
-                    st.caption(clause["excerpt"])
-                st.divider()
-
-    # ── Timeline ──────────────────────────────────────────────────────────────
-    timeline = material.get("timeline_extraction", [])
-    if timeline:
-        with st.expander("🕐 Timeline Hukum"):
-            for item in timeline:
-                st.markdown(
-                    f"- **{item.get('date_or_period', '')}** — "
-                    f"{item.get('event', '')} "
-                    f"*(Ref: {item.get('article_reference', '-')})*"
-                )
-
-    # ── Comparisons ───────────────────────────────────────────────────────────
-    comparisons = material.get("comparison", [])
-    if comparisons:
-        with st.expander("⚖️ Perbandingan Ketentuan"):
-            for comp in comparisons:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.markdown(f"**{comp.get('aspect', '')}**")
-                    st.write(comp.get("option_a") or comp.get("source_a", "-"))
-                with col2:
-                    st.write(comp.get("option_b") or comp.get("source_b", "-"))
-                if comp.get("conclusion"):
-                    st.caption(f"Kesimpulan: {comp['conclusion']}")
-                st.divider()
-
-    # ── Referensi UU ──────────────────────────────────────────────────────────
-    referensi = material.get("referensi_uu", [])
-    if referensi:
-        with st.expander("📚 Referensi Undang-Undang"):
-            for ref in referensi:
-                st.markdown(
-                    f"- **{ref.get('source_name', '')}** Pasal {ref.get('article', '')}"
-                )
+    # Dasar hukum
+    if legal_basis:
+        with st.expander("📜 Dasar Hukum"):
+            for basis in legal_basis:
+                st.markdown(f"- {basis}")
 
 
 # ── MAIN RENDER ───────────────────────────────────────────────────────────────
 def render_audio_controls():
-    _inject_styles()
 
-    # ── Section Header ────────────────────────────────────────────────────────
-    st.markdown(
-        """
-        <div style="margin-top: 8px; margin-bottom: 4px;">
-            <div class="ac-header">🎙️ Audio ke Analisis Hukum</div>
-            <div class="ac-subheader">
-                Upload atau rekam audio — sistem akan mentranskrip, mencari referensi hukum,
-                dan menghasilkan analisis SPK secara otomatis.
-            </div>
-        </div>
-        <div class="ac-divider"></div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.divider()
+    st.subheader("🎙️ Audio ke Analisis Hukum")
+    st.caption("Upload atau rekam audio — sistem akan mentranskrip, mencari referensi hukum, dan menghasilkan analisis SPK otomatis.")
 
     # ── Provider & Knowledge Base ─────────────────────────────────────────────
     col_provider, col_kb = st.columns([1, 2])
@@ -671,7 +588,7 @@ def render_audio_controls():
 
             with col_rag:
                 process_rag = st.button(
-                    "🚀  Proses RAG & Evaluasi",
+                    "🚀 Proses RAG & Evaluasi",
                     use_container_width=True,
                     key="btn_rag_upload",
                     type="primary",
@@ -679,22 +596,25 @@ def render_audio_controls():
                 )
 
             with col_stt:
+                # Tombol lama — hanya transkripsi
                 transcribe_only = st.button(
-                    "📝  Transkripsi Saja",
+                    "📝 Transkripsi Saja",
                     use_container_width=True,
                     key="btn_transcribe_upload",
                 )
 
             with col_clear:
-                if st.button("🗑️", use_container_width=True, key="btn_clear_upload", help="Hapus file"):
+                if st.button("🗑️", use_container_width=True, key="btn_clear_upload"):
                     st.session_state.pop(_KEY_UPLOAD_BYTES, None)
-                    st.session_state.pop(_KEY_UPLOAD_NAME,  None)
+                    st.session_state.pop(_KEY_UPLOAD_NAME, None)
                     st.session_state.pop(_KEY_TRANSCRIPTION, None)
                     st.rerun()
 
+            # ── Proses RAG lengkap ─────────────────────────────────────────
             if process_rag:
                 _run_rag_pipeline(upload_bytes, upload_name, provider, knowledge_base)
 
+            # ── Transkripsi saja (flow lama) ───────────────────────────────
             if transcribe_only:
                 st.session_state.pop(_KEY_TRANSCRIPTION, None)
                 with st.spinner("Sedang memproses transkripsi..."):
@@ -733,7 +653,7 @@ def render_audio_controls():
 
             with col_rag:
                 process_rag_rec = st.button(
-                    "🚀  Proses RAG & Evaluasi",
+                    "🚀 Proses RAG & Evaluasi",
                     use_container_width=True,
                     key="btn_rag_record",
                     type="primary",
@@ -741,13 +661,13 @@ def render_audio_controls():
 
             with col_stt:
                 transcribe_record = st.button(
-                    "📝  Transkripsi Saja",
+                    "📝 Transkripsi Saja",
                     use_container_width=True,
                     key="btn_transcribe_record",
                 )
 
             with col_clear:
-                if st.button("🗑️", use_container_width=True, key="btn_clear_record", help="Hapus rekaman"):
+                if st.button("🗑️", use_container_width=True, key="btn_clear_record"):
                     st.session_state.pop(_KEY_RECORD_BYTES, None)
                     st.session_state.pop(_KEY_TRANSCRIPTION, None)
                     st.rerun()
@@ -755,53 +675,32 @@ def render_audio_controls():
             if process_rag_rec:
                 _run_rag_pipeline(record_bytes, "recording.wav", provider, knowledge_base)
 
-            if transcribe_record:
-                st.session_state.pop(_KEY_TRANSCRIPTION, None)
-                with st.spinner("Sedang memproses transkripsi rekaman..."):
-                    transcription, error = _transcribe(record_bytes, "recording.wav", provider)
-                if error:
-                    st.error(f"⚠️ {error}")
-                else:
-                    st.session_state[_KEY_TRANSCRIPTION] = transcription
-                    st.rerun()
 
     # ── Hasil transkripsi saja (flow lama) ────────────────────────────────────
     transcription = st.session_state.get(_KEY_TRANSCRIPTION)
     if transcription is not None:
         _handle_transcription_success(transcription)
 
-    # ── Hasil RAG + RAGAS strip ───────────────────────────────────────────────
+    # ── Tampilkan hasil RAG + RAGAS strip (jika ada) ──────────────────────────
     rag_result = get_last_rag_result()
     if rag_result:
         _render_material_result(
             material=rag_result.get("generated_material"),
-            rag_info={
-                "has_context":  rag_result.get("has_context", False),
-                "sources_count": rag_result.get("sources_count", 0),
-                "query_used":   rag_result.get("query_used", ""),
-            },
+            rag_info={"has_context": rag_result.get("has_context", False),
+                      "sources_count": rag_result.get("sources_count", 0), 
+                      "query_used": rag_result.get("query_used", "")
+                    },
         )
 
+        # RAGAS strip
         ragas_result = get_last_ragas_result()
         if is_ragas_evaluating():
             st.info("⏳ Evaluasi RAGAS sedang berjalan...")
         elif ragas_result:
             _render_ragas_strip(ragas_result)
 
-        st.markdown(
-            """
-            <div style="
-                font-family:'DM Sans',sans-serif;
-                font-size:11.5px;
-                color:#6B6460;
-                text-align:center;
-                margin-top:10px;
-                letter-spacing:0.03em;
-            ">
-                💡 Buka <strong style="color:#A89F93;">Tab Evaluasi</strong> untuk detail lengkap 4 metrik &amp; tambah ground truth
-            </div>
-            """,
-            unsafe_allow_html=True,
+        st.caption(
+            f"💡 Lihat **Tab Evaluasi** untuk detail lengkap 4 metrik + tambah ground truth."
         )
 
 
@@ -812,6 +711,15 @@ def _run_rag_pipeline(
     provider: str,
     knowledge_base: str,
 ):
+    print(f"[RAG DEBUG] knowledge_base dikirim: '{knowledge_base}'")  # ← tambah ini
+    """
+    1. Panggil integration endpoint (STT → RAG → Material)
+    2. Simpan hasil ke session_state
+    3. Jalankan evaluasi RAGAS
+    4. Simpan hasil RAGAS ke session_state
+    5. Rerun untuk tampilkan hasil
+    """
+    # Step 1: RAG pipeline
     with st.spinner("⏳ Memproses audio → RAG → Material... (30–90 detik)"):
         rag_response = process_audio_integrated(
             audio_bytes=audio_bytes,
@@ -826,12 +734,20 @@ def _run_rag_pipeline(
         st.error(f"❌ Pipeline RAG gagal: {rag_response['error']}")
         return
 
-    transcription = rag_response.get("transcription", {})
-    material      = rag_response.get("generated_material")
-    rag_meta      = rag_response.get("rag", {})
-    context       = rag_response.get("raw_context", "")
-    question      = transcription.get("repaired") or transcription.get("raw", "")
+    transcription   = rag_response.get("transcription", {})
+    material        = rag_response.get("generated_material")
+    context         = rag_response.get("raw_context", "")
+    rag_meta        = rag_response.get("rag", {})
+    question        = transcription.get("repaired", transcription.get("raw", ""))
+    answer_text     = _material_to_text(material) if material else ""
 
+    # Debug log — hapus setelah fix dikonfirmasi
+    print(f"[DEBUG] has_context: {rag_meta.get('has_context')}")
+    print(f"[DEBUG] sources_count: {rag_meta.get('sources_count')}")
+    print(f"[DEBUG] context length: {len(context)}")
+    print(f"[DEBUG] material: {material}")
+
+    # Step 2: Simpan hasil RAG ke session_state
     set_last_rag_result(
         question=question,
         context=context,
@@ -846,15 +762,15 @@ def _run_rag_pipeline(
     )
     set_rag_session_id(rag_response.get("session_id") or get_rag_session_id())
 
-    if context and material:
+    # Step 3 & 4: Evaluasi RAGAS (jika ada context dan material)
+    if context and answer_text:
         set_ragas_evaluating(True)
         with st.spinner("📊 Mengevaluasi kualitas RAG dengan RAGAS..."):
             ragas_response = run_ragas_evaluation(
                 question=question,
                 context=context,
-                material_dict=material,
-                ground_truth=None,
-                history_id=rag_response.get("history_id"),
+                answer=answer_text,
+                ground_truth=None,  # proxy otomatis dari context di backend
             )
         set_last_ragas_result(ragas_response)
         set_ragas_evaluating(False)
@@ -866,8 +782,6 @@ def _run_rag_pipeline(
         )
         set_ragas_evaluating(False)
 
-    st.session_state["_force_refresh_history"] = True
-    st.session_state.pop("_db_history_cache", None)
     st.rerun()
 
 
