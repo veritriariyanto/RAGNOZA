@@ -32,12 +32,26 @@ EVALUATOR_BASE_URL = os.getenv("EVALUATOR_URL", "http://localhost:8001")
 EVALUATOR_ENDPOINT = f"{EVALUATOR_BASE_URL}/api/v1/evaluate"
 EVALUATOR_TIMEOUT = float(os.getenv("EVALUATOR_TIMEOUT_SECONDS", "900"))
 
-
 # =============================================================================
 # SHARED: forward ke evaluator :8001
 # =============================================================================
 
 async def _forward_to_evaluator(payload: dict) -> dict:
+    """
+    Fungsi Asinkron (Asynchronous) untuk meneruskan data payload evaluasi 
+    ke microservice Evaluator eksternal yang berjalan di port :8001.
+
+    Args:
+        payload (dict): Data teks dan metrik yang siap dinilai oleh RAGAS.
+
+    Returns:
+        dict: Hasil skor evaluasi yang dikembalikan oleh service Evaluator.
+
+    Raises:
+        HTTPException 503: Jika service Evaluator mati/tidak bisa dihubungi.
+        HTTPException 504: Jika Evaluator tidak merespons hingga batas waktu timeout.
+        HTTPException 502: Jika Evaluator merespons namun mengembalikan error status (e.g., 400, 500).
+    """
     try:
         async with httpx.AsyncClient(timeout=EVALUATOR_TIMEOUT) as client:
             response = await client.post(EVALUATOR_ENDPOINT, json=payload)
@@ -57,13 +71,32 @@ def _build_payload_from_material(
     ground_truth, 
     source_label: str,
 ) -> dict:
+    """
+    Fungsi Helper Sinkron (Synchronous) untuk menyusun dan menstandarisasi 
+    struktur data (payload) sebelum dikirim ke mesin penilai RAGAS.
+    Fungsi ini khusus digunakan pada evaluasi pertama kali (Auto-Eval / Path A).
+
+    Args:
+        question (str): Pertanyaan asli dari user.
+        context (str): Dokumen referensi yang ditarik dari database/knowledge base.
+        material (MaterialResponse): Objek skema Pydantic berisi hasil generate AI (QA, Ringkasan, Risiko).
+        ground_truth (any): Kunci jawaban ideal dari manusia (bisa None jika belum diisi).
+        source_label (str): Penanda asal request (contoh: "frontend_eval").
+
+    Returns:
+        dict: Struktur data JSON-ready yang dipahami oleh API Evaluator.
+    """
     
+    # Memanggil modul formatter eksternal untuk memecah objek MaterialResponse yang kompleks 
+    # menjadi potongan teks spesifik (segmentasi) berdasarkan metrik targetnya masing-masing.
     segments = extract_segments_for_ragas(material)
 
+    # Menyusun kamus data (dictionary) sesuai dengan kontrak API yang diminta oleh service Evaluator :8001
     return {
         "question": question,
         "context": context,
-        #full material
+
+        #Mengubah keseluruhan objek materi (skema Pydantic) menjadi satu teks utuh (string) untuk jawaban umum
         "answer": material_to_text(material),
         # Segmen evaluasi
         "faithfulness_text": segments["faithfulness"],
@@ -72,9 +105,9 @@ def _build_payload_from_material(
 
         "ground_truth": ground_truth,
         "source_label": source_label,
+        # Karena ini jalur 'Auto-Eval' pertama kali, flag 'is_reeval' diset False.
         "is_reeval": False,
     }
-
 
 # =============================================================================
 # ENDPOINT 1: /ragas-auto-2metriks — Path A (auto eval dari Streamlit)
@@ -108,7 +141,6 @@ async def evaluate_ragas_auto_2metrics(
         RAGHistoryService.update_ragas(db=db, history_id=payload.history_id, ragas_result=result)
 
     return result
-
 
 # =============================================================================
 # ENDPOINT 2: /ragas-ground-truth — Path B (user input ground truth)

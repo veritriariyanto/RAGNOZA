@@ -11,8 +11,9 @@ def render_knowledgebase_tab():
 
     st.subheader("📚 Knowledge Base")
 
-    st.caption(
-        "Monitoring collection dan vector database Qdrant."
+    st.markdown(
+    '<div class="white-caption">Monitoring collection dan vector database Qdrant.</div>',
+    unsafe_allow_html=True
     )
 
     st.divider()

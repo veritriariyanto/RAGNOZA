@@ -31,17 +31,24 @@ class RagasService:
             from ragas.llms import LangchainLLMWrapper
             from ragas.embeddings import LangchainEmbeddingsWrapper
             from app.core.llm_provider import llm          # ← sudah ThrottledChatGroq
+            from app.core.throttled_llm import ThrottledChatGroq
+            from app.core.config import settings
             from app.core.embeddings import embeddings
 
-            if llm is None or embeddings is None:
-                raise RuntimeError("LLM atau embeddings gagal diinisialisasi")
+            eval_llm_raw = ThrottledChatGroq(
+                temperature=settings.ragas_llm_temperature,
+                groq_api_key=settings.GROQ_API_KEY,
+                model_name=settings.ragas_llm_model,       # llama-3.1-70b-versatile
+            )
 
             # Tidak perlu wrapper tambahan — throttle sudah di dalam llm
-            self.evaluator_llm = LangchainLLMWrapper(llm)
+            self.evaluator_llm = LangchainLLMWrapper(eval_llm_raw)
             self.evaluator_embeddings = LangchainEmbeddingsWrapper(embeddings)
             self._available = True
-            logger.info("✅ RagasService siap")
-
+            logger.info(
+                "✅ RagasService siap | evaluator_model=%s",
+                settings.ragas_llm_model,
+            )
         except Exception as exc:
             self._availability_error = str(exc)
             logger.warning("⚠️ RAGAS tidak tersedia: %s", exc)
@@ -60,38 +67,26 @@ class RagasService:
         asyncio.set_event_loop(loop)
         nest_asyncio.apply(loop)
 
+        logger.info(
+            "[RagasDebug] contexts n_chunks=%d | first_chunk_len=%d | gt=%s",
+            len(data["contexts"][0]),
+            len(data["contexts"][0][0]) if data["contexts"][0] else 0,
+            data.get("ground_truth", [None])[0][:80] if data.get("ground_truth") else "NONE",
+        )
+        
         try:
-            # ─────────────────────────────────────────────────────────────────
-            # OPTIMASI: Paksa Metrik Adaptasi ke Bahasa Indonesia & Ikat ke LLM Groq
-            # ─────────────────────────────────────────────────────────────────
+            # Ikat LLM & embeddings ke tiap metrik — TANPA adapt_prompts (tidak ada di v0.1.21)
             for metric in metrics:
                 if hasattr(metric, "llm"):
                     metric.llm = self.evaluator_llm
                 if hasattr(metric, "embeddings") and self.evaluator_embeddings:
                     metric.embeddings = self.evaluator_embeddings
 
-                metric_name = metric.__class__.__name__
-                if metric_name not in self._adapted_metrics:
-                    if not hasattr(metric, "adapt_prompts"):
-                        logger.debug("Metrik %s tidak mendukung adapt_prompts — skip.", metric_name)
-                        self._adapted_metrics[metric_name] = False
-                    else:
-                        try:
-                            logger.info("Menerjemahkan prompt metrik %s ke Bahasa Indonesia...", metric_name)
-                            metric.adapt_prompts(language="indonesian", llm=self.evaluator_llm)
-                            self._adapted_metrics[metric_name] = True
-                            logger.info("✅ Cache adaptasi %s tersimpan.", metric_name)
-                        except Exception as adapt_err:
-                            logger.warning("Gagal adaptasi %s: %s.", metric_name, adapt_err)
-                            self._adapted_metrics[metric_name] = False
-                else:
-                    logger.debug("Cache hit — skip adapt_prompts untuk %s.", metric_name)
-
             # Di _run_evaluate_sync, sebelum baris Dataset.from_dict(data)
             logger.info(
                 "[RagasService] Dataset keys=%s | gt=%s | answer_len=%d",
                 list(data.keys()),
-                data.get("reference", [None])[0] is not None,
+                data.get("ground_truth", [None])[0] is not None,
                 len(data.get("answer", [""])[0]),
             )
             dataset = Dataset.from_dict(data)
@@ -113,10 +108,11 @@ class RagasService:
     async def evaluate_rag_custom(
             self,
             question: str,
-            context: str,
+            context: str, #faithfulness
             answer: str,
             metric_types: list[str],
             ground_truth: Optional[str] = None,
+            context_chunks: Optional[list[str]] = None, #yang dipakai untuk precision + recall
         ):
             """Fungsi pembantu baru untuk mengevaluasi jenis metrik tertentu saja."""
             from ragas.metrics import Faithfulness, AnswerRelevancy, ContextPrecision, ContextRecall
@@ -132,14 +128,21 @@ class RagasService:
             if "context_recall" in metric_types:
                 metrics.append(ContextRecall(llm=self.evaluator_llm))
 
+            if context_chunks and len(context_chunks) > 1:
+                chunks_for_eval = context_chunks
+            else:
+                # Pecah context besar jadi paragraf — minimal ada beberapa item untuk diranking
+                chunks_for_eval = [c.strip() for c in context.split("\n\n") if c.strip()]
+                if not chunks_for_eval:
+                    chunks_for_eval = [context]
+
             data = {
                 "question": [question],
                 "answer": [answer],
-                "contexts": [[context]],      # list of list — WAJIB
+                "contexts": [chunks_for_eval],  # ✅ list of chunks, bukan [[big_string]]
             }
             if ground_truth:
-                data["ground_truths"] = [[ground_truth]]   # list of list — WAJIB untuk ContextRecall 0.1.x
-                data["ground_truth"]  = [ground_truth]     # list biasa — untuk ContextPrecision 0.1.x
+                data["ground_truth"] = [ground_truth]     # (benar untuk v0.1.21)
 
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(

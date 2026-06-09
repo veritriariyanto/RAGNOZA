@@ -42,8 +42,8 @@ def _badge(label: str, value, good_thresh=0.8, warn_thresh=0.6):
         bg, fg, display = "rgba(255,255,255,0.06)", "#A89F93", str(value) if value else "N/A"
 
     return (
-        f'<span style="background:{bg};color:{fg};padding:2px 10px;'
-        f'border-radius:5px;font-weight:600;font-size:13px;">'
+        f'<span class="ragas-badge" '
+        f'style="background:{bg};color:{fg};">'
         f'{_score_emoji(value) if value is not None else "⬜"} {label}: {display}</span>'
     )
 
@@ -55,7 +55,7 @@ def _render_material(material: dict, rag_info: dict):
     query_used    = rag_info.get("query_used", "-")
 
     st.markdown(
-    f'<div style="margin-bottom:14px;">'
+    f'<div class="info-pill-container">'
     f'<span class="info-pill">🔍 {query_used or "—"}</span>'
     f'<span class="info-pill">📚 {sources_count} chunk ditemukan</span>'
     f'</div>',
@@ -71,8 +71,7 @@ def _render_material(material: dict, rag_info: dict):
     if summary:
         st.markdown('<div class="section-label">📌 Ringkasan</div>', unsafe_allow_html=True)
         st.markdown(
-            f"<p style='font-family:DM Serif Display,serif;font-size:1.1rem;"
-            f"color:#F0EDE8;margin:0 0 8px 0;'>{summary.get('title','Ringkasan')}</p>",
+            f"<p class='summary-title'>{summary.get('title','Ringkasan')}</p>",
             unsafe_allow_html=True,
         )
         if summary.get("overview"):
@@ -138,7 +137,7 @@ def _render_material(material: dict, rag_info: dict):
                 st.markdown(
                     f"- **{item.get('date_or_period', '')}** — "
                     f"{item.get('event', '')} "
-                    f"*(Ref: {item.get('article_reference', '-')})*"
+                    f"*(Ref: {item.get('relevance', '-')})*"
                 )
 
     # Comparison
@@ -172,11 +171,6 @@ def _render_ragas_section(h: dict):
     metrics  = h.get("ragas_metrics") or {}
 
     st.markdown('<div class="result-header">📊 Evaluasi RAGAS</div>', unsafe_allow_html=True)
-    
-    # DEBUG SEMENTARA — hapus setelah bug ketemu
-    st.write(f"DEBUG ragas_status: `{ragas_st}`")
-    st.write(f"DEBUG ragas_metrics: `{metrics}`")
-    st.write(f"DEBUG semua keys di h: `{list(h.keys())}`")
 
     if ragas_st == "skipped":
         st.info("⬜ Evaluasi RAGAS tidak dijalankan untuk riwayat ini.")
@@ -186,31 +180,56 @@ def _render_ragas_section(h: dict):
         st.error(f"⚠️ Evaluasi RAGAS gagal: {metrics.get('error', 'Unknown error')}")
         return
 
-    # Status success — tampilkan metrik
-    faith   = metrics.get("faithfulness")
-    relev   = metrics.get("answer_relevancy")
-    cp      = metrics.get("context_precision")
-    cr      = metrics.get("context_recall")
-    overall = metrics.get("overall_score")
+    faith    = metrics.get("faithfulness")
+    relev    = metrics.get("answer_relevancy")
+    risk_f   = metrics.get("risk_faithfulness")
+    cp       = metrics.get("context_precision")
+    cr       = metrics.get("context_recall")
+    overall  = metrics.get("overall_score")
+    coverage = metrics.get("coverage_pct")
+    segments = metrics.get("answer_faithfulness_segment", [])
 
-    badges_html = " &nbsp; ".join([
-        _badge("Faithfulness",      faith,   0.8, 0.6),
-        _badge("Relevancy",         relev,   0.8, 0.6),
-        _badge("Ctx Precision",     cp,      0.8, 0.6),
-        _badge("Ctx Recall",        cr,      0.8, 0.6),
-        _badge("Overall",           overall, 0.8, 0.6),
-    ])
+    # ── Badge row ─────────────────────────────────────────────────────────────
+    badges_html = " &nbsp; ".join(filter(None, [
+        _badge("Faithfulness",   faith,   0.8, 0.6),
+        _badge("Relevancy",      relev,   0.8, 0.6),
+        _badge("Risk Faith",     risk_f,  0.8, 0.6),
+        _badge("Ctx Precision",  cp,      0.8, 0.6) if cp is not None else None,
+        _badge("Ctx Recall",     cr,      0.8, 0.6) if cr is not None else None,
+        _badge("Overall",        overall, 0.8, 0.6),
+    ]))
     st.markdown(badges_html, unsafe_allow_html=True)
     st.markdown("")
 
-    # Detail metrik dengan st.metric
-    m1, m2, m3, m4, m5 = st.columns(5)
+    # ── Metric columns ────────────────────────────────────────────────────────
     def _fmt(v): return f"{float(v):.2f}" if v is not None else "N/A"
-    m1.metric("Faithfulness",    _fmt(faith))
-    m2.metric("Answer Relevancy",_fmt(relev))
-    m3.metric("Ctx Precision",   _fmt(cp))
-    m4.metric("Ctx Recall",      _fmt(cr))
-    m5.metric("Overall Score",   _fmt(overall))
+
+    cols = st.columns(6)
+    cols[0].metric("Faithfulness",     _fmt(faith))
+    cols[1].metric("Answer Relevancy", _fmt(relev))
+    cols[2].metric("Risk Faithfulness",_fmt(risk_f))
+    cols[3].metric("Ctx Precision",    _fmt(cp))
+    cols[4].metric("Ctx Recall",       _fmt(cr))
+    cols[5].metric("Overall",          _fmt(overall))
+
+    # ── Coverage + Segments ───────────────────────────────────────────────────
+    if coverage is not None or segments:
+        st.markdown('<div class="section-label">🧩 Coverage & Segmen</div>', unsafe_allow_html=True)
+        cov_col, seg_col = st.columns([1, 3])
+        with cov_col:
+            st.metric("Coverage", f"{coverage * 100:.0f}%" if coverage is not None else "N/A")
+        with seg_col:
+            if segments:
+                seg_labels = {"faithfulness": "📌 Summary", "qa": "❓ QA", "risk": "⚠️ Risk"}
+                pills = " ".join(
+                    f'<span class="segment-pill">'
+                    f'{seg_labels.get(s, s)}</span>'
+                    for s in segments
+                )
+                st.markdown(
+                    f'<div style="padding-top:28px;">{pills}</div>',
+                    unsafe_allow_html=True,
+                )
 
 
 # ── MAIN RENDER ───────────────────────────────────────────────────────────────
@@ -226,10 +245,9 @@ def render_history_detail():
         # Placeholder saat belum ada history dipilih
         st.markdown(
             """
-            <div style='text-align:center; padding:4rem 1rem;'>
-                <div style='font-size:3rem;'>📋</div>
-                <p style='font-family:"DM Sans",sans-serif; font-size:1rem;
-                        color:#6B6460; margin-top:0.5rem; letter-spacing:0.02em;'>
+            <div class="history-empty">
+                <div class="history-empty-icon">📋</div>
+                <p class="history-empty-text">
                     Pilih riwayat dari sidebar untuk melihat detailnya.
                 </p>
             </div>
