@@ -3,6 +3,7 @@ import logging, json, datetime
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field  # 💡 Tambahkan impor Pydantic
+from app.services.history.rag_history_service import RAGHistoryService
 
 from app.database.models import (
     RAGHistory,
@@ -116,17 +117,16 @@ def _serialize_process(item: RAGProcess) -> dict:
 
 @router.get("/")
 def get_all_history(db: Session = Depends(get_db)):
-    histories = (
-        db.query(RAGProcess)
-        .order_by(RAGProcess.created_at.desc())
-        .all()
-    )
+    histories = db.query(RAGProcess).order_by(RAGProcess.created_at.desc()).all()
     results = [_serialize_process(h) for h in histories]
-    return {
-            "status": "success",
-            "total": len(results),
-            "data": results
-        }
+    return {"status": "success", "total": len(results), "data": results}
+
+@router.get("/{history_id}")
+def get_history_detail(history_id: int, db: Session = Depends(get_db)):
+    process = db.query(RAGProcess).filter(RAGProcess.id == history_id).first()
+    if not process:
+        raise HTTPException(404, "History tidak ditemukan")
+    return {"status": "success", "data": _serialize_process(process)}
 
 
 # =========================================================
@@ -134,30 +134,48 @@ def get_all_history(db: Session = Depends(get_db)):
 # =========================================================
 @router.get("/{history_id}")
 def get_history_detail(history_id: int, db: Session = Depends(get_db)):
-    history = (
-        db.query(RAGHistory)
-        .filter(RAGHistory.id == history_id)
+    # Gunakan RAGProcess, bukan RAGHistory (meskipun alias, lebih eksplisit)
+    from app.database.models import RAGProcess, RAGSession, RAGASEvaluation
+    
+    process = db.query(RAGProcess).filter(RAGProcess.id == history_id).first()
+    if not process:
+        raise HTTPException(status_code=404, detail="History tidak ditemukan")
+    
+    # Ambil session terkait
+    session = process.session  # relasi sudah ada
+    
+    # Ambil evaluasi terbaru (opsional)
+    latest_eval = (
+        db.query(RAGASEvaluation)
+        .filter(RAGASEvaluation.process_id == process.id)
+        .order_by(RAGASEvaluation.id.desc())
         .first()
     )
-
-    if not history:
-        raise HTTPException(
-            status_code=404, 
-            detail="History tidak ditemukan"
-        )
     
     return {
         "status": "success",
         "data": {
-            "id": history.id,
-            "raw_transcribe": history.raw_transcribe,
-            "repaired_text": history.repaired_text,
-            "search_query": history.search_query,
-            "retrieved_context": history.retrieved_context,
-            "generated_material": history.generated_material,
-            "compliance_score": history.compliance_score,
-            "decision_status": history.decision_status,
-            "created_at": history.created_at
+            "id": process.id,
+            "session_id": process.session_id,
+            "session_title": session.session_title if session else None,
+            "knowledge_base": session.knowledge_base if session else None,
+            "provider": session.provider if session else None,
+            "raw_transcribe": process.raw_transcribe,
+            "repaired_text": process.repaired_text,
+            "search_query": process.search_query,
+            "retrieved_context": process.retrieved_context,
+            "generated_material": process.generated_material,  # bisa di-parse JSON jika perlu
+            "compliance_score": process.compliance_score,
+            "decision_status": process.decision_status,
+            "created_at": process.created_at,
+            "evaluation": {
+                "faithfulness": latest_eval.faithfulness if latest_eval else None,
+                "answer_relevancy": latest_eval.answer_relevancy if latest_eval else None,
+                "context_precision": latest_eval.context_precision if latest_eval else None,
+                "context_recall": latest_eval.context_recall if latest_eval else None,
+                "overall_score": latest_eval.overall_score if latest_eval else None,
+                "status": latest_eval.status if latest_eval else None,
+            } if latest_eval else None,
         }
     }
 
@@ -193,32 +211,4 @@ def delete_history(history_id: int, db: Session = Depends(get_db)):
     return {
         "status": "success",
         "message": f"History dengan id {history_id} berhasil dihapus",
-    }
-
-# ── UPDATE TITLE ────────────────────────────────────────────────────────────────
-
-@router.put("/{history_id}/title")
-def update_history_title(
-    history_id: int,
-    request: UpdateHistoryTitleRequest,
-    db: Session = Depends(get_db),
-):
-    # 💡 Pastikan RAGHistoryService sudah di-import di atas, atau ganti dengan logika DB langsung jika service belum siap
-    success = RAGHistoryService.update_title(
-        db=db,
-        history_id=history_id,
-        session_title=request.session_title,
-    )
-
-    if not success:
-        raise HTTPException(
-            status_code=404,
-            detail="History tidak ditemukan atau gagal memperbarui judul"
-        )
-    
-    # 💡 Baris db.delete(history) yang salah di sini sudah dihapus
-
-    return {
-        "status": "success",
-        "message": f"Judul history dengan id {history_id} berhasil diperbarui"
     }

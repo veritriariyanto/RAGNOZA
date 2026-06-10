@@ -39,6 +39,16 @@ class RAGHistoryService:
         db.add(session)
         db.flush()
         return session
+    
+    @staticmethod
+    def update_title(db: Session, history_id: int, session_title: str) -> bool:
+        process = db.query(RAGProcess).filter(RAGProcess.id == history_id).first()
+        if not process: return False
+        session = db.query(RAGSession).filter(RAGSession.id == process.session_id).first()
+        if not session: return False
+        session.session_title = session_title.strip()
+        db.commit()
+        return True
 
     @staticmethod
     def save_history(
