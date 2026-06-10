@@ -10,7 +10,7 @@
 
 import os
 import logging
-
+import json
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -119,10 +119,22 @@ async def evaluate_ragas_auto_2metrics(
     db: Session = Depends(get_db),
 ):
     """Auto eval: terima MaterialResponse, ekstrak segmen, kirim ke evaluator."""
+    
+    # --- PROSES VALIDASI & PARSING YANG DISESUAIKAN ---
     try:
-        material = MaterialResponse.model_validate(payload.material)
+        raw_material = payload.material
+        
+        # Jika frontend mengirimkan dalam bentuk string JSON, ubah dulu menjadi dict
+        if isinstance(raw_material, str):
+            raw_material = json.loads(raw_material)
+            
+        material = MaterialResponse.model_validate(raw_material)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Gagal parse MaterialResponse: {exc}")
+        raise HTTPException(
+            status_code=422, 
+            detail=f"Gagal parse MaterialResponse. Pastikan format valid: {exc}"
+        )
+    # --------------------------------------------------
 
     evaluator_payload = _build_payload_from_material(
         question=payload.question,
