@@ -78,18 +78,17 @@ def build_output_instructions(intent: str) -> str:
         )
 
     instructions += (
-        # PERBAIKAN TIMELINE: Izinkan ekstraksi dari skenario maupun pasal pidana
         "5. TIMELINE EXTRACTION: Ekstrak semua elemen kronologi waktu, tanggal kejadian yang "
         "disebutkan oleh pengguna di dalam skenario, ATAU batasan waktu/durasi hukuman pidana "
         "(contoh: 'paling lama 6 tahun', 'tanggal 1 Juni') yang terdapat di dalam teks dokumen "
         "maupun skenario. WAJIB diisi jika ada informasi waktu sekecil apa pun.\n"
         
-        "6. COMPARISON: Jika di dalam konteks terdapat beberapa ayat/pasal berbeda, atau "
-        "pengguna menanyakan perbandingan/pengandaian dampak hukum, LAKUKAN komparasi objektif. "
-        "Bandingkan perbedaan unsur perbuatan atau perbedaan sanksi hukuman antar pasal/ayat tersebut "
-        "(contoh: membandingkan dampak Pasal 5 ayat 1 dengan Pasal 5 ayat 2). Jangan biarkan kosong "
-        "jika referensi hukum menyediakan lebih dari satu ayat.\n"
-        
+        "6. COMPARISON: Blok ini WAJIB DIISI dan TIDAK BOLEH KOSONG jika: (a) Pengguna meminta "
+        "perbandingan/perbedaan/pengandaian secara eksplisit, ATAU (b) Terdapat lebih dari satu ayat/pasal "
+        "di dalam Konteks Dokumen Hukum yang saling berkaitan. "
+        "Lakukan komparasi objek secara terstruktur yang membandingkan perbedaan unsur perbuatan, "
+        "kondisi prasyarat, dampak, atau sanksi pidana antar pasal/ayat tersebut (contoh: bandingkan Pasal 5 ayat 1 "
+        "tentang pemindahan data biasa dengan Pasal 5 ayat 2 tentang pemindahan data yang merugikan perbankan).\n"
         
         "7. Gunakan nilai default atau array kosong [] HANYA jika benar-benar tidak ada data "
         "hukum maupun skenario yang berkaitan sama sekali.\n"
@@ -131,11 +130,11 @@ class MaterialGeneratorService:
             "'Konteks teks Dokumen Hukum' yang diberikan. Jangan berasumsi, "
             "menyimpulkan nama Undang-Undang (seperti KUHP/UU ITE), atau mengarang "
             "nomor pasal/ayat jika tidak tertulis eksplisit di dalam konteks.\n"
-            "2. FLEXIBLE COMPARISON ON CONTEXT: Pada blok Comparison, Anda DIWAJIBKAN "
-            "membandingkan ayat atau pasal yang tercantum di dalam konteks jika pengguna "
-            "menanyakan perbandingan, dampak alternatif, atau pengandaian situasi. "
-            "Melakukan komparasi antar ayat yang ada di teks referensi BUKANLAH halusinasi. "
-            "Anda hanya dilarang keras mengarang nomor pasal di luar teks referensi.\n"
+           "2. MANDATORY COMPARISON ON CONTEXT: Pada blok Comparison, Anda DIWAJIBKAN "
+            "menyusun analisis komparatif apabila teks referensi menyediakan lebih dari satu ayat/pasal "
+            "atau jika pengguna menanyakan perbedaan dampak/situasi. Menyimpulkan perbedaan sanksi "
+            "(misal: 5 tahun vs 8 tahun) atau perbedaan dampak (biasa vs sistem perbankan) berdasarkan "
+            "teks yang tersedia adalah tugas utama Anda dan BUKANLAH halusinasi.\n"
             "3. ACCURATE CLAUSE MAPPING: Pastikan teks kutipan (excerpt) benar-benar "
             "cocok dengan pasal/ayat aslinya. Jangan mencampuradukkan isi ayat satu "
             "dengan ayat lainnya.\n"
