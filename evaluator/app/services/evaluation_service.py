@@ -35,64 +35,8 @@ logger = logging.getLogger(__name__)
 
 _eval_semaphore = asyncio.Semaphore(1)
 
-
-def _compute_coverage(
-    faithfulness=None,
-    answer_relevancy=None,
-    context_precision=None,
-    context_recall=None,
-    risk_faithfulness=None,
-) -> float:
-    metrics = [
-        faithfulness,
-        answer_relevancy,
-        context_precision,
-        context_recall,
-        risk_faithfulness,
-    ]
-
-    available = sum(m is not None for m in metrics)
-
-    return round(available / len(metrics), 4)
-
 def _safe_round(val) -> Optional[float]:
     return round(float(val), 4) if val is not None else None
-
-def _weighted_overall(
-    faithfulness=None,
-    answer_relevancy=None,
-    context_precision=None,
-    context_recall=None,
-    risk_faithfulness=None,
-):
-    weights = {
-        "faithfulness": 0.40,
-        "answer_relevancy": 0.25,
-        "risk_faithfulness": 0.20,
-        "context_precision": 0.10,
-        "context_recall": 0.05,
-    }
-
-    scores = {
-        "faithfulness": faithfulness,
-        "answer_relevancy": answer_relevancy,
-        "risk_faithfulness": risk_faithfulness,
-        "context_precision": context_precision,
-        "context_recall": context_recall,
-    }
-
-    weighted_sum = 0
-    total_weight = 0
-
-    for key, score in scores.items():
-        if score is not None:
-            weighted_sum += score * weights[key]
-            total_weight += weights[key]
-
-    if total_weight == 0:
-        return 0.0
-
-    return round(weighted_sum / total_weight, 4)
 
 class EvaluationService:
 
@@ -301,30 +245,13 @@ class EvaluationService:
         c  = _safe_round(context_recall_score)
         rf = _safe_round(risk_faithfulness_score)
 
-        overall = _weighted_overall(
-            faithfulness=f,
-            answer_relevancy=r,
-            context_precision=p,
-            context_recall=c,
-            risk_faithfulness=rf,
-        )
-        coverage = _compute_coverage(
-            faithfulness=f,
-            answer_relevancy=r,
-            context_precision=p,
-            context_recall=c,
-            risk_faithfulness=rf,
-        )
-
         logger.info(
             "[EvalService:%s][full] faith=%.4f | rel=%.4f | risk_faith=%.4f | "
-            "prec=%s | rec=%s | overall=%s | cov=%.0f%%",
+            "prec=%s | rec=%s",
             source_label,
             f or 0, r or 0, rf or 0,
             f"{p:.4f}" if p else "N/A",
             f"{c:.4f}" if c else "N/A",
-            f"{overall:.4f}" if overall else "N/A",
-            (coverage * 100),
         )
 
         return EvaluationResponse(
@@ -335,9 +262,7 @@ class EvaluationService:
                 context_precision=p,
                 context_recall=c,
                 risk_faithfulness=rf,
-                overall_score=overall,
                 answer_faithfulness_segment=evaluated_segments,
-                coverage_pct=coverage,
             ),
             input=input_payload,
         )
@@ -395,30 +320,13 @@ class EvaluationService:
         r  = _safe_round(existing_answer_relevancy)
         rf = _safe_round(existing_risk_faithfulness)
 
-        # Overall dihitung ulang dari SEMUA metrik yang tersedia (merged)
-        overall = _weighted_overall(
-            faithfulness=f,
-            answer_relevancy=r,
-            context_precision=p,
-            context_recall=c,
-            risk_faithfulness=rf,
-        )
-
         merged_segments = list(set(existing_segments + ["qa"]))
-        coverage = _compute_coverage(
-            faithfulness=f,
-            answer_relevancy=r,
-            context_precision=p,
-            context_recall=c,
-            risk_faithfulness=rf,
-        )
 
         logger.info(
             "[EvalService:%s][reeval] prec=%.4f | rec=%.4f | "
-            "overall_merged=%.4f | (faith/rel/risk dari existing)",
+            "(faith/rel/risk dari existing)",
             source_label,
             p or 0, c or 0,
-            overall or 0,
         )
 
         return EvaluationResponse(
@@ -429,9 +337,7 @@ class EvaluationService:
                 context_precision=p,
                 context_recall=c,
                 risk_faithfulness=rf,
-                overall_score=overall,
                 answer_faithfulness_segment=merged_segments,
-                coverage_pct=coverage,
             ),
             input=input_payload,
         )

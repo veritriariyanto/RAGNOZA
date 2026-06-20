@@ -44,7 +44,6 @@ class EvaluationMetrics(BaseModel):
     PERUBAHAN:
         + risk_faithfulness   : faithfulness khusus segmen Risk Review (FIX #2)
         + answer_faithfulness_segment  : daftar segmen yang benar-benar dievaluasi
-        + coverage_pct        : persentase fitur yang dievaluasi (dari 7 fitur total)
     """
     # Metrik existing
     faithfulness: Optional[float] = Field(
@@ -70,22 +69,10 @@ class EvaluationMetrics(BaseModel):
         ),
     )
 
-    # Metadata Skor Akhir & Cakupan Fitur
-    overall_score: Optional[float] = Field(
-        None, description="Rata-rata semua metrik yang tersedia (berdasarkan bobot)"
-    )
     # default_factory=list digunakan agar jika datanya kosong, otomatis terbuat array kosong [] bukan None
     answer_faithfulness_segment: List[str] = Field(
         default_factory=list,
         description="Segmen yang dievaluasi, misal: ['summary', 'qa', 'risk']",
-    )
-    coverage_pct: Optional[float] = Field(
-        None,
-        description=(
-            "Persentase fitur yang dievaluasi dari 7 fitur total "
-            "(Summary, ClauseSearch, LegalQA, RiskReview, Timeline, Comparison, Referensi). "
-            "Nilai 1.0 = semua fitur dievaluasi."
-        ),
     )
 
 

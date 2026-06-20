@@ -1,4 +1,4 @@
-# app/routes/evaluasi/evaluation_router.py
+# app/routes/evaluation/evaluation_router.py
 #
 # FIX #3: tambah endpoint /ragas-reeval
 #   - Dipanggil ketika user input ground_truth di Streamlit
@@ -8,61 +8,25 @@
 #
 # Tiga path tetap terisolasi — tidak ada yang memanggil satu sama lain.
 
-import os
 import logging
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.postgres import get_db
-from app.schemas.evaluasi.evaluation_schemas import (
+from app.schemas.evaluation.evaluation_schemas import (   # ← fix: folder baru
     MaterialEvaluationRequest,
     ReevalRequest,
     EvaluationResponse,
 )
 from app.schemas.prompting.generate_content import MaterialResponse
 from app.services.evaluation.formatter import material_to_text, extract_segments_for_ragas
-from app.services.history.rag_history_service import RAGHistoryService
+from app.services.evaluation.evaluation_client import call_evaluator  # ← reuse, hapus duplikasi
+from app.services.history.history_service import HistoryService        # ← fix: class baru
+from app.services.history.process_query_service import ProcessQueryService
 
 logger = logging.getLogger(__name__)
-ragas_router = APIRouter(tags=["Evaluation"])
-
-EVALUATOR_BASE_URL = os.getenv("EVALUATOR_URL", "http://localhost:8001")
-EVALUATOR_ENDPOINT = f"{EVALUATOR_BASE_URL}/api/v1/evaluate"
-EVALUATOR_TIMEOUT = float(os.getenv("EVALUATOR_TIMEOUT_SECONDS", "900"))
-
-# =============================================================================
-# SHARED: forward ke evaluator :8001
-# =============================================================================
-
-async def _forward_to_evaluator(payload: dict) -> dict:
-    """
-    Fungsi Asinkron (Asynchronous) untuk meneruskan data payload evaluasi 
-    ke microservice Evaluator eksternal yang berjalan di port :8001.
-
-    Args:
-        payload (dict): Data teks dan metrik yang siap dinilai oleh RAGAS.
-
-    Returns:
-        dict: Hasil skor evaluasi yang dikembalikan oleh service Evaluator.
-
-    Raises:
-        HTTPException 503: Jika service Evaluator mati/tidak bisa dihubungi.
-        HTTPException 504: Jika Evaluator tidak merespons hingga batas waktu timeout.
-        HTTPException 502: Jika Evaluator merespons namun mengembalikan error status (e.g., 400, 500).
-    """
-    try:
-        async with httpx.AsyncClient(timeout=EVALUATOR_TIMEOUT) as client:
-            response = await client.post(EVALUATOR_ENDPOINT, json=payload)
-            response.raise_for_status()
-            return response.json()
-    except httpx.ConnectError:
-        raise HTTPException(status_code=503, detail="Evaluator service tidak dapat dijangkau.")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail=f"Evaluator timeout setelah {EVALUATOR_TIMEOUT}s.")
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=502, detail=f"Evaluator error: {exc.response.text}")
+router = APIRouter(tags=["Evaluation"])
 
 def _build_payload_from_material(
     question: str, 
@@ -113,7 +77,7 @@ def _build_payload_from_material(
 # ENDPOINT 1: /ragas-auto-2metriks — Path A (auto eval dari Streamlit)
 # =============================================================================
 
-@ragas_router.post("/ragas-auto-2metriks", response_model=EvaluationResponse)
+@router.post("/ragas-auto-2metriks", response_model=EvaluationResponse)
 async def evaluate_ragas_auto_2metrics(
     payload: MaterialEvaluationRequest,
     db: Session = Depends(get_db),
@@ -132,13 +96,13 @@ async def evaluate_ragas_auto_2metrics(
         source_label=payload.source_label or "frontend_eval",
     )
 
-    result = await _forward_to_evaluator(evaluator_payload)
+    result = await call_evaluator(evaluator_payload, source_label="frontend_eval")  # ← reuse
 
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=f"Evaluasi gagal: {result.get('error')}")
 
     if payload.history_id is not None:
-        RAGHistoryService.update_ragas(db=db, history_id=payload.history_id, ragas_result=result)
+        HistoryService.update_ragas(db=db, history_id=payload.history_id, ragas_result=result)
 
     return result
 
@@ -146,7 +110,7 @@ async def evaluate_ragas_auto_2metrics(
 # ENDPOINT 2: /ragas-ground-truth — Path B (user input ground truth)
 # =============================================================================
 
-@ragas_router.post("/ragas-ground-truth", response_model=EvaluationResponse, summary="Re-evaluasi dengan ground truth (hanya precision + recall)",description=
+@router.post("/ragas-ground-truth", response_model=EvaluationResponse, summary="Re-evaluasi dengan ground truth (hanya precision + recall)",description=
     """
     Dipanggil ketika user mengisi ground_truth setelah auto eval selesai.
 
@@ -173,7 +137,7 @@ async def evaluate_ragas_reeval(
         )
 
     # Ambil existing metrics dari DB
-    existing = RAGHistoryService.get_ragas_metrics(db=db, history_id=payload.history_id)
+    existing = ProcessQueryService.get_ragas_metrics(db=db, history_id=payload.history_id)
     if not existing:
         raise HTTPException(
             status_code=404,
@@ -185,9 +149,12 @@ async def evaluate_ragas_reeval(
 
     # Ambil answer_qa dari DB jika tidak dikirim ulang
     # (frontend tidak perlu kirim ulang semua data, cukup question+context+GT)
-    history_data = RAGHistoryService.get_by_id(db=db, history_id=payload.history_id)
+    history_data = ProcessQueryService.get_by_id(db=db, history_id=payload.history_id)
+
     if not history_data:
         raise HTTPException(status_code=404, detail=f"History {payload.history_id} tidak ditemukan.")
+
+    existing_metrics = existing.get("metrics", {}) or {}
 
     evaluator_payload = {
         "question": payload.question or history_data.question,
@@ -203,24 +170,21 @@ async def evaluate_ragas_reeval(
         "existing_faithfulness":       existing_metrics.get("faithfulness"),
         "existing_answer_relevancy":   existing_metrics.get("answer_relevancy"),
         "existing_risk_faithfulness":  existing_metrics.get("risk_faithfulness"),
-        "existing_overall":            existing_metrics.get("overall_score"),
         "existing_segments":           existing_metrics.get("evaluated_segments", []),
     }
 
-    result = await _forward_to_evaluator(evaluator_payload)
-
+    result = await call_evaluator(evaluator_payload, source_label="reeval_ground_truth")  # ← reuse
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=f"Re-evaluasi gagal: {result.get('error')}")
 
-    # Update DB dengan metrik merged (overwrite seluruh ragas_metrics)
-    RAGHistoryService.update_ragas(db=db, history_id=payload.history_id, ragas_result=result)
+    HistoryService.update_ragas(                    # ← fix: class baru
+        db=db, history_id=payload.history_id, ragas_result=result
+    )
 
     logger.info(
-        "[Router] Re-evaluasi selesai history_id=%s | prec=%s | rec=%s | overall=%s",
+        "[EvalRouter] Re-eval selesai history_id=%s | prec=%s | rec=%s",
         payload.history_id,
         result.get("metrics", {}).get("context_precision"),
         result.get("metrics", {}).get("context_recall"),
-        result.get("metrics", {}).get("overall_score"),
     )
-
     return result

@@ -10,7 +10,7 @@ Perubahan dari versi lama:
 from fastapi import APIRouter, BackgroundTasks, HTTPException, status
 
 from app.schemas.prompting.generate_content import MaterialRequest, MaterialResponse
-from app.services.evaluation.auto_evaluation_hook import trigger_auto_evaluation
+from app.services.evaluation.evaluation_hook import trigger_auto_evaluation
 from app.services.evaluation.formatter import material_to_text
 from app.services.prompting.prompt.generate_content_service import material_service
 

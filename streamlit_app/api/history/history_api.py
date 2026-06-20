@@ -30,7 +30,6 @@ def get_all_history() -> dict:
         logger.error("[HistoryAPI] get_all_history exception: %s", e)
         return {}
 
-
 def get_history_detail(history_id: int) -> dict:
     try:
         resp = requests.get(

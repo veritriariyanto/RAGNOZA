@@ -11,12 +11,10 @@ from app.database.models.rag_process import RAGProcess
 from app.database.models.rag_session import RAGSession
 from app.database.models.ragas_evaluation import RAGASEvaluation
 from app.schemas.history.update_title_request import UpdateHistoryTitleRequest
-from app.services.history.rag_history_service import RAGHistoryService
-
+from app.services.history.session_service import SessionService 
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
 
 # =============================================================================
 # HELPER FUNCTIONS (Fungsi Pembantu Internal)
@@ -54,7 +52,6 @@ def _serialize_evaluation(item: RAGASEvaluation) -> dict:
         "context_recall": item.context_recall,
 
         "risk_faithfulness": item.risk_faithfulness,
-        "coverage_pct": item.coverage_pct,
 
         # Bagian teks segmen yang dievaluasi (di-parse dari string JSON ke list/dict)
         "evaluated_segments": (
@@ -62,8 +59,6 @@ def _serialize_evaluation(item: RAGASEvaluation) -> dict:
             if item.evaluated_segments
             else []
         ),
-
-        "overall_score": item.overall_score,
 
         "status": item.status,
         "created_at": item.created_at,
@@ -98,14 +93,12 @@ def _serialize_process(item: RAGProcess) -> dict:
             "context_recall": latest_eval.context_recall,
 
             "risk_faithfulness": latest_eval.risk_faithfulness,
-            "coverage_pct": latest_eval.coverage_pct,
             "evaluated_segments": (
                 json.loads(latest_eval.evaluated_segments)
                 if latest_eval.evaluated_segments
                 else []
             ),
 
-            "overall_score": latest_eval.overall_score,
 }
 
     # Mengembalikan struktur data gabungan akhir antara data RAG dan data Evaluasi RAGAS
@@ -228,7 +221,7 @@ def update_history_title(
     Endpoint untuk memperbarui judul dari sesi percakapan/proses RAG.
     Biasanya dipanggil saat user mengubah nama judul chat di sidebar menu Frontend.
     """
-    success = RAGHistoryService.update_title(
+    success = SessionService.update_title(
         db=db,
         history_id=history_id,
         session_title=request.session_title,
