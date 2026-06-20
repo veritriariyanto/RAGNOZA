@@ -58,9 +58,7 @@ class EvaluationMetrics(BaseModel):
     context_precision: Optional[float] = None
     context_recall: Optional[float] = None
     risk_faithfulness: Optional[float] = None
-    overall_score: Optional[float] = None
     answer_faithfulness_segment: List[str] = Field(default_factory=list)
-    coverage_pct: Optional[float] = None
 
 
 class EvaluationInput(BaseModel):

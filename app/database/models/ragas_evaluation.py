@@ -45,11 +45,7 @@ class RAGASEvaluation(Base):
 
     risk_faithfulness = Column(Float, nullable=True)
 
-    coverage_pct = Column(Float, nullable=True)
-
     evaluated_segments = Column(JSON, nullable=True)
-
-    overall_score = Column(Float, nullable=True)
 
     status = Column(String, nullable=True)
 

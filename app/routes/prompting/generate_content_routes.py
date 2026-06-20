@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.postgres import get_db
 from app.schemas.prompting.generate_content import MaterialRequest, MaterialResponse
-from app.services.evaluation.auto_evaluation_hook import trigger_auto_evaluation
+from app.services.evaluation.evaluation_hook import trigger_auto_evaluation
 from app.services.evaluation.formatter import material_to_text
 from app.services.prompting.prompt.generate_content_service import material_service
 from app.services.history.rag_history_service import RAGHistoryService

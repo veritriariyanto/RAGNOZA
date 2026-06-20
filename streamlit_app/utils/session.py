@@ -49,7 +49,7 @@ def init_session_state():
         # {
         #   "status": "success" | "error",
         #   "metrics": { faithfulness, answer_relevancy, context_precision,
-        #                context_recall, overall_score },
+        #                context_recall, },
         #   "error": str | None,
         #   "timestamp": str,
         # }

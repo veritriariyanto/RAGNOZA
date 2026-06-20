@@ -11,11 +11,13 @@ Kenapa tidak ekstraksi di sini:
     Jika schema MaterialResponse berubah, hanya backend yang perlu diupdate.
 """
 
+import logging
 import requests
 from config.settings import settings
 
-EVALUATION_URL = settings.API_BASE_URL
+logger = logging.getLogger(__name__)
 
+EVALUATION_URL = settings.API_BASE_URL
 
 def run_ragas_evaluation(
     question: str,
@@ -53,8 +55,10 @@ def run_ragas_evaluation(
         if history_id is not None:
             payload["history_id"] = history_id
 
-        print(f"[RAGAS API] Mengirim ke {EVALUATION_URL}/evaluation/ragas-auto-2metriks")
-        print(f"[RAGAS API] context length: {len(context)}")
+        logger.info(
+            "[EvalAPI] POST ragas-auto-2metriks | ctx=%d chars | history_id=%s",
+            len(context), history_id,
+        )
 
         response = requests.post(
             f"{EVALUATION_URL}/evaluation/ragas-auto-2metriks",
@@ -62,7 +66,7 @@ def run_ragas_evaluation(
             timeout=900,
         )
 
-        print(f"[RAGAS API] Response status: {response.status_code}")
+        logger.info("[EvalAPI] Response status: %d", response.status_code)
 
         if response.status_code == 200:
             return response.json()
@@ -92,8 +96,9 @@ def run_ragas_evaluation(
             "input": {},
             "error": "Evaluasi timeout — RAGAS membutuhkan waktu lebih lama dari biasanya.",
         }
-    except Exception as e:
-        return {"status": "error", "metrics": None, "input": {}, "error": str(e)}
+    except Exception as exc:
+        logger.error("[EvalAPI] Exception: %s", exc, exc_info=True)
+        return {"status": "error", "metrics": None, "input": {}, "error": str(exc)}
 
 def run_ragas_reeval(
     ground_truth: str,
@@ -114,6 +119,10 @@ def run_ragas_reeval(
             payload["question"] = question
         if context:
             payload["context"] = context
+
+        logger.info(
+            "[EvalAPI] POST ragas-ground-truth | history_id=%s", history_id
+        )
 
         response = requests.post(
             f"{EVALUATION_URL}/evaluation/ragas-ground-truth",
@@ -141,5 +150,6 @@ def run_ragas_reeval(
     except requests.exceptions.Timeout:
         return {"status": "error", "metrics": None, "input": {},
                 "error": "Re-evaluasi timeout."}
-    except Exception as e:
-        return {"status": "error", "metrics": None, "input": {}, "error": str(e)}
+    except Exception as exc:
+        logger.error("[EvalAPI] Reeval exception: %s", exc, exc_info=True)
+        return {"status": "error", "metrics": None, "input": {}, "error": str(exc)}

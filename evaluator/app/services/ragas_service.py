@@ -89,6 +89,28 @@ class RagasService:
                 data.get("ground_truth", [None])[0] is not None,
                 len(data.get("answer", [""])[0]),
             )
+
+            logger.info("========== RAGAS DEBUG ==========")
+
+            logger.info("QUESTION:\n%s", data["question"][0])
+
+            logger.info("ANSWER:\n%s", data["answer"][0][:500])
+
+            if data.get("ground_truth"):
+                logger.info(
+                    "GROUND TRUTH:\n%s",
+                    data["ground_truth"][0][:2000]
+                )
+
+            for idx, chunk in enumerate(data["contexts"][0]):
+                logger.info(
+                    "CHUNK[%d]:\n%s",
+                    idx,
+                    chunk[:1000]
+                )
+
+            logger.info("=================================")
+
             dataset = Dataset.from_dict(data)
             result = evaluate(
                 dataset=dataset,
@@ -101,6 +123,11 @@ class RagasService:
                     timeout=500,
                 ),
             )
+            logger.info(
+                "[RAGAS RESULT]\n%s",
+                result.to_pandas().to_dict(orient="records")
+            )
+            
             return result
         finally:
             loop.close()

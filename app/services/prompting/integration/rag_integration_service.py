@@ -25,8 +25,9 @@ from app.schemas.prompting.generate_content import MaterialRequest
 from app.schemas.prompting.integration import RAGIntegrationResponse
 
 from sqlalchemy.orm import Session
-from app.services.history.rag_history_service import RAGHistoryService
-from app.services.evaluation.auto_evaluation_hook import trigger_auto_evaluation
+from app.services.evaluation.formatter import material_to_text
+from app.services.history.session_service import SessionService              # ← fix import
+from app.services.evaluation.evaluation_hook import trigger_auto_evaluation
 
 logger = logging.getLogger(__name__)
 
@@ -96,10 +97,8 @@ class RAGIntegrationService:
             # DEBUG: lihat struktur hasil Qdrant
             if kb_results.get("results"):
                 first = kb_results["results"][0]
-                print(f"[QDRANT DEBUG] child keys: {list(first.get('child', {}).keys())}")
-                print(f"[QDRANT DEBUG] parent keys: {list(first.get('parent', {}).keys())}")
-                print(f"[QDRANT DEBUG] child full: {first.get('child', {})}")
-                print(f"[QDRANT DEBUG] parent full: {first.get('parent', {})}")
+                logger.debug("[RAGIntegration] Qdrant sample child keys: %s", list(first.get("child", {}).keys()))
+                logger.debug("[RAGIntegration] Qdrant sample parent keys: %s", list(first.get("parent", {}).keys()))
 
             # ── Tahap 4: Ekstraksi Konteks ────────────────────────────────────
             contexts = []
@@ -154,14 +153,15 @@ class RAGIntegrationService:
                 )
 
                 # ── Tahap 6: Simpan History ───────────────────────────────────
-                # Tentukan session_title
-                if session_id is None:
-                    session_title = f"Audio Session {datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                else:
-                    session_title = f"Session {session_id}"
-
-                # Simpan history dan ambil history_id yang dikembalikan
-                history_id = RAGHistoryService.save_history(
+                # Tahap 6: Simpan History — simpan dulu, ambil id-nya
+                session_title = (
+                    repaired_text[:80]
+                    if repaired_text
+                    else raw_transcribe[:80]
+                    if raw_transcribe
+                    else "Session Tanpa Judul"
+                )
+                saved_history = SessionService.save_history(
                     db=self.db,
                     session_id=session_id,
                     session_title=session_title,
