@@ -9,6 +9,7 @@
 # Tiga path tetap terisolasi — tidak ada yang memanggil satu sama lain.
 
 import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -82,22 +83,10 @@ async def evaluate_ragas_auto_2metrics(
     db: Session = Depends(get_db),
 ):
     """Auto eval: terima MaterialResponse, ekstrak segmen, kirim ke evaluator."""
-    
-    # --- PROSES VALIDASI & PARSING YANG DISESUAIKAN ---
     try:
-        raw_material = payload.material
-        
-        # Jika frontend mengirimkan dalam bentuk string JSON, ubah dulu menjadi dict
-        if isinstance(raw_material, str):
-            raw_material = json.loads(raw_material)
-            
-        material = MaterialResponse.model_validate(raw_material)
+        material = MaterialResponse.model_validate(payload.material)
     except Exception as exc:
-        raise HTTPException(
-            status_code=422, 
-            detail=f"Gagal parse MaterialResponse. Pastikan format valid: {exc}"
-        )
-    # --------------------------------------------------
+        raise HTTPException(status_code=422, detail=f"Gagal parse MaterialResponse: {exc}")
 
     evaluator_payload = _build_payload_from_material(
         question=payload.question,

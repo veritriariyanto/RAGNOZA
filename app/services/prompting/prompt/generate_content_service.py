@@ -52,7 +52,7 @@ def classify_intent(scenario: str) -> str:
 def build_output_instructions(intent: str) -> str:
     """
     Membangun instruksi output yang disesuaikan dengan intent query.
-    Disesuaikan agar LLM tidak over-compliant dan mengosongkan blok penting.
+    Intent 'informatif' menonaktifkan Risk Review agar tidak menyesatkan pengguna.
     """
     instructions = (
         "Instruksi Output (ikuti sesuai urutan dan tipe query):\n"
@@ -60,41 +60,42 @@ def build_output_instructions(intent: str) -> str:
         "pengguna. Lanjutkan dengan ringkasan konteks hukum pendukung secara presisi, "
         "poin-poin penting, dan kesimpulan singkat.\n"
         "2. CLAUSE SEARCH: Petakan pasal/ayat yang paling relevan dengan pertanyaan. "
-        "Teks excerpt WAJIB menyalin verbatim dari konteks tanpa diubah atau dicampur.\n"
+        "Teks excerpt WAJIB menyalin verbatim dari konteks tanpa diubah atau dicampur "
+        "dengan ayat lain.\n"
         "3. LEGAL Q&A: Jawab HANYA pertanyaan yang secara eksplisit diajukan pengguna. "
+        "DILARANG mengarang pertanyaan turunan yang tidak diminta. "
         "Jumlah Q&A maksimal 1-2 pasang, berbasis konteks.\n"
     )
 
     if intent == "konsultasi":
         instructions += (
-            "4. RISK REVIEW: Isi dengan skor risiko (0-100) di mana semakin melanggar hukum "
-            "skornya semakin rendah mendekati 0. Isi analisis risiko tindakan, "
-            "daftar risiko potensial, langkah mitigasi konkret, dan rekomendasi.\n"
+            "4. RISK REVIEW: Karena query bersifat konsultasi tindakan, isi Risk Review "
+            "dengan skor risiko (0-100), analisis risiko tindakan yang dideskripsikan "
+            "pengguna, langkah mitigasi, dan rekomendasi konkret.\n"
         )
     else:
+        # intent == "informatif"
         instructions += (
-            "4. RISK REVIEW: Kosongkan Risk Review — isi status dengan '-', skor dengan 0, "
-            "dan semua field lainnya dengan nilai default.\n"
+            "4. RISK REVIEW: Query bersifat informatif (bukan konsultasi tindakan). "
+            "KOSONGKAN Risk Review — isi status dengan '-', skor dengan 0, dan semua "
+            "field lainnya dengan nilai default. DILARANG memberikan skor risiko atas "
+            "pertanyaan yang bersifat edukatif.\n"
         )
 
     instructions += (
-        "5. TIMELINE EXTRACTION: Ekstrak semua elemen kronologi waktu, tanggal kejadian yang "
-        "disebutkan oleh pengguna di dalam skenario, ATAU batasan waktu/durasi hukuman pidana "
-        "(contoh: 'paling lama 6 tahun', 'tanggal 1 Juni') yang terdapat di dalam teks dokumen "
-        "maupun skenario. WAJIB diisi jika ada informasi waktu sekecil apa pun.\n"
-        
-        "6. COMPARISON: Blok ini WAJIB DIISI dan TIDAK BOLEH KOSONG jika: (a) Pengguna meminta "
-        "perbandingan/perbedaan/pengandaian secara eksplisit, ATAU (b) Terdapat lebih dari satu ayat/pasal "
-        "di dalam Konteks Dokumen Hukum yang saling berkaitan. "
-        "Lakukan komparasi objek secara terstruktur yang membandingkan perbedaan unsur perbuatan, "
-        "kondisi prasyarat, dampak, atau sanksi pidana antar pasal/ayat tersebut (contoh: bandingkan Pasal 5 ayat 1 "
-        "tentang pemindahan data biasa dengan Pasal 5 ayat 2 tentang pemindahan data yang merugikan perbankan).\n"
-        
-        "7. Gunakan nilai default atau array kosong [] HANYA jika benar-benar tidak ada data "
-        "hukum maupun skenario yang berkaitan sama sekali.\n"
+        "5. TIMELINE EXTRACTION: Ekstrak elemen waktu HANYA jika terdapat durasi, "
+        "tanggal, atau periode eksplisit di dalam konteks (contoh: '2 tahun', '4 tahun'). "
+        "Jika tidak ada elemen waktu, kosongkan dengan array [].\n"
+        "6. COMPARISON: Isi HANYA jika terdapat dua ketentuan atau lebih di dalam "
+        "konteks yang dapat diperbandingkan secara nyata. Jika tidak ada, isi dengan "
+        "array []. DILARANG mengarang pasal pembanding.\n"
+        "7. Untuk semua blok yang tidak memiliki data yang cukup, gunakan array kosong "
+        "[] atau nilai default '-' tanpa mengarang informasi di luar konteks.\n"
     )
 
     return instructions
+
+
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
@@ -130,11 +131,10 @@ class MaterialGeneratorService:
             "'Konteks teks Dokumen Hukum' yang diberikan. Jangan berasumsi, "
             "menyimpulkan nama Undang-Undang (seperti KUHP/UU ITE), atau mengarang "
             "nomor pasal/ayat jika tidak tertulis eksplisit di dalam konteks.\n"
-           "2. MANDATORY COMPARISON ON CONTEXT: Pada blok Comparison, Anda DIWAJIBKAN "
-            "menyusun analisis komparatif apabila teks referensi menyediakan lebih dari satu ayat/pasal "
-            "atau jika pengguna menanyakan perbedaan dampak/situasi. Menyimpulkan perbedaan sanksi "
-            "(misal: 5 tahun vs 8 tahun) atau perbedaan dampak (biasa vs sistem perbankan) berdasarkan "
-            "teks yang tersedia adalah tugas utama Anda dan BUKANLAH halusinasi.\n"
+            "2. NO HALLUCINATION ON COMPARISON: Pada blok Comparison, Anda HANYA boleh "
+            "membandingkan dua ketentuan yang benar-benar tertulis di dalam konteks. "
+            "Jika tidak ada elemen pembanding, isi dengan array kosong []. "
+            "DILARANG mengarang pasal pembanding.\n"
             "3. ACCURATE CLAUSE MAPPING: Pastikan teks kutipan (excerpt) benar-benar "
             "cocok dengan pasal/ayat aslinya. Jangan mencampuradukkan isi ayat satu "
             "dengan ayat lainnya.\n"

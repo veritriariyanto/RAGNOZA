@@ -1,45 +1,6 @@
-# formatter.py
+# app/services/evaluation/formatter.py
 
 from app.schemas.prompting.generate_content import MaterialResponse
-
-def extract_segments_for_ragas(text: str, max_segment_length: int = 1000) -> list[str]:
-    """
-    Memecah teks panjang menjadi segmen-segmen kecil untuk evaluasi RAGAS.
-    
-    Args:
-        text: Teks (context atau material) yang akan dievaluasi
-        max_segment_length: Panjang maksimal per segmen (karakter)
-    
-    Returns:
-        List of segmen teks
-    """
-    if not text:
-        return []
-    
-    if len(text) <= max_segment_length:
-        return [text]
-    
-    # Potong berdasarkan kalimat (., !, ?) atau newline
-    import re
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    segments = []
-    current = []
-    current_len = 0
-    
-    for sent in sentences:
-        if current_len + len(sent) <= max_segment_length:
-            current.append(sent)
-            current_len += len(sent)
-        else:
-            if current:
-                segments.append(' '.join(current))
-            current = [sent]
-            current_len = len(sent)
-    
-    if current:
-        segments.append(' '.join(current))
-    
-    return segments
 
 def material_to_text(material: MaterialResponse) -> str:
     """
@@ -122,16 +83,18 @@ def material_to_text(material: MaterialResponse) -> str:
 
 def extract_segments_for_ragas(material: MaterialResponse) -> dict:
     """
-    FUNGSI BARU: Memecah MaterialResponse menjadi segmen terpisah 
-    agar evaluasi Ragas tidak bias dan overload.
+    FUNGSI STRATEGIS (FIX #2): Memecah struktur besar MaterialResponse menjadi 3 klaster 
+    segmen teks terisolasi sesuai peruntukan metrik RAGAS-nya masing-masing.
+    
+    Tujuan utamanya: Mencegah LLM Evaluator mengalami bias, kebingungan konteks, atau
+    overload token saat membaca jawaban hukum yang terlalu panjang.
     """
 
-    # =====================================================
-    # SUMMARY
-    # =====================================================
+    # =========================================================================
+    # KLASTER 1: SUMMARY SEGMENTATION
+    # =========================================================================
 
     summary = material.summary
-
 
     # 1. Segmen Summary (Untuk Uji Halusinasi / Faithfulness)
     overview = summary.overview if (summary and summary.overview) else "-"
@@ -140,32 +103,45 @@ def extract_segments_for_ragas(material: MaterialResponse) -> dict:
     
     segment_summary = f"Overview: {overview}\nPoin Penting: {key_points}\nKesimpulan: {conclusion}"
 
-    # =====================================================
-    # CLAUSE SEARCH + LEGAL QA
-    # =====================================================
+    # =========================================================================
+    # KLASTER 2: CLAUSE SEARCH + LEGAL QA
+    # =========================================================================
+    # Ekstraksi bagian interaktif (Tanya-Jawab dan Pencarian Klausul). 
+    # Segmen ini dikelompokkan khusus untuk menguji akurasi relevansi jawaban ('answer_relevancy').
     # 2. Segmen QA & Search (Untuk Uji Relevansi Jawaban / Answer Relevancy)
     clause_search = ' | '.join([f'{item.clause_topic} => {item.article}' for item in material.clause_search]) if material.clause_search else "-"
     legal_qa = ' | '.join([f'{item.question} => {item.answer}' for item in material.legal_qa]) if material.legal_qa else "-"
     
     segment_qa = f"Clause Search: {clause_search}\nLegal Q&A: {legal_qa}"
 
-    # =====================================================
-    # RISK REVIEW
-    # =====================================================
+    # =========================================================================
+    # KLASTER 3: RISK REVIEW
+    # =========================================================================
 
     risk = material.risk_review
 
-    # 3. Segmen Risiko (Untuk Uji Penalaran Asisten / Aspect Critic / Relevancy)
-    risk_status = risk.status if (risk and risk.status) else "-"
-    risk_analysis = risk.analysis if (risk and risk.analysis) else "-"
-    risks_list = ' | '.join(str(r) for r in risk.risks) if (risk and risk.risks) else "-"
-    recommendation = risk.recommendation if (risk and risk.recommendation) else "-"
+    # Ekstraksi segmen analisis risiko hukum.
+    # Diisolasi secara ketat agar RAGAS dapat menilai 'risk_faithfulness' secara objektif 
+    # guna meminimalisir halusinasi analisis hukum (aspek paling fatal dalam sistem legal-AI)
+    risk_status   = risk.status   if (risk and risk.status)   else None
+    risk_analysis = risk.analysis if (risk and risk.analysis) else None
+    risks_list    = ' | '.join(str(r) for r in risk.risks) if (risk and risk.risks) else None
+    recommendation = risk.recommendation if (risk and risk.recommendation) else None
     
-    segment_risk = f"Status Kepatuhan: {risk_status}\nAnalisis: {risk_analysis}\nRisiko: {risks_list}\nRekomendasi: {recommendation}"
+    if all(v is None for v in [risk_status, risk_analysis, risks_list, recommendation]):
+        segment_risk = "-"
+    else:
+        segment_risk = (
+            f"Status Kepatuhan: {risk_status or '-'}\n"
+            f"Analisis: {risk_analysis or '-'}\n"
+            f"Risiko: {risks_list or '-'}\n"
+            f"Rekomendasi: {recommendation or '-'}"
+        )
 
-    # =====================================================
-    # TIMELINE
-    # =====================================================
+    # =========================================================================
+    # KLASTER PENDUKUNG METRIK FAITHFULNESS (Timeline, Comparison, References)
+    # =========================================================================
+    # Bagian-bagian ini dikonversi menjadi string datar untuk memperkuat basis pengujian kesetiaan data.
 
     segment_timeline = (
         " | ".join(
@@ -176,9 +152,9 @@ def extract_segments_for_ragas(material: MaterialResponse) -> dict:
         else "-"
     )
 
-    # =====================================================
+    # =========================================================================
     # COMPARISON
-    # =====================================================
+    # =========================================================================
 
     segment_comparison = (
         " | ".join(
@@ -202,13 +178,17 @@ def extract_segments_for_ragas(material: MaterialResponse) -> dict:
         else "-"
     )
 
+    # Menyusun gabungan teks besar (Kombinasi Klaster 1 + Data Pendukung) 
+    # khusus untuk menguji apakah seluruh klaim fakta teks ini 100% berbasis pada dokumen referensi asli.
     segment_faithfulness = "\n".join([
     segment_summary,
     f"Timeline: {segment_timeline}",
     f"Comparison: {segment_comparison}",
     f"Legal Reference: {segment_reference}"
 ])
-
+    
+    # 6. Mengembalikan output dalam bentuk objek dictionary Python.
+    # Struktur inilah yang nantinya dibaca oleh 'trigger_auto_evaluation' untuk dikirim ke port :8001
     return {
         "faithfulness": segment_faithfulness,
         "qa": segment_qa,

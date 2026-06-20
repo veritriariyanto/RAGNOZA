@@ -12,7 +12,6 @@ Struktur h (history object dari DB):
     sources_count, has_context, query_used
 """
 
-import json
 import streamlit as st
 from components.audio_controls import (
     _inject_styles,
@@ -168,13 +167,7 @@ def _render_history_content(h: dict):
 
     st.markdown('<div class="result-header">📋 Hasil Analisis Hukum</div>', unsafe_allow_html=True)
 
-    material = h.get("generate_material") or h.get("generated_material")
-    if isinstance(material, str):
-        try:
-            material = json.loads(material)
-        except json.JSONDecodeError:
-            material = {"summary": {"overview": material}}
-
+    material = h.get("generate_material")
     if material:
         _render_material(
             material=material,

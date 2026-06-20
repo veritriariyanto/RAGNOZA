@@ -1,15 +1,34 @@
+# streamlit_app/api/history/history_api.py
+
+import logging
 import requests
 from config.settings import settings
 
 BASE_URL = settings.API_BASE_URL
+logger = logging.getLogger(__name__)
 
-def get_all_history():
-    response = requests.get(f"{BASE_URL}/history/")
-    return response.json()
 
-def get_history_by_id(history_id):
-    response = requests.get(f"{BASE_URL}/history/{history_id}")
-    return response.json()
+def get_all_history() -> dict:
+    try:
+        # Coba tanpa trailing slash dulu
+        resp = requests.get(
+            f"{BASE_URL}/history",
+            timeout=10,
+            allow_redirects=True,
+        )
+        
+        # Log detail jika gagal — untuk debug
+        if resp.status_code != 200:
+            logger.error(
+                "[HistoryAPI] get_all_history gagal: status=%d | url=%s | body=%s",
+                resp.status_code, resp.url, resp.text[:300]
+            )
+            return {}
+            
+        return resp.json()
+    except Exception as e:
+        logger.error("[HistoryAPI] get_all_history exception: %s", e)
+        return {}
 
 def get_history_detail(history_id: int) -> dict:
     try:

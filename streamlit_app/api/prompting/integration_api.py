@@ -50,16 +50,17 @@ def process_audio_integrated(
         if response.status_code == 200:
             data = response.json()
             rag_data = data.get("data", {})
+            full_context = rag_data.get("rag", {}).get("full_context", "")
 
             return {
-                "status": "success",   # ← perbaikan di sini
-                "session_id": data.get("session_id"),
+                "status": "success",
                 "transcription": rag_data.get("transcription", {}),
                 "rag": rag_data.get("rag", {}),
                 "generated_material": rag_data.get("generated_material"),
                 "fallback_message": rag_data.get("fallback_message"),
                 "history_id": rag_data.get("history_id"),
-                "raw_context": rag_data.get("full_context", ""),  # perhatikan juga variabel full_context
+                "session_id": rag_data.get("session_id"),
+                "raw_context": full_context,
                 "error": None,
             }
         else:

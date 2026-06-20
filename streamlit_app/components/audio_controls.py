@@ -107,71 +107,6 @@ def _badge_class(score: float | None) -> str:
     if score >= 0.6:  return "badge badge-orange"
     return "badge badge-red"
 
-def _material_to_text(material: dict) -> str:
-    """
-    Mengubah generated_material menjadi plain text
-    agar dapat dievaluasi oleh RAGAS.
-    """
-
-    if not material:
-        return ""
-
-    parts = []
-
-    # Summary
-    summary = material.get("summary", {})
-    if summary:
-        if summary.get("title"):
-            parts.append(summary["title"])
-
-        if summary.get("overview"):
-            parts.append(summary["overview"])
-
-        for point in summary.get("key_points", []):
-            parts.append(f"- {point}")
-
-        if summary.get("conclusion"):
-            parts.append(f"Kesimpulan: {summary['conclusion']}")
-
-    # Legal QA
-    for qa in material.get("legal_qa", []):
-        q = qa.get("question", "")
-        a = qa.get("answer", "")
-        parts.append(f"Q: {q}")
-        parts.append(f"A: {a}")
-
-    # Risk Review
-    risk = material.get("risk_review", {})
-    if risk:
-        if risk.get("analysis"):
-            parts.append(risk["analysis"])
-
-        for item in risk.get("risks", []):
-            parts.append(f"Risiko: {item}")
-
-        for item in risk.get("mitigation_steps", []):
-            parts.append(f"Mitigasi: {item}")
-
-        if risk.get("recommendation"):
-            parts.append(f"Rekomendasi: {risk['recommendation']}")
-
-    # Clause Search
-    for clause in material.get("clause_search", []):
-        if clause.get("excerpt"):
-            parts.append(clause["excerpt"])
-
-    # Timeline
-    for item in material.get("timeline_extraction", []):
-        event = item.get("event", "")
-        date = item.get("date_or_period", "")
-        parts.append(f"{date}: {event}")
-
-    # Comparison
-    for comp in material.get("comparison", []):
-        if comp.get("conclusion"):
-            parts.append(comp["conclusion"])
-
-    return "\n".join(parts)
 
 def _fmt(v: float | None) -> str:
     return f"{v:.2f}" if v is not None else "N/A"
@@ -323,14 +258,9 @@ def _render_ragas_strip(ragas_result: dict):
 # =============================================================================
 
 def _render_material_result(material: dict, rag_info: dict):
-    """Tampilkan hasil generate material dari pipeline RAG."""
-    st.markdown("---")
-    st.markdown("### 📋 Hasil Analisis Hukum (SPK)")
-
-    # Info sumber
     sources_count = rag_info.get("sources_count", 0)
-    has_context = rag_info.get("has_context", False)
-    query_used = rag_info.get("query_used", "")
+    has_context   = rag_info.get("has_context", False)
+    query_used    = rag_info.get("query_used", "")
 
     st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="result-header">📋 Hasil Analisis Hukum</div>', unsafe_allow_html=True)
@@ -729,6 +659,7 @@ def _render_referensi(referensi: list):
 # =============================================================================
 
 def render_audio_controls():
+    _inject_styles()
 
     st.markdown(
         """
@@ -803,18 +734,16 @@ def render_audio_controls():
                     help="STT → RAG → Generate Material → Evaluasi RAGAS otomatis",
                 )
             with col_stt:
-                # Tombol lama — hanya transkripsi
                 transcribe_only = st.button(
                     "📝  Transkripsi Saja", use_container_width=True, key="btn_transcribe_upload",
                 )
             with col_clear:
-                if st.button("🗑️", use_container_width=True, key="btn_clear_upload"):
+                if st.button("🗑️", use_container_width=True, key="btn_clear_upload", help="Hapus file"):
                     st.session_state.pop(_KEY_UPLOAD_BYTES, None)
                     st.session_state.pop(_KEY_UPLOAD_NAME, None)
                     st.session_state.pop(_KEY_TRANSCRIPTION, None)
                     st.rerun()
 
-            # ── Proses RAG lengkap ─────────────────────────────────────────
             if process_rag:
                 _run_rag_pipeline(upload_bytes, upload_name, provider, knowledge_base)
             if transcribe_only:
@@ -854,7 +783,7 @@ def render_audio_controls():
                     "📝  Transkripsi Saja", use_container_width=True, key="btn_transcribe_record",
                 )
             with col_clear:
-                if st.button("🗑️", use_container_width=True, key="btn_clear_record"):
+                if st.button("🗑️", use_container_width=True, key="btn_clear_record", help="Hapus rekaman"):
                     st.session_state.pop(_KEY_RECORD_BYTES, None)
                     st.session_state.pop(_KEY_TRANSCRIPTION, None)
                     st.rerun()
@@ -876,7 +805,7 @@ def render_audio_controls():
     if transcription is not None:
         _handle_transcription_success(transcription)
 
-    # ── Tampilkan hasil RAG + RAGAS strip (jika ada) ──────────────────────────
+    # ── Hasil RAG + RAGAS strip ───────────────────────────────────────────────
     rag_result = get_last_rag_result()
     if rag_result:
         _render_material_result(
@@ -888,7 +817,6 @@ def render_audio_controls():
             },
         )
 
-        # RAGAS strip
         ragas_result = get_last_ragas_result()
         if is_ragas_evaluating():
             st.info("⏳ Evaluasi RAGAS sedang berjalan di latar belakang...")
@@ -917,20 +845,12 @@ def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledg
         st.error(f"❌ Pipeline RAG gagal: {rag_response['error']}")
         return
 
-    transcription   = rag_response.get("transcription", {})
-    material        = rag_response.get("generated_material")
-    context         = rag_response.get("raw_context", "")
-    rag_meta        = rag_response.get("rag", {})
-    question        = transcription.get("repaired", transcription.get("raw", ""))
-    answer_text     = _material_to_text(material) if material else ""
+    transcription = rag_response.get("transcription", {})
+    material      = rag_response.get("generated_material")
+    rag_meta      = rag_response.get("rag", {})
+    context       = rag_response.get("raw_context", "")
+    question      = transcription.get("repaired") or transcription.get("raw", "")
 
-    # Debug log — hapus setelah fix dikonfirmasi
-    print(f"[DEBUG] has_context: {rag_meta.get('has_context')}")
-    print(f"[DEBUG] sources_count: {rag_meta.get('sources_count')}")
-    print(f"[DEBUG] context length: {len(context)}")
-    print(f"[DEBUG] material: {material}")
-
-    # Step 2: Simpan hasil RAG ke session_state
     set_last_rag_result(
         question=question,
         context=context,
@@ -939,23 +859,21 @@ def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledg
         knowledge_base=knowledge_base,
         sources_count=rag_meta.get("sources_count", 0),
         has_context=rag_meta.get("has_context", False),
-        query_used=rag_meta.get("query_used") or question,
+        query_used=rag_meta.get("query_used", question),
         history_id=rag_response.get("history_id"),
         session_id=rag_response.get("session_id"),
     )
     set_rag_session_id(rag_response.get("session_id") or get_rag_session_id())
-    st.session_state.current_session_id = rag_response.get("session_id") or st.session_state.get("current_session_id")
-    st.session_state["trigger_redirect_hasil"] = True
 
-    # Step 3 & 4: Evaluasi RAGAS (jika ada context dan material)
-    if context and answer_text:
+    if context and material:
         set_ragas_evaluating(True)
         with st.spinner("📊 Mengevaluasi kualitas RAG dengan RAGAS..."):
             ragas_response = run_ragas_evaluation(
                 question=question,
                 context=context,
-                answer=answer_text,
-                ground_truth=None,  # proxy otomatis dari context di backend
+                material_dict=material,
+                ground_truth=None,
+                history_id=rag_response.get("history_id"),
             )
         set_last_ragas_result(ragas_response)
         set_ragas_evaluating(False)
@@ -967,6 +885,8 @@ def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledg
         )
         set_ragas_evaluating(False)
 
+    st.session_state["_force_refresh_history"] = True
+    st.session_state.pop("_db_history_cache", None)
     st.rerun()
 
 

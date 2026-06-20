@@ -1,5 +1,8 @@
 # history_router.py (moved to app/routes/evaluasi)
-import logging, json, datetime
+import json
+import logging
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -17,6 +20,13 @@ logger = logging.getLogger(__name__)
 # HELPER FUNCTIONS (Fungsi Pembantu Internal)
 # =============================================================================
 def _parse_json_field(raw: str | None) -> dict | list | None:
+    """
+    Mengubah data string mentah berformat JSON dari database menjadi 
+    objek Python asli (dictionary atau list).
+    
+    Kelebihannya: Mencegah aplikasi crash jika data di database kosong (None) 
+    atau format JSON-nya korup/tidak valid.
+    """
     if not raw:
         return None
     try:
@@ -26,6 +36,10 @@ def _parse_json_field(raw: str | None) -> dict | list | None:
 
 
 def _serialize_evaluation(item: RAGASEvaluation) -> dict:
+    """
+    Mengubah objek ORM `RAGASEvaluation` (model database) menjadi 
+    format Dictionary standar Python agar bisa dikirim sebagai JSON oleh FastAPI.
+    """
     return {
         "id": item.id,
         "evaluation_type": item.evaluation_type,
@@ -52,7 +66,14 @@ def _serialize_evaluation(item: RAGASEvaluation) -> dict:
 
 
 def _serialize_process(item: RAGProcess) -> dict:
+    """
+    Mengubah objek ORM `RAGProcess` beserta relasi tabelnya (`session` & `evaluations`)
+    menjadi satu payload JSON yang sangat terstruktur untuk kebutuhan Frontend.
+    """
     session = item.session
+
+    # Mengurutkan riwayat evaluasi berdasarkan waktu pembuatan ('created_at')
+    # dari yang PALING BARU (reverse=True). Jika 'created_at' kosong, gunakan waktu minimum.
     evaluations = sorted(
         list(item.evaluations or []),
         key=lambda ev: ev.created_at or datetime.min,
@@ -80,95 +101,83 @@ def _serialize_process(item: RAGProcess) -> dict:
 
 }
 
+    # Mengembalikan struktur data gabungan akhir antara data RAG dan data Evaluasi RAGAS
     return {
         "id": item.id,
         "session_id": item.session_id,
+        # Mengambil info dari tabel session via relasi ORM (jika objek session ada)
         "session_title": session.session_title if session else None,
         "knowledge_base": session.knowledge_base if session else None,
         "provider": session.provider if session else None,
+        
+        # Data teks proses RAG
         "raw_transcribe": item.raw_transcribe,
         "repaired_text": item.repaired_text,
         "search_query": item.search_query,
         "retrieved_context": item.retrieved_context,
+        # Membaca kolom teks 'generated_material' yang berformat JSON string di DB
         "generate_material": _parse_json_field(item.generated_material),
         "compliance_score": item.compliance_score,
         "decision_status": item.decision_status,
-        "ragas_metrics": ragas_metrics,
-        "ragas_status": ragas_status,
-        "ragas_evaluation": latest_metrics,
+        
+        # Data metrik evaluasi
+        "ragas_metrics": ragas_metrics,          # Metrik ter-update dalam bentuk ringkas
+        "ragas_status": ragas_status,            # Status evaluasi terakhir
+        "ragas_evaluation": latest_metrics,      # Detail lengkap evaluasi terakhir
+        # Array berisi seluruh riwayat evaluasi (jika user melakukan re-eval berkali-kali)
         "ragas_evaluations": [_serialize_evaluation(ev) for ev in evaluations],
         "created_at": item.created_at,
     }
+
+# =============================================================================
+# API ENDPOINTS (Jalur Akses HTTP)
+# =============================================================================
 
 # ── GET ALL ───────────────────────────────────────────────────────────────────
 
 @router.get("/")
 def get_all_history(db: Session = Depends(get_db)):
-    histories = db.query(RAGProcess).order_by(RAGProcess.created_at.desc()).all()
-    results = [_serialize_process(h) for h in histories]
-    return {"status": "success", "total": len(results), "data": results}
-
-@router.get("/{history_id}")
-def get_history_detail(history_id: int, db: Session = Depends(get_db)):
-    process = db.query(RAGProcess).filter(RAGProcess.id == history_id).first()
-    if not process:
-        raise HTTPException(404, "History tidak ditemukan")
-    return {"status": "success", "data": _serialize_process(process)}
-
-
-# =========================================================
-# GET HISTORY DETAIL
-# =========================================================
-@router.get("/{history_id}")
-def get_history_detail(history_id: int, db: Session = Depends(get_db)):
-    # Gunakan RAGProcess, bukan RAGHistory (meskipun alias, lebih eksplisit)
-    from app.database.models import RAGProcess, RAGSession, RAGASEvaluation
-    
-    process = db.query(RAGProcess).filter(RAGProcess.id == history_id).first()
-    if not process:
-        raise HTTPException(status_code=404, detail="History tidak ditemukan")
-    
-    # Ambil session terkait
-    session = process.session  # relasi sudah ada
-    
-    # Ambil evaluasi terbaru (opsional)
-    latest_eval = (
-        db.query(RAGASEvaluation)
-        .filter(RAGASEvaluation.process_id == process.id)
-        .order_by(RAGASEvaluation.id.desc())
-        .first()
+    """
+    Endpoint untuk mengambil SEMUA riwayat proses RAG yang tersimpan di database.
+    Diurutkan dari yang paling baru diciptakan.
+    """
+    # 1. Tarik seluruh data dari tabel RAGProcess secara descending (terbaru di atas)
+    histories = (
+        db.query(RAGProcess)
+        .order_by(RAGProcess.created_at.desc())
+        .all()
     )
-    
+    # 2. Proses transformasi setiap baris data ORM menggunakan fungsi serialisasi
+    results = [_serialize_process(h) for h in histories]
+
     return {
         "status": "success",
-        "data": {
-            "id": process.id,
-            "session_id": process.session_id,
-            "session_title": session.session_title if session else None,
-            "knowledge_base": session.knowledge_base if session else None,
-            "provider": session.provider if session else None,
-            "raw_transcribe": process.raw_transcribe,
-            "repaired_text": process.repaired_text,
-            "search_query": process.search_query,
-            "retrieved_context": process.retrieved_context,
-            "generated_material": process.generated_material,  # bisa di-parse JSON jika perlu
-            "compliance_score": process.compliance_score,
-            "decision_status": process.decision_status,
-            "created_at": process.created_at,
-            "evaluation": {
-                "faithfulness": latest_eval.faithfulness if latest_eval else None,
-                "answer_relevancy": latest_eval.answer_relevancy if latest_eval else None,
-                "context_precision": latest_eval.context_precision if latest_eval else None,
-                "context_recall": latest_eval.context_recall if latest_eval else None,
-                "overall_score": latest_eval.overall_score if latest_eval else None,
-                "status": latest_eval.status if latest_eval else None,
-            } if latest_eval else None,
-        }
+        "total": len(results),
+        "data": results,
     }
 
-# =========================================================
-# DELETE HISTORY
-# =========================================================
+# ── GET DETAIL ────────────────────────────────────────────────────────────────
+
+@router.get("/{history_id}")
+def get_history_detail(history_id: int, db: Session = Depends(get_db)):
+    """
+    Endpoint untuk mengambil informasi DETAIL dari satu riwayat proses RAG berdasarkan ID.
+    """
+    history = (
+        db.query(RAGProcess)
+        .filter(RAGProcess.id == history_id)
+        .first()
+    )
+    if not history:
+        raise HTTPException(status_code=404, detail="History tidak ditemukan")
+
+    return {
+        "status": "success",
+        "data": _serialize_process(history),
+    }
+
+# ── DELETE ────────────────────────────────────────────────────────────────────
+
 @router.delete("/{history_id}")
 def delete_history(history_id: int, db: Session = Depends(get_db)):
     """
@@ -177,8 +186,8 @@ def delete_history(history_id: int, db: Session = Depends(get_db)):
     maka data Sesi (`RAGSession`) tersebut juga akan otomatis dihapus dari database.
     """
     history = (
-        db.query(RAGHistory)
-        .filter(RAGHistory.id == history_id)
+        db.query(RAGProcess)
+        .filter(RAGProcess.id == history_id)
         .first()
     )
     if not history:

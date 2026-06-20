@@ -17,5 +17,4 @@ class RAGIntegrationResponse(BaseModel):
     final_material: Optional[MaterialResponse] = None
     fallback_message: Optional[str] = None
     has_context: bool
-    session_id: Optional[int] = None
     

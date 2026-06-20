@@ -1,7 +1,5 @@
-# app/services/prompting/integration/rag_integration_service.py
-
 """
-rag_integration_service.py  (final fix)
+rag_integration_service.py  (updated)
 
 Perubahan dari versi lama:
 - Evaluasi RAGAS dipindah ke BackgroundTask → tidak blocking response user
@@ -12,7 +10,6 @@ Perubahan dari versi lama:
 """
 
 import logging
-from datetime import datetime
 from typing import Optional
 
 from fastapi import BackgroundTasks
@@ -94,20 +91,26 @@ class RAGIntegrationService:
                 limit=3,
             )
 
-            # DEBUG: lihat struktur hasil Qdrant
+            # ── DEBUG SEMENTARA: lihat struktur penuh result pertama ──
             if kb_results.get("results"):
                 first = kb_results["results"][0]
                 logger.debug("[RAGIntegration] Qdrant sample child keys: %s", list(first.get("child", {}).keys()))
                 logger.debug("[RAGIntegration] Qdrant sample parent keys: %s", list(first.get("parent", {}).keys()))
 
-            # ── Tahap 4: Ekstraksi Konteks ────────────────────────────────────
+            # ── Tahap 4: Ekstraksi Konteks ─────────────────────────────────────────
             contexts = []
             for res in kb_results.get("results", []):
-                parent_content = res.get("parent", {}).get("content", "")
-                child_content = res.get("child", {}).get("content", "")
-                child_raw = res.get("child", {}).get("raw_text", "")
+                # Prioritas pengambilan konten — dari yang paling lengkap
+                # 1. parent.content (full pasal/section)
+                # 2. child.content (chunk dengan prefix lengkap)
+                # 3. child.raw_text (teks mentah tanpa prefix)
 
                 content = None
+
+                parent_content = res.get("parent", {}).get("content", "")
+                child_content  = res.get("child", {}).get("content", "")
+                child_raw      = res.get("child", {}).get("raw_text", "")
+
                 if parent_content and len(parent_content.strip()) > 30:
                     content = parent_content.strip()
                 elif child_content and len(child_content.strip()) > 30:
@@ -118,6 +121,7 @@ class RAGIntegrationService:
                 if content:
                     contexts.append(content)
                 else:
+                    # Log supaya kita tahu data mana yang kosong
                     logger.warning(
                         "[RAGIntegration] Hasil Qdrant diabaikan — semua field terlalu pendek. "
                         "score=%.3f | child_content=%r | parent_content=%r",
@@ -127,10 +131,13 @@ class RAGIntegrationService:
                     )
 
             combined_context = "\n\n".join(contexts)
+
             logger.info(
                 "[RAGIntegration] Context terkumpul: %d chunk, total %d chars",
                 len(contexts), len(combined_context)
             )
+
+            # Debug sementara
             print(f"[SERVICE DEBUG] contexts count: {len(contexts)}")
             print(f"[SERVICE DEBUG] combined_context length: {len(combined_context)}")
             print(f"[SERVICE DEBUG] sample: {combined_context[:200]}")
@@ -138,7 +145,8 @@ class RAGIntegrationService:
             # ── Tahap 5: Generate Material ────────────────────────────────────
             final_material = None
             fallback_message = None
-            history_id = None  # inisialisasi
+            history_id = None
+            rag_session_id = session_id
 
             if contexts:
                 material_payload = MaterialRequest(
@@ -163,7 +171,7 @@ class RAGIntegrationService:
                 )
                 saved_history = SessionService.save_history(
                     db=self.db,
-                    session_id=session_id,
+                    session_id=rag_session_id,
                     session_title=session_title,
                     knowledge_base=knowledge_base,
                     provider=provider,
@@ -173,9 +181,11 @@ class RAGIntegrationService:
                     retrieved_context=combined_context,
                     final_material=final_material,
                 )
+                history_id = saved_history.id if saved_history else None
+                rag_session_id = saved_history.session_id if saved_history else rag_session_id
 
-                # ── Tahap 7: Evaluasi RAGAS (Background — tidak blocking) ─────
-                if background_tasks is not None and auto_evaluate:
+            # ── Tahap 7: Jalankan Evaluasi di Background Task ──────────────
+                if auto_evaluate and background_tasks and combined_context and final_material:
                     background_tasks.add_task(
                         trigger_auto_evaluation,
                         question=search_query,
@@ -185,25 +195,23 @@ class RAGIntegrationService:
                         source_label="rag_pipeline",
                         history_id=history_id
                     )
-            else:
-                fallback_message = (
-                    "Maaf, jawaban tidak dapat dibuat karena tidak ada "
-                    "referensi hukum yang cocok."
-                )
 
-            # ── Tahap 8: Return Response ──────────────────────────────────────
+            else:
+                fallback_message = "Tidak ada konteks hukum yang cukup relevan ditemukan di Knowledge Base."
+
+           # ── Tahap 8: Return Response Ter validasi ─────────────────────────
             return RAGIntegrationResponse(
                 raw_transcribe=raw_transcribe,
                 final_repaired_text=repaired_text,
-                user_scenario=repaired_text,
+                user_scenario=repaired_text,         # 💡 TAMBAHKAN INI: Memenuhi kewajiban schema Pydantic
                 search_query_used=search_query,
-                has_context=len(contexts) > 0,
+                has_context=bool(contexts),
                 retrieved_context=combined_context,
-                source_details=kb_results.get("results", []),
+                source_details=kb_results.get("results", []), 
                 history_id=history_id,
-                session_id=session_id,  # perbaiki: pakai session_id, bukan rag_session_id
+                session_id=rag_session_id,
                 final_material=final_material,
-                fallback_message=fallback_message,
+                fallback_message=fallback_message
             )
 
         except Exception as exc:

@@ -1,3 +1,5 @@
+# streamlit_app/app.py
+
 import streamlit as st
 
 from components.left_sidebar import render_left_sidebar
