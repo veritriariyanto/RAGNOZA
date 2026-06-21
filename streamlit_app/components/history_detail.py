@@ -13,8 +13,9 @@ Struktur h (history object dari DB):
 """
 
 import streamlit as st
-from components.audio_controls import (
-    _inject_styles,
+from components.audio_controls import _inject_styles
+from components.material_renderers import (
+    inject_collapsible_js,
     _render_summary,
     _render_legal_qa,
     _render_risk_review,
@@ -49,7 +50,8 @@ def _badge(label: str, value, good_thresh=0.8, warn_thresh=0.6):
             bg, fg = "rgba(224,96,112,0.12)", "#E06070"
         display = f"{v:.2f}"
     except (TypeError, ValueError):
-        bg, fg, display = "rgba(255,255,255,0.06)", "#A89F93", str(value) if value else "N/A"
+        bg, fg, display = "rgba(255,255,255,0.06)", "#A89F93", str(
+            value) if value else "N/A"
 
     return (
         f'<span class="ragas-badge" '
@@ -61,8 +63,8 @@ def _badge(label: str, value, good_thresh=0.8, warn_thresh=0.6):
 # ── Render material ───────────────────────────────────────────────────────────
 def _render_material(material: dict, rag_info: dict):
     sources_count = rag_info.get("sources_count", 0)
-    has_context   = rag_info.get("has_context", False)
-    query_used    = rag_info.get("query_used", "-")
+    has_context = rag_info.get("has_context", False)
+    query_used = rag_info.get("query_used", "-")
 
     st.markdown(
         f'<div class="info-pill-container">'
@@ -91,23 +93,25 @@ def _render_material(material: dict, rag_info: dict):
 # ── Render RAGAS metrics ──────────────────────────────────────────────────────
 def _render_ragas_section(h: dict):
     ragas_st = h.get("ragas_status", "skipped")
-    metrics  = h.get("ragas_metrics") or {}
+    metrics = h.get("ragas_metrics") or {}
 
-    st.markdown('<div class="result-header">📊 Evaluasi RAGAS</div>', unsafe_allow_html=True)
+    st.markdown('<div class="result-header">📊 Evaluasi RAGAS</div>',
+                unsafe_allow_html=True)
 
     if ragas_st == "skipped":
         st.info("⬜ Evaluasi RAGAS tidak dijalankan untuk riwayat ini.")
         return
 
     if ragas_st == "error":
-        st.error(f"⚠️ Evaluasi RAGAS gagal: {metrics.get('error', 'Unknown error')}")
+        st.error(
+            f"⚠️ Evaluasi RAGAS gagal: {metrics.get('error', 'Unknown error')}")
         return
 
-    faith    = metrics.get("faithfulness")
-    relev    = metrics.get("answer_relevancy")
-    risk_f   = metrics.get("risk_faithfulness")
-    cp       = metrics.get("context_precision")
-    cr       = metrics.get("context_recall")
+    faith = metrics.get("faithfulness")
+    relev = metrics.get("answer_relevancy")
+    risk_f = metrics.get("risk_faithfulness")
+    cp = metrics.get("context_precision")
+    cr = metrics.get("context_recall")
     segments = metrics.get("answer_faithfulness_segment", [])
 
     badges_html = " &nbsp; ".join(filter(None, [
@@ -130,21 +134,24 @@ def _render_ragas_section(h: dict):
     cols[4].metric("Ctx Recall",        _fmt(cr))
 
     if segments:
-        st.markdown('<div class="section-label">🧩 Segmen Terevaluasi</div>', unsafe_allow_html=True)
-        seg_labels = {"faithfulness": "📌 Summary", "qa": "❓ QA", "risk": "⚠️ Risk"}
+        st.markdown(
+            '<div class="section-label">🧩 Segmen Terevaluasi</div>', unsafe_allow_html=True)
+        seg_labels = {"faithfulness": "📌 Summary",
+                      "qa": "❓ QA", "risk": "⚠️ Risk"}
         pills = " ".join(
             f'<span class="segment-pill">{seg_labels.get(s, s)}</span>'
             for s in segments
         )
-        st.markdown(f'<div style="padding-top:8px;">{pills}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="padding-top:8px;">{pills}</div>', unsafe_allow_html=True)
 
 
 # ── Konten detail (dipakai oleh kedua mode render) ────────────────────────────
 def _render_history_content(h: dict):
     created = str(h.get("created_at", ""))[:16]
-    kb      = h.get("knowledge_base", "-")
-    status  = h.get("decision_status", "-")
-    score   = h.get("compliance_score", "-")
+    kb = h.get("knowledge_base", "-")
+    status = h.get("decision_status", "-")
+    score = h.get("compliance_score", "-")
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Compliance Score", score)
@@ -155,7 +162,8 @@ def _render_history_content(h: dict):
     st.divider()
 
     query = h.get("search_query") or h.get("repaired_text") or "-"
-    st.markdown('<div class="result-header">🔍 Pertanyaan / Query</div>', unsafe_allow_html=True)
+    st.markdown('<div class="result-header">🔍 Pertanyaan / Query</div>',
+                unsafe_allow_html=True)
     st.info(query)
 
     raw = h.get("raw_transcribe") or ""
@@ -165,7 +173,8 @@ def _render_history_content(h: dict):
 
     st.divider()
 
-    st.markdown('<div class="result-header">📋 Hasil Analisis Hukum</div>', unsafe_allow_html=True)
+    st.markdown('<div class="result-header">📋 Hasil Analisis Hukum</div>',
+                unsafe_allow_html=True)
 
     material = h.get("generate_material")
     if material:
@@ -207,6 +216,7 @@ def render_history_detail_page():
     diikuti st.stop() agar layout normal tidak ikut dirender.
     """
     _inject_styles()
+    inject_collapsible_js()
 
     h = st.session_state.get("selected_history")
     if not h:
@@ -242,9 +252,9 @@ def render_history_detail_page():
         st.divider()
 
         created = str(h.get("created_at", ""))[:16]
-        kb      = h.get("knowledge_base", "-")
-        status  = h.get("decision_status", "-")
-        score   = h.get("compliance_score", "-")
+        kb = h.get("knowledge_base", "-")
+        status = h.get("decision_status", "-")
+        score = h.get("compliance_score", "-")
 
         st.markdown(
             f'<div style="font-size:12px;color:var(--text-muted);line-height:2.2;">'
@@ -275,6 +285,7 @@ def render_history_detail():
     Migrasi ke render_history_detail_page() + routing di app.py.
     """
     _inject_styles()
+    inject_collapsible_js()
     h = st.session_state.get("selected_history")
 
     if not h:
@@ -289,7 +300,8 @@ def render_history_detail():
 
     col_title, col_back = st.columns([6, 1])
     with col_title:
-        st.markdown('<div class="ac-header">📋 Detail Riwayat Generate</div>', unsafe_allow_html=True)
+        st.markdown(
+            '<div class="ac-header">📋 Detail Riwayat Generate</div>', unsafe_allow_html=True)
     with col_back:
         if st.button("✖ Tutup", use_container_width=True, key="btn_close_history"):
             st.session_state.pop("selected_history", None)

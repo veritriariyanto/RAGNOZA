@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Qu
 from app.core.embeddings import embeddings
 from app.core.postgres import get_db
 from app.core.qdrant import qdrant_db
+from app.schemas.prompting.integration import TextIntegrationRequest
 from app.services.knowlagebase.qdrant_storage import QdrantStorage
 from app.services.prompting.audio.stt_service import STTService
 from app.services.prompting.integration.rag_integration_service import RAGIntegrationService
@@ -95,14 +96,17 @@ async def process_audio_rag(
         )
 
         # integration_router.py — di dalam process_audio_rag, sebelum return
-        full_ctx = getattr(result, "retrieved_context", None) or getattr(result, "context", "") or ""
+        full_ctx = getattr(result, "retrieved_context", None) or getattr(
+            result, "context", "") or ""
         source_details = getattr(result, "source_details", []) or []
 
         print(f"[ROUTER DEBUG] retrieved_context length: {len(full_ctx)}")
-        print(f"[ROUTER DEBUG] retrieved_context preview: {repr(full_ctx[:200])}")
+        print(
+            f"[ROUTER DEBUG] retrieved_context preview: {repr(full_ctx[:200])}")
         print(f"[ROUTER DEBUG] source_details count: {len(source_details)}")
         if source_details and isinstance(source_details, list):
-            print(f"[ROUTER DEBUG] source_details[0] type: {type(source_details[0])}")
+            print(
+                f"[ROUTER DEBUG] source_details[0] type: {type(source_details[0])}")
 
         return {
             "status": "success",
@@ -126,7 +130,8 @@ async def process_audio_rag(
                 },
 
                 "generated_material": (
-                    result.final_material.model_dump() if getattr(result, "final_material", None) else None
+                    result.final_material.model_dump() if getattr(
+                        result, "final_material", None) else None
                 ),
                 "fallback_message": getattr(result, "fallback_message", None),
                 "history_id": getattr(result, "history_id", None),
@@ -149,4 +154,94 @@ async def process_audio_rag(
         raise HTTPException(
             status_code=500,
             detail=f"RAG Integration Error: {str(exc)}",
+        )
+
+
+# ── Route: Text-based Pipeline ─────────────────────────────────────────────────
+
+@router.post(
+    "/process-text-integrated",
+    summary="RAG Pipeline dari Teks (Tanpa Audio/STT)",
+    description="""
+    Endpoint pipeline RAG dari teks yang sudah ditranskripsi:
+    **Text → Repair → Search Qdrant → Generate Material → Save → Eval (background)**
+
+    Gunakan ini ketika user sudah punya hasil transkripsi dan ingin
+    menjalankan pipeline RAG setelah review/edit manual.
+    """,
+)
+async def process_text_rag(
+    request: TextIntegrationRequest,
+    background_tasks: BackgroundTasks,
+    rag_service: RAGIntegrationService = Depends(get_rag_service),
+):
+    """
+    Args:
+        request.text          : Teks transkripsi yang sudah ada
+        request.knowledge_base: Nama collection di Qdrant
+        request.style         : Gaya penulisan material
+        request.auto_evaluate : Apakah jalankan evaluasi RAGAS
+        request.session_id    : ID sesi yang sudah ada
+
+    Returns:
+        Hasil RAG pipeline lengkap (tanpa tahap STT).
+    """
+    try:
+        result = await rag_service.process_text_to_material(
+            raw_text=request.text,
+            knowledge_base=request.knowledge_base,
+            style=request.style,
+            background_tasks=background_tasks,
+            auto_evaluate=request.auto_evaluate,
+            session_id=request.session_id,
+        )
+
+        full_ctx = getattr(result, "retrieved_context", None) or getattr(
+            result, "context", "") or ""
+        source_details = getattr(result, "source_details", []) or []
+
+        return {
+            "status": "success",
+            "provider": "text_input",
+            "knowledge_base": request.knowledge_base,
+            "data": {
+                "transcription": {
+                    "raw": getattr(result, "raw_transcribe", None),
+                    "repaired": getattr(result, "final_repaired_text", None),
+                },
+                "rag": {
+                    "query_used": getattr(result, "search_query_used", None),
+                    "has_context": getattr(result, "has_context", False),
+                    "context_preview": (
+                        full_ctx[:500] + "..."
+                        if len(full_ctx) > 500
+                        else full_ctx
+                    ),
+                    "full_context": full_ctx,
+                    "sources_count": len(source_details),
+                },
+                "generated_material": (
+                    result.final_material.model_dump() if getattr(
+                        result, "final_material", None) else None
+                ),
+                "fallback_message": getattr(result, "fallback_message", None),
+                "history_id": getattr(result, "history_id", None),
+                "session_id": getattr(result, "session_id", None),
+            },
+            "evaluation": {
+                "status": "running_in_background",
+                "enabled": request.auto_evaluate,
+                "note": (
+                    "Evaluasi RAGAS berjalan otomatis di background. "
+                    "Lihat log server untuk hasil metrik."
+                ),
+            },
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Text Pipeline Error: {str(exc)}",
         )

@@ -16,7 +16,7 @@ def get_all_history() -> dict:
             timeout=10,
             allow_redirects=True,
         )
-        
+
         # Log detail jika gagal — untuk debug
         if resp.status_code != 200:
             logger.error(
@@ -24,11 +24,12 @@ def get_all_history() -> dict:
                 resp.status_code, resp.url, resp.text[:300]
             )
             return {}
-            
+
         return resp.json()
     except Exception as e:
         logger.error("[HistoryAPI] get_all_history exception: %s", e)
         return {}
+
 
 def get_history_detail(history_id: int) -> dict:
     try:
@@ -42,6 +43,26 @@ def get_history_detail(history_id: int) -> dict:
         return {}
 
 
+def get_history_by_id(history_id: int) -> dict:
+    """Fetch history detail and wrap in {status, data} format."""
+    try:
+        resp = requests.get(
+            f"{BASE_URL}/history/{history_id}",
+            timeout=10,
+            allow_redirects=True,
+        )
+        if resp.status_code == 200:
+            body = resp.json()
+            # Backend already returns {"status": "success", "data": {...}}
+            # Extract the inner data to avoid double-wrapping
+            inner_data = body.get("data", body)
+            return {"status": "success", "data": inner_data}
+        return {"status": "error", "data": None}
+    except Exception as e:
+        logger.error("[HistoryAPI] get_history_by_id exception: %s", e)
+        return {"status": "error", "data": None}
+
+
 def delete_history(history_id: int) -> bool:
     try:
         resp = requests.delete(
@@ -52,8 +73,10 @@ def delete_history(history_id: int) -> bool:
         return resp.status_code == 200
     except Exception:
         return False
-    
+
 # Tambahan untuk update title session
+
+
 def update_history_title(
     history_id: int,
     session_title: str,
