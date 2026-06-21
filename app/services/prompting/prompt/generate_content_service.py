@@ -83,13 +83,7 @@ def build_output_instructions(intent: str) -> str:
         )
 
     instructions += (
-        "5. TIMELINE EXTRACTION: Ekstrak elemen waktu HANYA jika terdapat durasi, "
-        "tanggal, atau periode eksplisit di dalam konteks (contoh: '2 tahun', '4 tahun'). "
-        "Jika tidak ada elemen waktu, kosongkan dengan array [].\n"
-        "6. COMPARISON: Isi HANYA jika terdapat dua ketentuan atau lebih di dalam "
-        "konteks yang dapat diperbandingkan secara nyata. Jika tidak ada, isi dengan "
-        "array []. DILARANG mengarang pasal pembanding.\n"
-        "7. Untuk semua blok yang tidak memiliki data yang cukup, gunakan array kosong "
+        "5. Untuk semua blok yang tidak memiliki data yang cukup, gunakan array kosong "
         "[] atau nilai default '-' tanpa mengarang informasi di luar konteks.\n"
     )
 
@@ -108,7 +102,7 @@ class MaterialGeneratorService:
     async def generate_legal_material(self, data: MaterialRequest) -> MaterialResponse:
         """
         Menghasilkan output JSON untuk blok UI legal task agents:
-        Summary, Clause Search, Legal Q&A, Risk Review, Timeline Extraction, Comparison.
+        Summary, Clause Search, Legal Q&A, Risk Review.
 
         Alur:
         1. Klasifikasikan intent query (informatif vs konsultasi).
@@ -119,7 +113,8 @@ class MaterialGeneratorService:
 
         # --- 1. Klasifikasi intent ---
         intent = classify_intent(data.user_scenario)
-        logger.info(f"MaterialGeneratorService: intent terdeteksi = '{intent}'")
+        logger.info(
+            f"MaterialGeneratorService: intent terdeteksi = '{intent}'")
 
         # --- 2. System Prompt ---
         # Mengunci peran, format output, gaya bahasa formal, dan anti-hallucination rules.
@@ -131,21 +126,14 @@ class MaterialGeneratorService:
             "'Konteks teks Dokumen Hukum' yang diberikan. Jangan berasumsi, "
             "menyimpulkan nama Undang-Undang (seperti KUHP/UU ITE), atau mengarang "
             "nomor pasal/ayat jika tidak tertulis eksplisit di dalam konteks.\n"
-            "2. NO HALLUCINATION ON COMPARISON: Pada blok Comparison, Anda HANYA boleh "
-            "membandingkan dua ketentuan yang benar-benar tertulis di dalam konteks. "
-            "Jika tidak ada elemen pembanding, isi dengan array kosong []. "
-            "DILARANG mengarang pasal pembanding.\n"
-            "3. ACCURATE CLAUSE MAPPING: Pastikan teks kutipan (excerpt) benar-benar "
+            "2. ACCURATE CLAUSE MAPPING: Pastikan teks kutipan (excerpt) benar-benar "
             "cocok dengan pasal/ayat aslinya. Jangan mencampuradukkan isi ayat satu "
             "dengan ayat lainnya.\n"
-            "4. TIMELINE STRICTNESS: Field 'date_or_period' WAJIB berisi durasi waktu, "
-            "tanggal, tenggat, atau periode hukuman (contoh: '2 tahun', '4 tahun') "
-            "yang ada di teks. BUKAN diisi nama pasal atau label lainnya.\n"
-            "5. INTENT-AWARE OUTPUT: Ikuti instruksi output sesuai tipe query yang "
+            "3. INTENT-AWARE OUTPUT: Ikuti instruksi output sesuai tipe query yang "
             "diberikan. Jika tipe query adalah 'informatif', JANGAN mengisi Risk Review "
             "dengan skor risiko — pengguna hanya bertanya, bukan mengaku melakukan "
             "tindakan.\n"
-            "6. Jika konteks tidak memadai untuk mengisi suatu blok, kosongkan blok "
+            "4. Jika konteks tidak memadai untuk mengisi suatu blok, kosongkan blok "
             "tersebut (array kosong atau '-' sesuai schema) tanpa mengarang informasi.\n\n"
             "Gunakan gaya bahasa formal, tegas, lugas, dan patuhi PUEBI. "
             "Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan, "
@@ -196,8 +184,6 @@ class MaterialGeneratorService:
                     ],
                     "recommendation": "Ulangi permintaan setelah perbaikan sistem.",
                 },
-                timeline_extraction=[],
-                comparison=[],
                 referensi_uu=[],
             )
 

@@ -150,11 +150,11 @@ if session_id:
         st.divider()
 
         # =========================================
-        # KOMPONEN 8 TABS UTAMA (Bebas dari Bungkus JSON)
+        # KOMPONEN 6 TABS UTAMA (Bebas dari Bungkus JSON)
         # =========================================
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📝 Ringkasan", "⚠️ Risiko", "❓ Q&A",
-            "📂 Pasal", "⏱️ Timeline", "🔄 Komparasi", "🗣️ Transkripsi", "⚙️ Raw Log"
+            "📂 Pasal", "🗣️ Transkripsi", "⚙️ Raw Log"
         ])
 
         # --- TAB 1: SUMMARY ---
@@ -290,33 +290,8 @@ if session_id:
             else:
                 st.warning("Tidak ada lampiran pasal spesifik.")
 
+        # --- TAB 6: TRANSCRIPTION ---
         with tab5:
-            st.write("### ⏱️ Lini Masa & Periode Hukum")
-            timelines = material.get("timeline_extraction", [])
-            if timelines:
-                for item in timelines:
-                    st.warning(
-                        f"**{item.get('date_or_period')}**: {item.get('event')}")
-                    st.caption(f"Relevansi: {item.get('relevance')}")
-            else:
-                st.info("Tidak ada data lini masa.")
-
-# --- TAB 7: COMPARISON ---
-        with tab6:
-            st.write("### 🔄 Tabel Perbandingan Hukum")
-            comparisons = material.get("comparison", [])
-            if comparisons:
-                for comp in comparisons:
-                    st.markdown(f"**Aspek: {comp.get('aspect')}**")
-                    st.write(f"- **Source A**: {comp.get('source_a')}")
-                    st.write(f"- **Source B**: {comp.get('source_b')}")
-                    st.success(f"Kesimpulan: {comp.get('conclusion')}")
-                    st.divider()
-            else:
-                st.info("Tidak ada data perbandingan.")
-
-        # --- TAB 7: TRANSCRIPTION ---
-        with tab7:
             st.write("### 🗣️ Transkripsi Audio")
             col_t1, col_t2 = st.columns(2)
             with col_t1:
@@ -331,8 +306,8 @@ if session_id:
             st.markdown("#### 🔍 Query Pencarian")
             st.code(data.get('search_query') or '-', language='text')
 
-        # --- TAB 8: RAW LOG ---
-        with tab8:
+        # --- TAB 7: RAW LOG ---
+        with tab6:
             st.write("### ⚙️ Raw Metadata & JSONB Response")
             with st.expander("Lihat Raw JSON Payload"):
                 st.json(data)
