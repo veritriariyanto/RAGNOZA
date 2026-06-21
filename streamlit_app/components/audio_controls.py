@@ -178,8 +178,21 @@ def render_audio_controls():
 
     st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
+    # ── RAGAS Evaluation Toggle ───────────────────────────────────────────────
+    auto_eval = st.toggle(
+        "📊 Evaluasi RAGAS Otomatis",
+        value=False,
+        key="toggle_auto_evaluate",
+        help="Jika aktif, metrik RAGAS (Faithfulness, Answer Relevancy, Context Precision/Recall) akan dihitung otomatis di background setelah generate.",
+    )
+
+    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+
     tab_upload, tab_record = st.tabs(
         ["  📂  Upload File  ", "  🔴  Rekam Langsung  "])
+
+    # Dynamic button label based on toggle state
+    _rag_btn_label = "🚀  Proses RAG & Evaluasi" if auto_eval else "🚀  Proses RAG"
 
     # ── TAB UPLOAD ────────────────────────────────────────────────────────────
     with tab_upload:
@@ -215,7 +228,7 @@ def render_audio_controls():
             col_rag, col_stt, col_clear = st.columns([3, 2, 1])
             with col_rag:
                 process_rag = st.button(
-                    "🚀  Proses RAG & Evaluasi", use_container_width=True,
+                    _rag_btn_label, use_container_width=True,
                     key="btn_rag_upload", type="primary",
                     help="STT → RAG → Generate Material → Redirect ke halaman hasil",
                 )
@@ -232,7 +245,7 @@ def render_audio_controls():
 
             if process_rag:
                 _run_rag_pipeline(upload_bytes, upload_name,
-                                  provider, knowledge_base)
+                                  provider, knowledge_base, auto_eval)
             if transcribe_only:
                 st.session_state.pop(_KEY_TRANSCRIPTION, None)
                 with st.spinner("Sedang memproses transkripsi..."):
@@ -264,7 +277,7 @@ def render_audio_controls():
             col_rag, col_stt, col_clear = st.columns([3, 2, 1])
             with col_rag:
                 process_rag_rec = st.button(
-                    "🚀  Proses RAG & Evaluasi", use_container_width=True,
+                    _rag_btn_label, use_container_width=True,
                     key="btn_rag_record", type="primary",
                 )
             with col_stt:
@@ -279,7 +292,7 @@ def render_audio_controls():
 
             if process_rag_rec:
                 _run_rag_pipeline(record_bytes, "recording.wav",
-                                  provider, knowledge_base)
+                                  provider, knowledge_base, auto_eval)
             if transcribe_record:
                 st.session_state.pop(_KEY_TRANSCRIPTION, None)
                 with st.spinner("Sedang memproses transkripsi rekaman..."):
@@ -301,14 +314,14 @@ def render_audio_controls():
 # CORE PIPELINE (runs RAG then redirects to 1_Hasil_Generate page)
 # =============================================================================
 
-def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledge_base: str):
+def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledge_base: str, auto_evaluate: bool = False):
     with st.spinner("⏳ Memproses audio → RAG → Material... (30–90 detik)"):
         rag_response = process_audio_integrated(
             audio_bytes=audio_bytes,
             filename=filename,
             provider=provider,
             knowledge_base=knowledge_base,
-            auto_evaluate=False,
+            auto_evaluate=auto_evaluate,
             session_id=get_rag_session_id(),
         )
 
@@ -353,13 +366,13 @@ def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledg
     st.switch_page("pages/1_Hasil_Generate.py")
 
 
-def _run_text_pipeline(text: str, knowledge_base: str):
+def _run_text_pipeline(text: str, knowledge_base: str, auto_evaluate: bool = False):
     """Run RAG pipeline from existing transcription text (no STT)."""
     with st.spinner("⏳ Memproses teks → RAG → Material... (30–90 detik)"):
         rag_response = process_text_integrated(
             text=text,
             knowledge_base=knowledge_base,
-            auto_evaluate=False,
+            auto_evaluate=auto_evaluate,
             session_id=get_rag_session_id(),
         )
 
@@ -447,4 +460,5 @@ def _handle_transcription_success(transcription: str, knowledge_base: str):
         if not text_to_process:
             st.warning("⚠️ Teks transkripsi kosong, tidak bisa diproses.")
         else:
-            _run_text_pipeline(text_to_process, knowledge_base)
+            auto_eval = st.session_state.get("toggle_auto_evaluate", False)
+            _run_text_pipeline(text_to_process, knowledge_base, auto_eval)

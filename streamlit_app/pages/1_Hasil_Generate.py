@@ -3,6 +3,7 @@
 import streamlit as st
 import json  # 🛠️ Tambahkan import ini untuk membongkar string JSON
 from api.history.history_api import get_history_by_id, get_all_history
+from api.evaluasi.evaluation_api import run_ragas_evaluation
 from components.left_sidebar import render_left_sidebar
 from utils.session import init_session_state
 
@@ -66,22 +67,94 @@ if session_id:
         st.caption(
             f"Waktu Eksekusi: {data.get('created_at')} | STT Provider: {data.get('provider')}")
 
-        col_txt1, col_txt2 = st.columns(2)
-        with col_txt1:
-            st.info(
-                f"**🗣️ Hasil Transkripsi Suara (Raw):**\n\n{data.get('raw_transcribe')}")
-        with col_txt2:
-            st.success(
-                f"**✨ Hasil Perbaikan Teks (Repaired):**\n\n{data.get('repaired_text')}")
+        st.divider()
+
+        # =========================================
+        # EVALUATION SECTION (Prominent Display)
+        # =========================================
+        ragas_status = data.get("ragas_status", "skipped")
+        ragas_metrics = data.get("ragas_metrics")
+        ragas_evals = data.get("ragas_evaluations", [])
+
+        if ragas_status == "success" and ragas_metrics:
+            st.markdown("### 📊 Evaluasi RAGAS")
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            with col_m1:
+                st.metric("Faithfulness",
+                          f"{(ragas_metrics.get('faithfulness') or 0):.2f}")
+            with col_m2:
+                st.metric("Answer Relevancy",
+                          f"{(ragas_metrics.get('answer_relevancy') or 0):.2f}")
+            with col_m3:
+                st.metric("Context Precision",
+                          f"{(ragas_metrics.get('context_precision') or 0):.2f}")
+            with col_m4:
+                st.metric("Context Recall",
+                          f"{(ragas_metrics.get('context_recall') or 0):.2f}")
+
+            # Risk faithfulness if available
+            risk_f = ragas_metrics.get("risk_faithfulness")
+            if risk_f is not None:
+                st.metric("Risk Faithfulness", f"{risk_f:.2f}")
+
+        elif ragas_status == "error":
+            st.warning(
+                "⚠️ Evaluasi RAGAS gagal. Klik tombol di bawah untuk mencoba lagi.")
+
+        else:
+            st.info("Evaluasi RAGAS belum dijalankan untuk riwayat ini.")
+
+        # Evaluation button (always visible)
+        eval_col1, eval_col2 = st.columns([1, 3])
+        with eval_col1:
+            if st.button(
+                "📊 Evaluasi Sekarang" if ragas_status != "success" else "🔄 Evaluasi Ulang",
+                key=f"btn_eval_{session_id}",
+                use_container_width=True,
+                type="primary" if ragas_status != "success" else "secondary",
+            ):
+                question = data.get("search_query") or data.get(
+                    "repaired_text") or ""
+                context = data.get("retrieved_context") or ""
+                mat = data.get("generate_material") or data.get(
+                    "generated_material") or {}
+                if isinstance(mat, str):
+                    try:
+                        mat = json.loads(mat)
+                    except json.JSONDecodeError:
+                        mat = {}
+
+                if not question or not context:
+                    st.warning(
+                        "⚠️ Data tidak lengkap untuk evaluasi (query atau konteks kosong).")
+                else:
+                    with st.spinner("⏳ Menjalankan evaluasi RAGAS... (1–5 menit)"):
+                        eval_result = run_ragas_evaluation(
+                            question=question,
+                            context=context,
+                            material_dict=mat,
+                            history_id=session_id,
+                        )
+                    if eval_result.get("status") == "success":
+                        st.success("✅ Evaluasi berhasil! Memuat ulang...")
+                        st.session_state.pop("_db_history_cache", None)
+                        st.rerun()
+                    else:
+                        st.error(
+                            f"❌ Evaluasi gagal: {eval_result.get('error', 'Unknown error')}")
+
+        with eval_col2:
+            st.caption(
+                "Evaluasi menghitung metrik: Faithfulness, Answer Relevancy, Context Precision, dan Context Recall menggunakan RAGAS.")
 
         st.divider()
 
         # =========================================
-        # KOMPONEN 6 TABS UTAMA (Bebas dari Bungkus JSON)
+        # KOMPONEN 8 TABS UTAMA (Bebas dari Bungkus JSON)
         # =========================================
-        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
             "📝 Ringkasan", "⚠️ Risiko", "❓ Q&A",
-            "📂 Pasal", "⏱️ Timeline", "🔄 Komparasi", "⚙️ Raw Log"
+            "📂 Pasal", "⏱️ Timeline", "🔄 Komparasi", "🗣️ Transkripsi", "⚙️ Raw Log"
         ])
 
         # --- TAB 1: SUMMARY ---
@@ -242,8 +315,24 @@ if session_id:
             else:
                 st.info("Tidak ada data perbandingan.")
 
-        # --- TAB 6: RAW LOG ---
+        # --- TAB 7: TRANSCRIPTION ---
         with tab7:
+            st.write("### 🗣️ Transkripsi Audio")
+            col_t1, col_t2 = st.columns(2)
+            with col_t1:
+                st.info(
+                    f"**🗣️ Hasil Transkripsi Suara (Raw):**\n\n{data.get('raw_transcribe')}")
+            with col_t2:
+                st.success(
+                    f"**✨ Hasil Perbaikan Teks (Repaired):**\n\n{data.get('repaired_text')}")
+
+            # Additional metadata
+            st.divider()
+            st.markdown("#### 🔍 Query Pencarian")
+            st.code(data.get('search_query') or '-', language='text')
+
+        # --- TAB 8: RAW LOG ---
+        with tab8:
             st.write("### ⚙️ Raw Metadata & JSONB Response")
             with st.expander("Lihat Raw JSON Payload"):
                 st.json(data)
