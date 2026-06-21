@@ -343,6 +343,7 @@ def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledg
         "history_id") or rag_response.get("session_id")
     if history_id:
         st.session_state["current_session_id"] = history_id
+        st.session_state.pop("selected_history_id", None)
 
     # Invalidate caches so the results page fetches fresh data
     st.session_state["_force_refresh_history"] = True
@@ -390,6 +391,7 @@ def _run_text_pipeline(text: str, knowledge_base: str):
         "history_id") or rag_response.get("session_id")
     if history_id:
         st.session_state["current_session_id"] = history_id
+        st.session_state.pop("selected_history_id", None)
 
     st.session_state["_force_refresh_history"] = True
     st.session_state.pop("_db_history_cache", None)
