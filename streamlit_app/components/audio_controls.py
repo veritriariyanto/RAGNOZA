@@ -4,7 +4,7 @@
 
 import logging
 from pathlib import Path
-
+import time
 import requests
 import streamlit as st
 from streamlit_mic_recorder import mic_recorder
@@ -33,7 +33,8 @@ _KEY_TRANSCRIPTION = "_audio_transcription"
 # =============================================================================
 
 def _inject_styles():
-    css_path = Path(__file__).resolve().parent.parent / "assets" / "styles" / "main.css"
+    css_path = Path(__file__).resolve().parent.parent / \
+        "assets" / "styles" / "main.css"
     with open(css_path, "r", encoding="utf-8") as f:
         css = f.read()
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
@@ -315,7 +316,12 @@ def render_audio_controls():
 # =============================================================================
 
 def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledge_base: str, auto_evaluate: bool = False):
-    with st.spinner("⏳ Memproses audio → RAG → Material... (30–90 detik)"):
+    status_label = "⏳ Menjalankan Pipeline RAG & Evaluasi..." if auto_evaluate else "⏳ Menjalankan Pipeline RAG..."
+
+    with st.status(status_label, expanded=True) as status:
+        status.write(
+            "🎙️ Mentranskripsi audio dan melakukan pencarian referensi hukum...")
+
         rag_response = process_audio_integrated(
             audio_bytes=audio_bytes,
             filename=filename,
@@ -325,50 +331,31 @@ def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledg
             session_id=get_rag_session_id(),
         )
 
-    if rag_response["status"] == "error":
-        st.error(f"❌ Pipeline RAG gagal: {rag_response['error']}")
-        return
+        if rag_response.get("status") == "error":
+            status.update(label="❌ Pipeline RAG Gagal!",
+                          state="error", expanded=True)
+            st.error(f"Detail Error: {rag_response.get('error')}")
+            return
 
-    transcription = rag_response.get("transcription", {})
-    material = rag_response.get("generated_material")
-    rag_meta = rag_response.get("rag", {})
-    context = rag_response.get("raw_context", "")
-    question = transcription.get("repaired") or transcription.get("raw", "")
+        if auto_evaluate:
+            status.write("📊 Mengambil dan memvalidasi skor evaluasi RAGAS...")
 
-    # Store result in session state for the results page
-    set_last_rag_result(
-        question=question,
-        context=context,
-        generated_material=material,
-        transcription_raw=transcription.get("raw", ""),
-        knowledge_base=knowledge_base,
-        sources_count=rag_meta.get("sources_count", 0),
-        has_context=rag_meta.get("has_context", False),
-        query_used=rag_meta.get("query_used", question),
-        history_id=rag_response.get("history_id"),
-        session_id=rag_response.get("session_id"),
-    )
-    set_rag_session_id(rag_response.get("session_id") or get_rag_session_id())
+        status.update(
+            label="✅ Semua proses selesai! Mengalihkan halaman...", state="complete")
 
-    # Set current_session_id so 1_Hasil_Generate.py can pick it up
-    # Use history_id since get_history_by_id expects a history record ID
-    history_id = rag_response.get(
-        "history_id") or rag_response.get("session_id")
-    if history_id:
-        st.session_state["current_session_id"] = history_id
-        st.session_state.pop("selected_history_id", None)
-
-    # Invalidate caches so the results page fetches fresh data
-    st.session_state["_force_refresh_history"] = True
-    st.session_state.pop("_db_history_cache", None)
-
-    # Redirect to the results page
-    st.switch_page("pages/1_Hasil_Generate.py")
+    # ── REDIRECT DI LUAR BLOK STATUS (Setelah status complete) ──
+    _handle_pipeline_success(rag_response, knowledge_base)
 
 
 def _run_text_pipeline(text: str, knowledge_base: str, auto_evaluate: bool = False):
     """Run RAG pipeline from existing transcription text (no STT)."""
-    with st.spinner("⏳ Memproses teks → RAG → Material... (30–90 detik)"):
+    status_label = "⏳ Menjalankan Pipeline RAG & Evaluasi..." if auto_evaluate else "⏳ Menjalankan Pipeline RAG..."
+
+    # PERBAIKAN: Seluruh proses harus dikurung di dalam block status sampai selesai!
+    with st.status(status_label, expanded=True) as status:
+        status.write(
+            "🔍 Mencari referensi hukum dan menyusun analisis dari teks...")
+
         rag_response = process_text_integrated(
             text=text,
             knowledge_base=knowledge_base,
@@ -376,10 +363,28 @@ def _run_text_pipeline(text: str, knowledge_base: str, auto_evaluate: bool = Fal
             session_id=get_rag_session_id(),
         )
 
-    if rag_response["status"] == "error":
-        st.error(f"❌ Pipeline RAG gagal: {rag_response['error']}")
-        return
+        if rag_response.get("status") == "error":
+            status.update(label="❌ Pipeline RAG Gagal!",
+                          state="error", expanded=True)
+            st.error(f"Detail Error: {rag_response.get('error')}")
+            return
 
+        if auto_evaluate:
+            status.write("📊 Mengambil dan memvalidasi skor evaluasi RAGAS...")
+
+        status.update(
+            label="✅ Semua proses selesai! Mengalihkan halaman...", state="complete")
+
+    # ── REDIRECT DI LUAR BLOK STATUS ──
+    _handle_pipeline_success(rag_response, knowledge_base)
+
+
+# =============================================================================
+# REFACTOR: Posisikan Pemindahan Halaman ke Helper Terpisah
+# =============================================================================
+
+def _handle_pipeline_success(rag_response: dict, knowledge_base: str):
+    """Mengurus penyimpanan session state dan perpindahan halaman secara terpusat."""
     transcription = rag_response.get("transcription", {})
     material = rag_response.get("generated_material")
     rag_meta = rag_response.get("rag", {})
@@ -409,12 +414,12 @@ def _run_text_pipeline(text: str, knowledge_base: str, auto_evaluate: bool = Fal
     st.session_state["_force_refresh_history"] = True
     st.session_state.pop("_db_history_cache", None)
 
+    # Lakukan redirect aman
     st.switch_page("pages/1_Hasil_Generate.py")
-
-
 # =============================================================================
 # HELPER
 # =============================================================================
+
 
 def _handle_transcription_success(transcription: str, knowledge_base: str):
     """Show editable transcription result with a button to run the full pipeline."""

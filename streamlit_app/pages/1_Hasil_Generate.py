@@ -151,46 +151,51 @@ if session_id:
         has_precision = ragas_metrics and ragas_metrics.get(
             "context_precision") is not None if ragas_metrics else False
 
-        if has_precision:
-            st.info("✅ Sudah dievaluasi dengan ground truth (4 metrik aktif).")
-        else:
-            with st.expander("➕ Tambah Ground Truth untuk Context Precision & Recall", expanded=False):
+        expander_label = (
+            "🔄 Evaluasi Ulang dengan Ground Truth" if has_precision
+            else "➕ Tambah Ground Truth untuk Context Precision & Recall"
+        )
+        with st.expander(expander_label, expanded=False):
+            if has_precision:
+                st.info(
+                    "✅ Sudah dievaluasi dengan ground truth. Isi ulang untuk evaluasi ulang dengan jawaban referensi baru.")
+            else:
                 st.caption(
                     "Ground truth adalah jawaban ideal/referensi dari legal expert. "
                     "Jika diisi, akan mengaktifkan 2 metrik tambahan: Context Precision dan Context Recall."
                 )
-                gt_input = st.text_area(
-                    "Ground Truth",
-                    placeholder="Masukkan jawaban referensi ideal dari legal expert...",
-                    height=100,
-                    key=f"gt_input_{session_id}",
-                )
-                if st.button(
-                    "🔄 Evaluasi dengan Ground Truth",
-                    key=f"btn_reeval_{session_id}",
-                    use_container_width=True,
-                ):
-                    if not gt_input.strip():
-                        st.warning("⚠️ Ground truth tidak boleh kosong.")
+            gt_input = st.text_area(
+                "Ground Truth",
+                placeholder="Masukkan jawaban referensi ideal dari legal expert...",
+                height=100,
+                key=f"gt_input_{session_id}",
+            )
+            if st.button(
+                "🔄 Evaluasi dengan Ground Truth",
+                key=f"btn_reeval_{session_id}",
+                use_container_width=True,
+            ):
+                if not gt_input.strip():
+                    st.warning("⚠️ Ground truth tidak boleh kosong.")
+                else:
+                    question = data.get("search_query") or data.get(
+                        "repaired_text") or ""
+                    context = data.get("retrieved_context") or ""
+                    with st.spinner("⏳ Menjalankan evaluasi dengan ground truth..."):
+                        reeval_result = run_ragas_reeval(
+                            ground_truth=gt_input.strip(),
+                            history_id=session_id,
+                            question=question,
+                            context=context,
+                        )
+                    if reeval_result.get("status") == "success":
+                        st.success(
+                            "✅ Evaluasi ground truth berhasil! Memuat ulang...")
+                        st.session_state.pop("_db_history_cache", None)
+                        st.rerun()
                     else:
-                        question = data.get("search_query") or data.get(
-                            "repaired_text") or ""
-                        context = data.get("retrieved_context") or ""
-                        with st.spinner("⏳ Menjalankan evaluasi dengan ground truth..."):
-                            reeval_result = run_ragas_reeval(
-                                ground_truth=gt_input.strip(),
-                                history_id=session_id,
-                                question=question,
-                                context=context,
-                            )
-                        if reeval_result.get("status") == "success":
-                            st.success(
-                                "✅ Evaluasi ground truth berhasil! Memuat ulang...")
-                            st.session_state.pop("_db_history_cache", None)
-                            st.rerun()
-                        else:
-                            st.error(
-                                f"❌ Evaluasi gagal: {reeval_result.get('error', 'Unknown error')}")
+                        st.error(
+                            f"❌ Evaluasi gagal: {reeval_result.get('error', 'Unknown error')}")
 
         st.divider()
 
@@ -267,7 +272,8 @@ if session_id:
                 if risks_list:
                     st.markdown("#### 🚨 Daftar Bahaya Risiko yang Terdeteksi:")
                     for idx, rsk in enumerate(risks_list, 1):
-                        rsk_clean = str(rsk).replace('[', '').replace(']', '').replace('"', '')
+                        rsk_clean = str(rsk).replace(
+                            '[', '').replace(']', '').replace('"', '')
                         st.error(f"**{idx}.** {rsk_clean}")
 
                 # Tampilkan rekomendasi tindakan
@@ -280,7 +286,8 @@ if session_id:
                 if mitigasi_list:
                     st.markdown("#### 🛡️ Langkah Mitigasi / Pencegahan:")
                     for idx, mit in enumerate(mitigasi_list, 1):
-                        mit_clean = str(mit).replace('[', '').replace(']', '').replace('"', '')
+                        mit_clean = str(mit).replace(
+                            '[', '').replace(']', '').replace('"', '')
                         st.info(f"**Langkah {idx}:** {mit_clean}")
 
             # 3. Fallback jika strukturnya berupa list murni (antisipasi legacy data)
