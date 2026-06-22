@@ -16,7 +16,7 @@ from fastapi import BackgroundTasks
 
 from app.services.prompting.audio.stt_service import STTService
 from app.services.prompting.prompt.repair_text import TextRefinerService
-from app.services.knowlagebase.qdrant_storage import QdrantStorage
+from app.services.knowlagebase.qdrant_service import QdrantService
 from app.services.prompting.prompt.generate_content_service import MaterialGeneratorService
 from app.schemas.prompting.generate_content import MaterialRequest
 from app.schemas.prompting.integration import RAGIntegrationResponse
@@ -34,7 +34,7 @@ class RAGIntegrationService:
         self,
         stt_service: STTService,
         text_service: TextRefinerService,
-        vector_service: QdrantStorage,
+        vector_service: QdrantService,
         material_service: MaterialGeneratorService,
         db: Session,
     ):

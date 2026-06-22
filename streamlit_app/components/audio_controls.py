@@ -33,7 +33,7 @@ _KEY_TRANSCRIPTION = "_audio_transcription"
 # =============================================================================
 
 def _inject_styles():
-    css_path = Path("streamlit_app/assets/styles/main.css")
+    css_path = Path(__file__).resolve().parent.parent / "assets" / "styles" / "main.css"
     with open(css_path, "r", encoding="utf-8") as f:
         css = f.read()
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)

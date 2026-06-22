@@ -13,7 +13,7 @@ from app.core.embeddings import embeddings
 from app.core.postgres import get_db
 from app.core.qdrant import qdrant_db
 from app.schemas.prompting.integration import TextIntegrationRequest
-from app.services.knowlagebase.qdrant_storage import QdrantStorage
+from app.services.knowlagebase.qdrant_service import QdrantService
 from app.services.prompting.audio.stt_service import STTService
 from app.services.prompting.integration.rag_integration_service import RAGIntegrationService
 from app.services.prompting.prompt.generate_content_service import MaterialGeneratorService
@@ -31,7 +31,7 @@ async def get_rag_service(db: Session = Depends(get_db)) -> RAGIntegrationServic
     stt = STTService()
     refiner = TextRefinerService()
     material_gen = MaterialGeneratorService()
-    qdrant = QdrantStorage(db=qdrant_db.client, embeddings=embeddings)
+    qdrant = QdrantService()
 
     return RAGIntegrationService(
         stt_service=stt,

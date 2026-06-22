@@ -222,8 +222,8 @@ if session_id:
                 if risks_list:
                     st.markdown("#### 🚨 Daftar Bahaya Risiko yang Terdeteksi:")
                     for idx, rsk in enumerate(risks_list, 1):
-                        st.error(
-                            f"**{idx}.** {str(rsk).replace('[', '').replace(']', '').replace('\"', '')}")
+                        rsk_clean = str(rsk).replace('[', '').replace(']', '').replace('"', '')
+                        st.error(f"**{idx}.** {rsk_clean}")
 
                 # Tampilkan rekomendasi tindakan
                 if risk_raw.get("recommendation"):
@@ -235,8 +235,8 @@ if session_id:
                 if mitigasi_list:
                     st.markdown("#### 🛡️ Langkah Mitigasi / Pencegahan:")
                     for idx, mit in enumerate(mitigasi_list, 1):
-                        st.info(
-                            f"**Langkah {idx}:** {str(mit).replace('[', '').replace(']', '').replace('\"', '')}")
+                        mit_clean = str(mit).replace('[', '').replace(']', '').replace('"', '')
+                        st.info(f"**Langkah {idx}:** {mit_clean}")
 
             # 3. Fallback jika strukturnya berupa list murni (antisipasi legacy data)
             elif isinstance(risk_raw, list):
