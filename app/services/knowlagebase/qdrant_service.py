@@ -1,42 +1,574 @@
-# app/services/knowlagebase/qdrant_service.py
-
 """
-Qdrant service moved into knowledgebase package.
+app/services/knowlagebase/qdrant_service.py
+==========================================
+QdrantService — menyimpan dan mencari parent-child chunks
+sesuai format output baru ChunkingService.
+
+Struktur koleksi (per knowledge base):
+  {base_name}_parent  → satu titik per chunk `type=parent`
+  {base_name}_child   → satu titik per chunk `type=child`, berisi parent_id
+
+Payload standar tiap titik:
+  chunk_id, type, section, title(parent)/parent_id(child),
+  text, source, pasal, ayat, poin, pasal_rujukan, bagian,
+  document_id, created_at
 """
 
+from __future__ import annotations
+
+import uuid
+import asyncio
 import logging
-from typing import Optional, List, Dict, Any
+from datetime import datetime, timezone
+from typing import List, Dict, Optional, Any
+
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.http import models as qmodels
 
 from app.core.config import settings
-from app.database.models.schemas import DocumentChunk
 
 logger = logging.getLogger(__name__)
 
+# Ukuran vektor default (all-MiniLM-L6-v2 → 384; multilingual-MiniLM → 384)
+_DEFAULT_VECTOR_SIZE = 384
+
+
+# ─────────────────────────────────────────────────────────
+# SERVICE
+# ─────────────────────────────────────────────────────────
 
 class QdrantService:
-    def __init__(self):
-        self._host = settings.qdrant_host
-        self._port = settings.qdrant_port
-        self._collection_parent = settings.embedding_collection_parent
-        self._collection_child = settings.embedding_collection_child
+    """
+    Mengelola koleksi Qdrant dan menyimpan/mencari parent-child chunks.
+    Menggunakan AsyncQdrantClient agar kompatibel dengan event loop FastAPI.
+    """
 
-    def _get_client(self):
-        from qdrant_client import QdrantClient
-        return QdrantClient(host=self._host, port=self._port, timeout=10)
+    def __init__(self, vector_size: int = _DEFAULT_VECTOR_SIZE):
+        self._host = settings.QDRANT_HOST
+        self._port = settings.QDRANT_PORT
+        self._vector_size = vector_size
+        self._client: Optional[AsyncQdrantClient] = None
 
-    def health_check(self) -> dict:
+    # ── Client ────────────────────────────────────────────
+
+    def _get_client(self) -> AsyncQdrantClient:
+        if self._client is None:
+            self._client = AsyncQdrantClient(
+                host=self._host,
+                port=self._port,
+                timeout=30,
+            )
+        return self._client
+
+    # ── Health ────────────────────────────────────────────
+
+    async def health_check(self) -> dict:
         try:
             client = self._get_client()
-            collections = client.get_collections()
-            return {"status": "ok", "host": self._host, "port": self._port, "collections": len(collections.collections), "collection_names": [c.name for c in collections.collections]}
+            cols = await client.get_collections()
+            return {
+                "status": "ok",
+                "host": self._host,
+                "port": self._port,
+                "total_collections": len(cols.collections),
+                "collection_names": [c.name for c in cols.collections],
+            }
         except Exception as e:
             logger.warning(f"[QDRANT] Health check gagal: {e}")
-            return {"status": "error", "detail": str(e), "host": self._host, "port": self._port}
+            return {"status": "error", "detail": str(e)}
 
-    def list_knowledgebase_names(self) -> List[str]:
-        """Return base knowledgebase names from collections ending with _parent."""
+    # ── Collection Management ─────────────────────────────
+
+    async def ensure_collection(self, name: str) -> None:
+        """Buat koleksi jika belum ada."""
         client = self._get_client()
-        collections = client.get_collections()
-        return sorted({c.name.replace("_parent", "") for c in collections.collections if c.name.endswith("_parent")})
+        existing = {c.name for c in (await client.get_collections()).collections}
+        if name not in existing:
+            await client.create_collection(
+                collection_name=name,
+                vectors_config=qmodels.VectorParams(
+                    size=self._vector_size,
+                    distance=qmodels.Distance.COSINE,
+                ),
+                optimizers_config=qmodels.OptimizersConfigDiff(
+                    indexing_threshold=1000,
+                ),
+            )
+            logger.info(f"[QDRANT] Koleksi '{name}' dibuat (size={self._vector_size})")
+        else:
+            logger.debug(f"[QDRANT] Koleksi '{name}' sudah ada")
 
-    # Other methods preserved (ensure_collection, upsert_chunks, search...) — omitted for brevity
+    async def list_collections(self) -> List[str]:
+        """Kembalikan semua nama base KB (tanpa suffix _parent/_child)."""
+        client = self._get_client()
+        cols = await client.get_collections()
+        return sorted({
+            c.name.replace("_parent", "").replace("_child", "")
+            for c in cols.collections
+            if c.name.endswith("_parent") or c.name.endswith("_child")
+        })
+
+    async def delete_knowledgebase(self, base_name: str) -> bool:
+        client = self._get_client()
+        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        for suffix in ["_parent", "_child"]:
+            try:
+                await client.delete_collection(f"{clean_base}{suffix}")
+                logger.info(f"[QDRANT] Koleksi '{clean_base}{suffix}' dihapus")
+            except Exception as e:
+                logger.warning(f"[QDRANT] Gagal hapus '{clean_base}{suffix}': {e}")
+        return True
+
+    async def get_stats(self, base_name: str) -> Dict:
+        client = self._get_client()
+        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        try:
+            p = await client.get_collection(f"{clean_base}_parent")
+            c = await client.get_collection(f"{clean_base}_child")
+            return {
+                "parent_count": p.points_count,
+                "child_count": c.points_count,
+                "status": "active",
+            }
+        except Exception as e:
+            return {"error": str(e), "status": "error"}
+
+    # ── Store (dari raw_chunks baru) ──────────────────────
+
+    async def store_chunks(
+        self,
+        raw_chunks: List[dict],
+        base_name: str,
+        document_id: str,
+        embed_fn,                   # callable: list[str] → list[list[float]]
+        batch_size: int = 32,
+    ) -> dict:
+        """
+        Simpan seluruh raw_chunks (format baru ChunkingService) ke Qdrant.
+
+        Args:
+            raw_chunks : list dict dari chunking_result.__dict__['raw_chunks']
+            base_name  : nama KB (koleksi = {base_name}_parent / _child)
+            document_id: ID dokumen
+            embed_fn   : fungsi embed sinkron (list[str] → list[list[float]])
+            batch_size : jumlah chunk per batch embedding
+
+        Return:
+            dict dengan statistik penyimpanan
+        """
+        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        parent_col = f"{clean_base}_parent"
+        child_col  = f"{clean_base}_child"
+
+        await self.ensure_collection(parent_col)
+        await self.ensure_collection(child_col)
+
+        parents = [c for c in raw_chunks if c.get("type") == "parent"]
+        children = [c for c in raw_chunks if c.get("type") == "child"]
+
+        created_at = datetime.now(timezone.utc).isoformat()
+
+        # ── Embed & store parents ─────────────────────────
+        parent_stored = await self._embed_and_upsert(
+            client=self._get_client(),
+            collection=parent_col,
+            chunks=parents,
+            embed_fn=embed_fn,
+            batch_size=batch_size,
+            extra_payload={"document_id": document_id, "created_at": created_at},
+        )
+
+        # ── Embed & store children ────────────────────────
+        child_stored = await self._embed_and_upsert(
+            client=self._get_client(),
+            collection=child_col,
+            chunks=children,
+            embed_fn=embed_fn,
+            batch_size=batch_size,
+            extra_payload={"document_id": document_id, "created_at": created_at},
+        )
+
+        logger.info(
+            f"[QDRANT] Store selesai: {parent_stored} parent, {child_stored} child "
+            f"→ '{clean_base}'"
+        )
+        return {
+            "status": "success",
+            "base_name": clean_base,
+            "parent_stored": parent_stored,
+            "child_stored": child_stored,
+            "total_stored": parent_stored + child_stored,
+        }
+
+    async def _embed_and_upsert(
+        self,
+        client: AsyncQdrantClient,
+        collection: str,
+        chunks: List[dict],
+        embed_fn,
+        batch_size: int,
+        extra_payload: dict,
+    ) -> int:
+        """Batch embed lalu upsert ke satu koleksi. Return jumlah yang berhasil."""
+        if not chunks:
+            return 0
+
+        stored = 0
+        for i in range(0, len(chunks), batch_size):
+            batch = chunks[i : i + batch_size]
+            texts = [c.get("text", "") for c in batch]
+
+            # Jalankan embedding di thread agar tidak blokir event loop
+            vectors: List[List[float]] = await asyncio.to_thread(embed_fn, texts)
+
+            points = []
+            for chunk, vector in zip(batch, vectors):
+                payload = self._build_payload(chunk, extra_payload)
+                points.append(
+                    qmodels.PointStruct(
+                        id=str(uuid.uuid4()),
+                        vector=vector,
+                        payload=payload,
+                    )
+                )
+
+            await client.upsert(collection_name=collection, points=points)
+            stored += len(points)
+            logger.debug(f"[QDRANT] Upsert {len(points)} poin ke '{collection}' (batch {i//batch_size + 1})")
+
+        return stored
+
+    @staticmethod
+    def _build_payload(chunk: dict, extra: dict) -> dict:
+        """
+        Bangun payload Qdrant dari satu raw chunk dict.
+        Payload disimpan secara flat untuk memudahkan filtering.
+        """
+        meta = chunk.get("metadata", {})
+        payload = {
+            # Identitas chunk
+            "chunk_id":   chunk.get("chunk_id", ""),
+            "type":       chunk.get("type", ""),
+            "section":    chunk.get("section", ""),
+            "title":      chunk.get("title", ""),       # hanya parent
+            "parent_id":  chunk.get("parent_id", ""),  # hanya child
+            # Teks
+            "content":    chunk.get("text", ""),
+            # Metadata dokumen
+            "source":     meta.get("source", ""),
+            "bagian":     meta.get("bagian", ""),
+            "pasal":      meta.get("pasal"),            # int atau None
+            "ayat":       meta.get("ayat"),             # int atau None
+            "poin":       meta.get("poin", ""),
+            "huruf":      meta.get("huruf", ""),
+            "pasal_rujukan": meta.get("pasal_rujukan"), # int atau None (penjelasan)
+            # Tambahan
+            **extra,
+        }
+        # Hapus key None agar Qdrant tidak complain
+        return {k: v for k, v in payload.items() if v is not None and v != ""}
+
+    # ── Search ────────────────────────────────────────────
+
+    async def search(
+        self,
+        base_name: str,
+        query_vector: List[float],
+        section: Optional[str] = None,
+        pasal: Optional[int] = None,
+        limit: int = 5,
+        score_threshold: float = 0.5,
+    ) -> Dict:
+        """
+        Cari child chunks yang relevan, lalu fetch parent-nya untuk konteks.
+
+        Args:
+            base_name     : nama KB
+            query_vector  : vektor hasil embed query
+            section       : filter section ("Konsiderans"/"Batang Tubuh"/"Penjelasan")
+            pasal         : filter nomor pasal
+            limit         : jumlah hasil
+            score_threshold: batas minimal similarity score
+
+        Return:
+            {total_results, results: [{score, child, parent}]}
+        """
+        client = self._get_client()
+        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        child_col  = f"{clean_base}_child"
+        parent_col = f"{clean_base}_parent"
+
+        # Bangun filter
+        conditions = []
+        if section:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="section",
+                    match=qmodels.MatchValue(value=section),
+                )
+            )
+        if pasal is not None:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="pasal",
+                    match=qmodels.MatchValue(value=pasal),
+                )
+            )
+        q_filter = qmodels.Filter(must=conditions) if conditions else None
+
+        # Search di koleksi child
+        search_resp = await client.query_points(
+            collection_name=child_col,
+            query=query_vector,
+            limit=limit,
+            query_filter=q_filter,
+            with_payload=True,
+            score_threshold=score_threshold,
+        )
+
+        if not search_resp.points:
+            return {"total_results": 0, "results": []}
+
+        # Fetch parent chunks sekaligus (batch)
+        parent_chunk_ids = list({
+            hit.payload.get("parent_id")
+            for hit in search_resp.points
+            if hit.payload.get("parent_id")
+        })
+
+        parent_map: Dict[str, Any] = {}
+        if parent_chunk_ids:
+            # scroll by chunk_id filter
+            for pid in parent_chunk_ids:
+                scroll_resp, _ = await client.scroll(
+                    collection_name=parent_col,
+                    scroll_filter=qmodels.Filter(
+                        must=[qmodels.FieldCondition(
+                            key="chunk_id",
+                            match=qmodels.MatchValue(value=pid),
+                        )]
+                    ),
+                    limit=1,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                if scroll_resp:
+                    parent_map[pid] = scroll_resp[0].payload
+
+        results = []
+        for hit in search_resp.points:
+            parent_id = hit.payload.get("parent_id", "")
+            parent_payload = parent_map.get(parent_id, {})
+            results.append({
+                "score": round(hit.score, 4),
+                "child": {
+                    "chunk_id":  hit.payload.get("chunk_id"),
+                    "section":   hit.payload.get("section"),
+                    "content":   hit.payload.get("content"),
+                    "raw_text":  hit.payload.get("content"),  # legacy compat
+                    "type":      hit.payload.get("section"),   # legacy compat
+                    "reference_label": hit.payload.get("chunk_id"), # legacy compat
+                    "pasal":     hit.payload.get("pasal"),
+                    "ayat":      hit.payload.get("ayat"),
+                    "poin":      hit.payload.get("poin"),
+                    "parent_id": parent_id,
+                    "keyword_tags": [],  # legacy compat
+                },
+                "parent": {
+                    "chunk_id": parent_payload.get("chunk_id"),
+                    "title":    parent_payload.get("title"),
+                    "content":  parent_payload.get("content"),
+                    "section":  parent_payload.get("section"),
+                    "pasal":    parent_payload.get("pasal"),
+                    "reference_label": parent_payload.get("title") or parent_payload.get("chunk_id"), # legacy compat
+                    "pasal_nomor": parent_payload.get("pasal"), # legacy compat
+                },
+            })
+
+        return {"total_results": len(results), "results": results}
+
+    async def search_knowledgebase(
+        self,
+        base_name: str,
+        query: str,
+        section_type: Optional[str] = None,
+        pasal_type: Optional[str] = None,
+        limit: int = 5
+    ) -> Dict:
+        """
+        Backward-compatible wrapper untuk pencarian RAG.
+        Meng-embed query secara otomatis dan memanggil search().
+        """
+        import re
+        from app.core.embeddings import embeddings
+        query_vector = await asyncio.to_thread(embeddings.embed_query, query)
+        
+        # Parse nomor pasal jika berupa teks
+        pasal_filter = None
+        if pasal_type:
+            try:
+                m = re.search(r"\d+", pasal_type)
+                if m:
+                    pasal_filter = int(m.group(0))
+            except Exception:
+                pass
+
+        results_dict = await self.search(
+            base_name=base_name,
+            query_vector=query_vector,
+            section=section_type,
+            pasal=pasal_filter,
+            limit=limit
+        )
+        # Menambahkan parameter query untuk kompatibilitas respons
+        results_dict["query"] = query
+        return results_dict
+
+    async def get_kb_info(self, base_name: str) -> Dict:
+        """Ambil metadata dasar dari collection parent."""
+        client = self._get_client()
+        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        parent_col = f"{clean_base}_parent"
+        points, _ = await client.scroll(
+            collection_name=parent_col,
+            limit=1,
+            with_payload=True,
+            with_vectors=False,
+        )
+        if not points:
+            raise ValueError(f"Knowledge base '{clean_base}' tidak ditemukan.")
+        payload = points[0].payload
+        return {
+            "name": clean_base,
+            "document_id": payload.get("document_id"),
+            "source": payload.get("source"),
+            "created_at": payload.get("created_at"),
+        }
+
+    # ── Legacy compat (upsert_chunks dari DocumentChunk list) ─────────────────
+
+    def upsert_chunks(
+        self,
+        chunks,   # list[DocumentChunk]
+        collection_name: Optional[str] = None,
+    ) -> dict:
+        """
+        Backward-compat: simpan DocumentChunk yang sudah ber-embedding.
+        Dipanggil dari endpoint /process saat embed=true.
+        Akan membagi parent chunk ke parent collection dan child chunk ke child collection.
+        """
+        import asyncio as _asyncio
+        from qdrant_client import QdrantClient
+        from qdrant_client.http import models as _m
+
+        if collection_name:
+            clean_base = collection_name.replace("_parent", "").replace("_child", "")
+            parent_col = f"{clean_base}_parent"
+            child_col = f"{clean_base}_child"
+        else:
+            parent_col = settings.embedding_collection_parent
+            child_col = settings.embedding_collection_child
+
+        client = QdrantClient(host=self._host, port=self._port, timeout=30)
+
+        # Pastikan kedua koleksi ada
+        for col in [parent_col, child_col]:
+            try:
+                existing = {c.name for c in client.get_collections().collections}
+                if col not in existing:
+                    client.create_collection(
+                        collection_name=col,
+                        vectors_config=_m.VectorParams(
+                            size=self._vector_size,
+                            distance=_m.Distance.COSINE,
+                        ),
+                    )
+                    logger.info(f"[QDRANT] Koleksi '{col}' dibuat")
+            except Exception as e:
+                logger.warning(f"[QDRANT] Gagal cek/buat koleksi '{col}': {e}")
+
+        parent_points = []
+        child_points = []
+
+        for c in chunks:
+            if c.embedding is None:
+                continue
+            point = _m.PointStruct(
+                id=str(uuid.uuid4()),
+                vector=c.embedding,
+                payload={
+                    "chunk_id": c.chunk_id,
+                    "content": c.content,
+                    "is_parent": c.metadata.is_parent,
+                    "level_number": c.metadata.level_number,
+                    "document_id": c.metadata.document_id,
+                    "source_filename": c.metadata.source_filename,
+                    "pasal_number": c.metadata.pasal_number,
+                    "ayat_number": c.metadata.ayat_number,
+                    "parent_chunk_id": c.metadata.parent_chunk_id,
+                },
+            )
+            # Jika c.metadata.is_parent True, masukkan ke parent collection
+            if c.metadata.is_parent:
+                parent_points.append(point)
+            else:
+                child_points.append(point)
+
+        if not parent_points and not child_points:
+            return {
+                "status": "skipped",
+                "reason": "no embedded chunks",
+                "parent_collection": parent_col,
+                "child_collection": child_col,
+            }
+
+        upserted_parent = 0
+        upserted_child = 0
+        errors = []
+
+        if parent_points:
+            try:
+                client.upsert(collection_name=parent_col, points=parent_points)
+                logger.info(f"[QDRANT] Upsert {len(parent_points)} parent poin ke '{parent_col}'")
+                upserted_parent = len(parent_points)
+            except Exception as e:
+                logger.error(f"[QDRANT] Upsert parent gagal ke '{parent_col}': {e}")
+                errors.append(f"Parent upsert error: {str(e)}")
+
+        if child_points:
+            try:
+                client.upsert(collection_name=child_col, points=child_points)
+                logger.info(f"[QDRANT] Upsert {len(child_points)} child poin ke '{child_col}'")
+                upserted_child = len(child_points)
+            except Exception as e:
+                logger.error(f"[QDRANT] Upsert child gagal ke '{child_col}': {e}")
+                errors.append(f"Child upsert error: {str(e)}")
+
+        if errors:
+            return {
+                "status": "partial_error" if (upserted_parent or upserted_child) else "error",
+                "detail": "; ".join(errors),
+                "parent_collection": parent_col,
+                "child_collection": child_col,
+                "parent_upserted": upserted_parent,
+                "child_upserted": upserted_child,
+            }
+
+        return {
+            "status": "success",
+            "parent_collection": parent_col,
+            "child_collection": child_col,
+            "parent_upserted": upserted_parent,
+            "child_upserted": upserted_child,
+            "total_upserted": upserted_parent + upserted_child,
+        }
+
+    def get_collections_detailed(self) -> list:
+        """Sinkron — untuk endpoint /collections (non-async route)."""
+        from qdrant_client import QdrantClient
+        client = QdrantClient(host=self._host, port=self._port, timeout=10)
+        try:
+            cols = client.get_collections().collections
+            return [{"name": c.name} for c in cols]
+        except Exception as e:
+            return [{"error": str(e)}]

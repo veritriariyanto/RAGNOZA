@@ -104,10 +104,11 @@ async def upload_and_clean(file: UploadFile = File(..., description="File PDF un
     })
 
 
-@router.post("/process", summary="Chunking (+ optional embed & index)")
+@router.post("/process", summary="Cleaning → Chunking (+ optional embed & index)")
 async def process_pdf(
     file: UploadFile = File(..., description="File PDF undang-undang"),
-    include_chunks_preview: bool = Query(False),
+    include_chunks_preview: bool = Query(False, description="Sertakan preview 20 chunk pertama"),
+    include_raw_chunks: bool = Query(False, description="Sertakan seluruh raw parent-child chunks dalam response"),
     embed: bool = Query(False),
     collection: Optional[str] = Query(None),
 ):
@@ -117,7 +118,9 @@ async def process_pdf(
     pdf_bytes = await file.read()
 
     try:
-        cleaning_result = await run_in_threadpool(get_cleaning_service().clean_from_bytes, pdf_bytes, file.filename)
+        cleaning_result = await run_in_threadpool(
+            get_cleaning_service().clean_from_bytes, pdf_bytes, file.filename
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cleaning gagal: {str(e)}")
 
@@ -127,8 +130,26 @@ async def process_pdf(
         raise HTTPException(status_code=500, detail=f"Chunking gagal: {str(e)}")
 
     all_chunks = chunking_result.all_chunks
+    raw_chunks = chunking_result.__dict__.get("raw_chunks", [])
 
-    response_data = {"cleaning_stats": {"total_pages": cleaning_result.total_pages}, "chunking_stats": {"total_chunks": chunking_result.total_chunks}, "embedding": None, "indexing": None}
+    response_data: Dict = {
+        "cleaning_stats": {
+            "total_pages": cleaning_result.total_pages,
+            "total_words": cleaning_result.total_words,
+            "metadata": cleaning_result.metadata,
+        },
+        "chunking_stats": {
+            "total_chunks": chunking_result.total_chunks,
+            "level_0_count": len(chunking_result.level_0_chunks),
+            "level_1_count": len(chunking_result.level_1_chunks),
+            "level_2_count": len(chunking_result.level_2_chunks),
+            "level_3_count": len(chunking_result.level_3_chunks),
+            "parent_count": sum(1 for c in raw_chunks if c.get("type") == "parent"),
+            "child_count": sum(1 for c in raw_chunks if c.get("type") == "child"),
+        },
+        "embedding": None,
+        "indexing": None,
+    }
 
     if embed:
         try:
@@ -138,14 +159,58 @@ async def process_pdf(
                 response_data["indexing"] = upsert_result
             except Exception as e:
                 response_data["indexing"] = {"error": str(e)}
-            response_data["embedding"] = {"model": settings.embedding_model, "embedded_chunks": sum(1 for c in embedded_chunks if c.embedding is not None)}
+            response_data["embedding"] = {
+                "model": settings.embedding_model,
+                "embedded_chunks": sum(1 for c in embedded_chunks if c.embedding is not None),
+            }
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Embedding/indexing gagal: {str(e)}")
 
     if include_chunks_preview:
-        response_data["chunks_preview"] = [{"chunk_id": c.chunk_id, "preview": c.preview} for c in all_chunks[:20]]
+        response_data["chunks_preview"] = [
+            {"chunk_id": c["chunk_id"], "type": c["type"], "section": c.get("section", ""), "text_preview": c["text"][:150]}
+            for c in raw_chunks[:20]
+        ]
 
-    return JSONResponse(content={"success": True, "message": f"Berhasil memproses: {chunking_result.total_chunks} chunks", "document_id": chunking_result.document_id, "data": response_data})
+    if include_raw_chunks:
+        response_data["raw_chunks"] = raw_chunks
+
+    return JSONResponse(content={
+        "success": True,
+        "message": f"Berhasil memproses: {chunking_result.total_chunks} chunks",
+        "document_id": chunking_result.document_id,
+        "data": response_data,
+    })
+
+
+@router.post("/process/chunks", summary="Kembalikan seluruh parent-child chunks dalam format JSON")
+async def process_and_get_chunks(
+    file: UploadFile = File(..., description="File PDF undang-undang"),
+):
+    """
+    Upload PDF → cleaning → chunking → kembalikan array JSON parent-child chunks.
+    Format output identik dengan contoh di app/document/uu_2_2002_full_parent_child_chunks.json.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Hanya file PDF yang diterima (.pdf)")
+
+    pdf_bytes = await file.read()
+
+    try:
+        cleaning_result = await run_in_threadpool(
+            get_cleaning_service().clean_from_bytes, pdf_bytes, file.filename
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Cleaning gagal: {str(e)}")
+
+    try:
+        chunking_result = await get_chunking_service().chunk(cleaning_result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Chunking gagal: {str(e)}")
+
+    raw_chunks = chunking_result.__dict__.get("raw_chunks", [])
+
+    return JSONResponse(content=raw_chunks)
 
 # ---------- end additions ----------
 

@@ -1,14 +1,34 @@
 """
 app/services/knowledgebase/chunking_service.py
-============================================
-Parent-Child Chunking service moved into knowledgebase package for
-easier maintenance. Implementation preserved.
+=============================================
+Parent-Child Chunking Service untuk dokumen hukum Indonesia.
+
+Format output chunk sesuai contoh di app/document/:
+  Parent:
+    {
+      "chunk_id":  "parent_konsiderans" | "parent_pasal_1" | "parent_penjelasan_pasal_1",
+      "type":      "parent",
+      "section":   "Konsiderans" | "Batang Tubuh" | "Penjelasan",
+      "title":     str,
+      "text":      str  ← teks lengkap/agregat pasal
+      "metadata":  { "source": str, "bagian"/"pasal"/"pasal_rujukan": ... }
+    }
+
+  Child:
+    {
+      "chunk_id":  "child_konsiderans_menimbang_a" | "child_pasal_1_ayat_1" | ...,
+      "type":      "child",
+      "parent_id": str,
+      "text":      str  ← unit kecil siap di-embed
+      "metadata":  { "source": str, ... }
+    }
 """
 
+from __future__ import annotations
+
 import re
-import uuid
 import logging
-from typing import Optional, List
+from typing import List, Optional, Dict, Any
 
 from app.database.models.schemas import (
     ChunkingResult,
@@ -20,14 +40,21 @@ from app.database.models.schemas import (
     PasalEntry,
 )
 from app.utils.text_utils import count_tokens, normalize_whitespace
-from app.config import settings
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
+# ─────────────────────────────────────────────────────────
+# SERVICE
+# ─────────────────────────────────────────────────────────
+
 class ChunkingService:
     """
-    Parent-Child Chunking Service menggunakan parsed_structure hasil cleaning.
+    Menghasilkan parent-child chunks dari CleaningResult.
+
+    Setiap chunk direpresentasikan sebagai dict (sesuai format JSON contoh)
+    dan juga dikemas dalam DocumentChunk (untuk pipeline Qdrant).
     """
 
     def __init__(self):
@@ -41,7 +68,10 @@ class ChunkingService:
         self.min_tokens = settings.chunk_min_tokens
 
     async def chunk(self, cleaning_result: CleaningResult) -> ChunkingResult:
-        logger.info(f"[CHUNKING] Memulai parent-child chunking: {cleaning_result.source_filename}")
+        """Entry point utama. Kembalikan ChunkingResult berisi semua chunk."""
+        logger.info(
+            f"[CHUNKING] Memulai parent-child chunking: {cleaning_result.source_filename}"
+        )
 
         result = ChunkingResult(
             document_id=cleaning_result.document_id,
@@ -49,267 +79,493 @@ class ChunkingService:
             metadata=cleaning_result.metadata,
         )
 
-        full_text = cleaning_result.full_cleaned_text
-        if not full_text.strip():
-            logger.warning("[CHUNKING] Teks kosong, tidak ada chunk yang dibuat")
-            return result
-
-        doc_title = self._build_document_title(cleaning_result.metadata)
-        doc_id = cleaning_result.document_id
-        src = cleaning_result.source_filename
-
-        bab_list = list(cleaning_result.parsed_structure.bab_list)
-        pasal_list = list(cleaning_result.parsed_structure.pasal_list)
-
-        if not bab_list and pasal_list:
-            dummy_bab = BabEntry(
-                number="UMUM",
-                title="KETENTUAN UMUM / TANPA BAB",
-                full_header="BAB UMUM",
-                char_start=pasal_list[0].char_start,
-                pasal_count=len(pasal_list)
-            )
-            bab_list = [dummy_bab]
-
-        first_bab_start = bab_list[0].char_start if bab_list else len(full_text)
-        doc_intro = full_text[0:first_bab_start].strip()
-        doc_content = doc_intro if doc_intro else doc_title
-
-        doc_chunks = self._split_to_chunks(
-            content=doc_content,
-            document_id=doc_id,
-            source_filename=src,
-            hierarchy_level=HierarchyLevel.DOCUMENT,
-            level_number=0,
-            doc_title=doc_title,
-            max_tokens=self.max_tokens[0],
-            is_parent=True,
+        source_label = cleaning_result.metadata.get(
+            "source_label",
+            cleaning_result.source_filename.replace(".pdf", ""),
         )
-        result.level_0_chunks = doc_chunks
-        doc_parent_id = doc_chunks[0].chunk_id if doc_chunks else doc_id
 
-        level_1_bab_chunks: List[DocumentChunk] = []
-        level_2_pasal_chunks: List[DocumentChunk] = []
-        level_3_ayat_chunks: List[DocumentChunk] = []
+        # --- Konsiderans chunks ---
+        konsiderans = cleaning_result.__dict__.get("konsiderans", {})
+        konsiderans_chunks = self._build_konsiderans_chunks(konsiderans, source_label)
 
-        for i, bab in enumerate(bab_list):
-            bab_start = bab.char_start
-            bab_end = bab_list[i + 1].char_start if i + 1 < len(bab_list) else len(full_text)
-            bab_content = full_text[bab_start:bab_end].strip()
+        # --- Batang Tubuh chunks (per-pasal) ---
+        pasal_data: List[dict] = cleaning_result.__dict__.get("pasal_data", [])
+        if not pasal_data:
+            pasal_data = self._fallback_pasal_data(cleaning_result)
 
-            bab_chunks = self._split_to_chunks(
-                content=bab_content,
-                document_id=doc_id,
-                source_filename=src,
-                hierarchy_level=HierarchyLevel.BAB,
-                level_number=1,
-                doc_title=doc_title,
-                bab_title=bab.full_header.replace("\n", " "),
-                bab_number=bab.number,
-                parent_id=doc_parent_id,
-                max_tokens=self.max_tokens[1],
-                is_parent=True,
-            )
-            level_1_bab_chunks.extend(bab_chunks)
-            bab_parent_id = bab_chunks[0].chunk_id if bab_chunks else doc_parent_id
+        batang_chunks = self._build_batang_tubuh_chunks(pasal_data, source_label)
 
-            bab_pasals = [p for p in pasal_list if bab_start <= p.char_start < bab_end]
+        # --- Penjelasan chunks ---
+        penjelasan_text: str = cleaning_result.__dict__.get("penjelasan_text", "")
+        penjelasan_chunks = self._build_penjelasan_chunks(penjelasan_text, source_label)
 
-            for pasal in bab_pasals:
-                global_idx = pasal_list.index(pasal)
-                if global_idx + 1 < len(pasal_list):
-                    pasal_end = min(pasal_list[global_idx + 1].char_start, bab_end)
-                else:
-                    pasal_end = bab_end
+        # Gabungkan semua chunk dict ke result
+        all_raw: List[dict] = konsiderans_chunks + batang_chunks + penjelasan_chunks
 
-                pasal_content = full_text[pasal.char_start:pasal_end].strip()
-                ayats = self._extract_ayats_from_pasal(pasal_content)
+        # Simpan raw JSON-serializable chunks agar mudah diakses route
+        result.__dict__["raw_chunks"] = all_raw
 
-                if ayats:
-                    pasal_chunks = self._split_to_chunks(
-                        content=pasal_content,
-                        document_id=doc_id,
-                        source_filename=src,
-                        hierarchy_level=HierarchyLevel.PASAL,
-                        level_number=2,
-                        doc_title=doc_title,
-                        bab_title=bab.full_header.replace("\n", " "),
-                        bab_number=bab.number,
-                        pasal_title=pasal.full_header,
-                        pasal_number=self._to_int(pasal.number),
-                        parent_id=bab_parent_id,
-                        max_tokens=self.max_tokens[2],
-                        is_parent=True,
-                    )
-                    level_2_pasal_chunks.extend(pasal_chunks)
-                    pasal_parent_id = pasal_chunks[0].chunk_id if pasal_chunks else bab_parent_id
-
-                    for ayat in ayats:
-                        # create ayat child chunk
-                        ayat_chunks = self._split_to_chunks(
-                            content=ayat["content"],
-                            document_id=doc_id,
-                            source_filename=src,
-                            hierarchy_level=HierarchyLevel.AYAT,
-                            level_number=3,
-                            doc_title=doc_title,
-                            pasal_number=self._to_int(pasal.number),
-                            ayat_number=ayat["ayat_number"],
-                            parent_id=pasal_parent_id,
-                            max_tokens=self.max_tokens[3],
-                            is_parent=False,
-                        )
-                        level_3_ayat_chunks.extend(ayat_chunks)
-                else:
-                    pasal_chunks = self._split_to_chunks(
-                        content=pasal_content,
-                        document_id=doc_id,
-                        source_filename=src,
-                        hierarchy_level=HierarchyLevel.PASAL,
-                        level_number=2,
-                        doc_title=doc_title,
-                        bab_title=bab.full_header.replace("\n", " "),
-                        bab_number=bab.number,
-                        pasal_title=pasal.full_header,
-                        pasal_number=self._to_int(pasal.number),
-                        parent_id=bab_parent_id,
-                        max_tokens=self.max_tokens[2],
-                        is_parent=False,
-                    )
-                    level_2_pasal_chunks.extend(pasal_chunks)
-
-        result.level_1_chunks = level_1_bab_chunks
-        result.level_2_chunks = level_2_pasal_chunks
-        result.level_3_chunks = level_3_ayat_chunks
-        result.total_chunks = len(result.all_chunks)
-
-        all_tokens = [count_tokens(c.content) for c in result.all_chunks]
-        avg_tokens = sum(all_tokens) / len(all_tokens) if all_tokens else 0
+        # Konversi ke DocumentChunk untuk level breakdown (backward compat)
+        doc_chunks = self._to_document_chunks(all_raw, cleaning_result.document_id, cleaning_result.source_filename)
+        result.level_0_chunks = [c for c in doc_chunks if c.metadata.level_number == 0]
+        result.level_1_chunks = [c for c in doc_chunks if c.metadata.level_number == 1]
+        result.level_2_chunks = [c for c in doc_chunks if c.metadata.level_number == 2]
+        result.level_3_chunks = [c for c in doc_chunks if c.metadata.level_number == 3]
+        result.total_chunks = len(doc_chunks)
 
         logger.info(
-            f"[CHUNKING] Selesai: L0={len(result.level_0_chunks)} Doc, "
-            f"L1={len(result.level_1_chunks)} BAB, "
-            f"L2={len(result.level_2_chunks)} Pasal, "
-            f"L3={len(result.level_3_chunks)} Ayat | "
-            f"Total={result.total_chunks} chunks | Rata-rata {avg_tokens:.1f} tokens/chunk"
+            f"[CHUNKING] Selesai: {len(konsiderans_chunks)} Konsiderans, "
+            f"{len(batang_chunks)} Batang Tubuh, "
+            f"{len(penjelasan_chunks)} Penjelasan | "
+            f"Total={result.total_chunks} chunks"
         )
         return result
 
-    def _extract_ayats_from_pasal(self, pasal_content: str) -> List[dict]:
-        matches = list(re.finditer(r"(?:^|\n)\s*\((\d+)\)\s+", pasal_content))
-        if not matches:
-            return []
+    # ─────────────────────────────────────────────────────
+    # KONSIDERANS
+    # ─────────────────────────────────────────────────────
 
-        ayats = []
-        for idx, match in enumerate(matches):
-            ayat_num = int(match.group(1))
-            start_idx = match.start()
-            end_idx = matches[idx + 1].start() if idx + 1 < len(matches) else len(pasal_content)
-            ayat_text = pasal_content[start_idx:end_idx].strip()
-            ayats.append({
-                "ayat_number": ayat_num,
-                "content": ayat_text
+    def _build_konsiderans_chunks(
+        self, konsiderans: dict, source_label: str
+    ) -> List[dict]:
+        """
+        Bangun parent + child chunks untuk bagian Konsiderans.
+
+        Parent: teks gabungan Menimbang + Mengingat
+        Child per poin Menimbang (a, b, c, …)
+        """
+        chunks: List[dict] = []
+        if not konsiderans:
+            return chunks
+
+        menimbang: List[dict] = konsiderans.get("menimbang", [])
+        mengingat: str = konsiderans.get("mengingat", "")
+        full_text: str = konsiderans.get("full_text", "")
+
+        if not menimbang and not mengingat:
+            return chunks
+
+        parent_id = "parent_konsiderans"
+
+        # Susun teks parent dari poin menimbang + mengingat
+        parent_lines = []
+        if menimbang:
+            parent_lines.append("Menimbang:")
+            for item in menimbang:
+                parent_lines.append(f"{item['huruf']}. {item['text']}")
+        if mengingat:
+            parent_lines.append(f"Mengingat: {mengingat}")
+
+        parent_text = full_text if full_text else "\n".join(parent_lines)
+
+        chunks.append({
+            "chunk_id": parent_id,
+            "type": "parent",
+            "section": "Konsiderans",
+            "title": "Menimbang dan Mengingat",
+            "text": parent_text,
+            "metadata": {
+                "source": source_label,
+                "bagian": "Konsiderans",
+            },
+        })
+
+        # Child per poin Menimbang
+        for item in menimbang:
+            huruf = item["huruf"]
+            chunks.append({
+                "chunk_id": f"child_konsiderans_menimbang_{huruf}",
+                "type": "child",
+                "section": "Konsiderans",
+                "parent_id": parent_id,
+                "text": f"Menimbang huruf {huruf}: {item['text']}",
+                "metadata": {
+                    "source": source_label,
+                    "bagian": "Konsiderans",
+                    "poin": huruf,
+                },
             })
-        return ayats
 
-    def _split_to_chunks(self, content: str, document_id: str, source_filename: str, hierarchy_level: HierarchyLevel, level_number: int, doc_title: str, max_tokens: int, parent_id: Optional[str] = None, bab_title: Optional[str] = None, bab_number: Optional[str] = None, pasal_title: Optional[str] = None, pasal_number: Optional[int] = None, ayat_number: Optional[int] = None, is_parent: bool = False) -> List[DocumentChunk]:
-        content = content.strip()
-        if not content or count_tokens(content) < self.min_tokens:
-            return []
+        # Child Mengingat (satu unit)
+        if mengingat:
+            chunks.append({
+                "chunk_id": "child_konsiderans_mengingat",
+                "type": "child",
+                "section": "Konsiderans",
+                "parent_id": parent_id,
+                "text": f"Mengingat: {mengingat}",
+                "metadata": {
+                    "source": source_label,
+                    "bagian": "Konsiderans",
+                    "poin": "mengingat",
+                },
+            })
 
-        context_prefix = self._build_context_prefix(doc_title, bab_title, pasal_title, ayat_number)
+        return chunks
 
-        sub_contents = self._token_split_with_overlap(content, max_tokens)
-        chunks: List[DocumentChunk] = []
+    # ─────────────────────────────────────────────────────
+    # BATANG TUBUH
+    # ─────────────────────────────────────────────────────
 
-        for idx, sub_content in enumerate(sub_contents):
-            full_content = (f"{context_prefix}\n\n{sub_content}".strip() if context_prefix else sub_content)
+    def _build_batang_tubuh_chunks(
+        self, pasal_data: List[dict], source_label: str
+    ) -> List[dict]:
+        """
+        Bangun parent + child chunks untuk setiap pasal di Batang Tubuh.
 
-            metadata = ChunkMetadata(
+        Parent: teks lengkap pasal (semua ayat)
+        Child:
+          - Jika pasal memiliki ayat bernomor → satu child per ayat
+          - Jika pasal tunggal (tidak ada ayat) → satu child dengan teks pasal
+          - Jika pasal Ketentuan Umum (Pasal 1 dengan poin angka) → satu child per poin
+        """
+        chunks: List[dict] = []
+
+        for pasal in pasal_data:
+            pasal_number = pasal.get("pasal_number", "")
+            pasal_title = pasal.get("title", f"Pasal {pasal_number}")
+            full_text = pasal.get("full_text", "")
+            ayat_list: List[dict] = pasal.get("ayat_list", [])
+            section = pasal.get("section", "Batang Tubuh")
+
+            if not full_text.strip():
+                continue
+
+            parent_id = f"parent_pasal_{pasal_number}"
+
+            # Pastikan pasal_number bisa jadi int
+            pasal_num_int = _to_int(pasal_number)
+
+            chunks.append({
+                "chunk_id": parent_id,
+                "type": "parent",
+                "section": section,
+                "title": pasal_title,
+                "text": full_text,
+                "metadata": {
+                    "source": source_label,
+                    "pasal": pasal_num_int if pasal_num_int is not None else pasal_number,
+                },
+            })
+
+            # ── Buat child chunks ─────────────────────────
+            for ayat in ayat_list:
+                ayat_number = ayat.get("ayat_number")
+                ayat_text = ayat.get("text", "").strip()
+                poin_list: List[dict] = ayat.get("poin_list", [])
+
+                if not ayat_text:
+                    continue
+
+                if ayat_number == "tunggal":
+                    # Pasal tanpa ayat bernomor
+                    if poin_list:
+                        # Ada poin huruf atau angka → satu child per poin
+                        for poin in poin_list:
+                            huruf = poin.get("huruf", "")
+                            poin_text = poin.get("text", "")
+                            chunks.append({
+                                "chunk_id": f"child_pasal_{pasal_number}_poin_{huruf}",
+                                "type": "child",
+                                "section": section,
+                                "parent_id": parent_id,
+                                "text": f"Pasal {pasal_number} Poin {huruf}: {poin_text}",
+                                "metadata": {
+                                    "source": source_label,
+                                    "pasal": pasal_num_int if pasal_num_int is not None else pasal_number,
+                                    "poin": huruf,
+                                },
+                            })
+                    else:
+                        # Pasal tunggal tanpa poin
+                        # Hapus prefix "Pasal N" yang sudah ada di ayat_text agar tidak duplikat
+                        clean_ayat = re.sub(
+                            rf"^\s*Pasal\s+{re.escape(str(pasal_number))}\s*\n?",
+                            "", ayat_text, flags=re.IGNORECASE
+                        ).strip()
+                        chunks.append({
+                            "chunk_id": f"child_pasal_{pasal_number}_tunggal",
+                            "type": "child",
+                            "section": section,
+                            "parent_id": parent_id,
+                            "text": f"Pasal {pasal_number}: {clean_ayat}",
+                            "metadata": {
+                                "source": source_label,
+                                "pasal": pasal_num_int if pasal_num_int is not None else pasal_number,
+                            },
+                        })
+                else:
+                    # Pasal dengan ayat bernomor
+                    ayat_int = int(ayat_number) if str(ayat_number).isdigit() else ayat_number
+                    ayat_label = _get_pasal_title_without_prefix(pasal_title, pasal_number)
+
+                    child_text = f"Pasal {pasal_number} Ayat ({ayat_int}) mengenai {ayat_label}"
+
+                    chunks.append({
+                        "chunk_id": f"child_pasal_{pasal_number}_ayat_{ayat_int}",
+                        "type": "child",
+                        "section": section,
+                        "parent_id": parent_id,
+                        "text": child_text,
+                        "metadata": {
+                            "source": source_label,
+                            "pasal": pasal_num_int if pasal_num_int is not None else pasal_number,
+                            "ayat": ayat_int,
+                        },
+                    })
+
+                    # Child poin dalam ayat (opsional, jika ada)
+                    if poin_list:
+                        for poin in poin_list:
+                            huruf = poin.get("huruf", "")
+                            poin_text = poin.get("text", "")
+                            chunks.append({
+                                "chunk_id": f"child_pasal_{pasal_number}_ayat_{ayat_int}_huruf_{huruf}",
+                                "type": "child",
+                                "section": section,
+                                "parent_id": parent_id,
+                                "text": f"Pasal {pasal_number} Ayat ({ayat_int}) huruf {huruf}: {poin_text}",
+                                "metadata": {
+                                    "source": source_label,
+                                    "pasal": pasal_num_int if pasal_num_int is not None else pasal_number,
+                                    "ayat": ayat_int,
+                                    "huruf": huruf,
+                                },
+                            })
+
+        return chunks
+
+    # ─────────────────────────────────────────────────────
+    # PENJELASAN
+    # ─────────────────────────────────────────────────────
+
+    def _build_penjelasan_chunks(
+        self, penjelasan_text: str, source_label: str
+    ) -> List[dict]:
+        """
+        Bangun parent + child chunks untuk bagian Penjelasan.
+
+        Penjelasan diparse per-pasal yang disebut (Pasal X).
+        """
+        chunks: List[dict] = []
+        if not penjelasan_text.strip():
+            return chunks
+
+        pasal_sections = _split_penjelasan_by_pasal(penjelasan_text)
+
+        if not pasal_sections:
+            # Tidak ada referensi pasal spesifik → satu parent tunggal
+            parent_id = "parent_penjelasan_umum"
+            chunks.append({
+                "chunk_id": parent_id,
+                "type": "parent",
+                "section": "Penjelasan",
+                "title": "Penjelasan Umum",
+                "text": penjelasan_text.strip(),
+                "metadata": {
+                    "source": source_label,
+                    "bagian": "Penjelasan",
+                },
+            })
+            chunks.append({
+                "chunk_id": "child_penjelasan_umum_isi",
+                "type": "child",
+                "section": "Penjelasan",
+                "parent_id": parent_id,
+                "text": penjelasan_text.strip(),
+                "metadata": {
+                    "source": source_label,
+                    "bagian": "Penjelasan",
+                },
+            })
+            return chunks
+
+        for pasal_number, section_text in pasal_sections:
+            pasal_num_int = _to_int(str(pasal_number))
+            parent_id = f"parent_penjelasan_pasal_{pasal_number}"
+
+            parent_text = f"II. PASAL DEMI PASAL\nPasal {pasal_number}\n{section_text.strip()}"
+
+            chunks.append({
+                "chunk_id": parent_id,
+                "type": "parent",
+                "section": "Penjelasan",
+                "title": f"Penjelasan Pasal {pasal_number}",
+                "text": parent_text,
+                "metadata": {
+                    "source": source_label,
+                    "pasal_rujukan": pasal_num_int if pasal_num_int is not None else pasal_number,
+                },
+            })
+            chunks.append({
+                "chunk_id": f"child_penjelasan_pasal_{pasal_number}_isi",
+                "type": "child",
+                "section": "Penjelasan",
+                "parent_id": parent_id,
+                "text": f"Tafsir Resmi Pasal {pasal_number}: {section_text.strip()}",
+                "metadata": {
+                    "source": source_label,
+                    "pasal_rujukan": pasal_num_int if pasal_num_int is not None else pasal_number,
+                },
+            })
+
+        return chunks
+
+    # ─────────────────────────────────────────────────────
+    # FALLBACK (jika pasal_data kosong)
+    # ─────────────────────────────────────────────────────
+
+    def _fallback_pasal_data(self, cleaning_result: CleaningResult) -> List[dict]:
+        """
+        Jika CleaningService tidak menghasilkan pasal_data (dokumen sederhana),
+        coba parse langsung dari full_cleaned_text menggunakan parsed_structure.
+        """
+        pasal_data = []
+        full_text = cleaning_result.full_cleaned_text
+        pasal_list = list(cleaning_result.parsed_structure.pasal_list)
+
+        for i, pasal in enumerate(pasal_list):
+            start = pasal.char_start
+            end = pasal_list[i + 1].char_start if i + 1 < len(pasal_list) else len(full_text)
+            pasal_text = full_text[start:end].strip()
+
+            from app.services.knowlagebase.cleaning_service import (
+                _extract_ayats, _build_pasal_title
+            )
+            ayat_list = _extract_ayats(pasal_text, pasal.number)
+            title = _build_pasal_title(pasal.number, pasal_text)
+
+            pasal_data.append({
+                "pasal_number": pasal.number,
+                "section": "Batang Tubuh",
+                "bab_number": pasal.bab_number or "",
+                "bab_title": "",
+                "full_text": pasal_text,
+                "ayat_list": ayat_list,
+                "title": title,
+                "char_start": start,
+            })
+
+        return pasal_data
+
+    # ─────────────────────────────────────────────────────
+    # CONVERT TO DOCUMENT CHUNKS (Qdrant pipeline compat)
+    # ─────────────────────────────────────────────────────
+
+    def _to_document_chunks(
+        self,
+        raw_chunks: List[dict],
+        document_id: str,
+        source_filename: str,
+    ) -> List[DocumentChunk]:
+        """
+        Konversi raw chunk dicts ke DocumentChunk (untuk penyimpanan Qdrant).
+        """
+        doc_chunks = []
+        for raw in raw_chunks:
+            chunk_type = raw.get("type", "child")
+            section = raw.get("section", "")
+            is_parent = chunk_type == "parent"
+
+            # Tentukan hierarchy level dan level_number dari section/type
+            level_number, hierarchy_level = _infer_level(raw)
+
+            metadata_dict = raw.get("metadata", {})
+            pasal_number = metadata_dict.get("pasal")
+            ayat_number = metadata_dict.get("ayat")
+            pasal_rujukan = metadata_dict.get("pasal_rujukan")
+
+            meta = ChunkMetadata(
                 document_id=document_id,
                 source_filename=source_filename,
                 hierarchy_level=hierarchy_level,
                 level_number=level_number,
-                document_title=doc_title,
-                bab_title=bab_title,
-                bab_number=bab_number,
-                pasal_title=pasal_title,
-                pasal_number=pasal_number,
-                ayat_number=ayat_number,
-                chunk_index=idx,
-                total_chunks=len(sub_contents),
-                token_count=count_tokens(full_content),
-                parent_chunk_id=parent_id,
+                document_title=metadata_dict.get("source", ""),
+                pasal_number=int(pasal_number) if isinstance(pasal_number, (int, float)) else None,
+                ayat_number=int(ayat_number) if isinstance(ayat_number, (int, float)) else None,
+                token_count=count_tokens(raw.get("text", "")),
+                parent_chunk_id=raw.get("parent_id"),
                 is_parent=is_parent,
             )
 
-            chunks.append(DocumentChunk(chunk_id=str(uuid.uuid4()), content=full_content, metadata=metadata))
-        return chunks
+            doc_chunks.append(
+                DocumentChunk(
+                    chunk_id=raw["chunk_id"],
+                    content=raw.get("text", ""),
+                    metadata=meta,
+                )
+            )
 
-    def _token_split_with_overlap(self, text: str, max_tokens: int) -> List[str]:
-        if count_tokens(text) <= max_tokens:
-            return [text]
+        return doc_chunks
 
-        lines = [l for l in text.split("\n") if l.strip()]
-        chunks: List[str] = []
-        current_lines: List[str] = []
-        current_tokens = 0
 
-        for line in lines:
-            line_tokens = count_tokens(line)
-            if current_tokens + line_tokens > max_tokens and current_lines:
-                chunks.append("\n".join(current_lines))
-                overlap_lines = self._get_overlap_lines(current_lines)
-                current_lines = overlap_lines + [line]
-                current_tokens = sum(count_tokens(l) for l in current_lines)
-            else:
-                current_lines.append(line)
-                current_tokens += line_tokens
+# ─────────────────────────────────────────────────────────
+# MODULE-LEVEL HELPERS
+# ─────────────────────────────────────────────────────────
 
-        if current_lines:
-            chunks.append("\n".join(current_lines))
+def _to_int(value: str) -> Optional[int]:
+    try:
+        m = re.search(r"\d+", str(value))
+        return int(m.group(0)) if m else None
+    except (ValueError, TypeError):
+        return None
 
-        return chunks if chunks else [text]
 
-    def _get_overlap_lines(self, lines: List[str]) -> List[str]:
-        overlap_lines: List[str] = []
-        token_count = 0
-        for line in reversed(lines):
-            t = count_tokens(line)
-            if token_count + t > self.overlap_tokens:
-                break
-            overlap_lines.insert(0, line)
-            token_count += t
-        return overlap_lines
+def _get_pasal_title_without_prefix(pasal_title: str, pasal_number: str) -> str:
+    """
+    Ambil bagian judul setelah 'Pasal N -'.
+    Contoh: 'Pasal 3 - Pelaksana Fungsi Kepolisian' → 'Pelaksana Fungsi Kepolisian'
+    """
+    # Hapus prefix "Pasal N - " atau "Pasal N"
+    cleaned = re.sub(rf"^\s*Pasal\s+{re.escape(pasal_number)}\s*[-–]\s*", "", pasal_title)
+    cleaned = re.sub(rf"^\s*Pasal\s+{re.escape(pasal_number)}\s*", "", cleaned)
+    return cleaned.strip() or pasal_title.strip()
 
-    def _build_context_prefix(self, doc_title: Optional[str], bab_title: Optional[str], pasal_title: Optional[str], ayat_number: Optional[int]) -> str:
-        parts: List[str] = []
-        if doc_title:
-            parts.append(f"[Dokumen: {doc_title}]")
-        if bab_title:
-            parts.append(f"[BAB: {bab_title}]")
-        if pasal_title:
-            parts.append(f"[Pasal: {pasal_title}]")
-        if ayat_number is not None:
-            parts.append(f"[Ayat: ({ayat_number})]")
-        return "\n".join(parts)
 
-    def _build_document_title(self, metadata: dict) -> str:
-        if not metadata:
-            return "Dokumen Hukum"
-        parts: List[str] = []
-        if metadata.get("jenis"):
-            parts.append(metadata["jenis"])
-        if metadata.get("nomor") and metadata.get("tahun"):
-            parts.append(f"No. {metadata['nomor']} Tahun {metadata['tahun']}")
-        if metadata.get("tentang"):
-            parts.append(f"tentang {metadata['tentang']}")
-        return " ".join(parts) if parts else "Dokumen Hukum"
+def _split_penjelasan_by_pasal(text: str) -> List[tuple]:
+    """
+    Pecah teks penjelasan menjadi segmen per-pasal.
 
-    @staticmethod
-    def _to_int(value: str) -> Optional[int]:
-        try:
-            match = re.search(r"\d+", str(value))
-            return int(match.group(0)) if match else None
-        except (ValueError, TypeError):
-            return None
+    Return: list of (pasal_number_str, section_text)
+    """
+    # Pola: "Pasal N" menjadi pemisah section
+    pattern = re.compile(r"\bPasal\s+(\d+[A-Za-z]*)\b", re.IGNORECASE)
+    matches = list(pattern.finditer(text))
+
+    if not matches:
+        return []
+
+    sections = []
+    for i, m in enumerate(matches):
+        pasal_number = m.group(1)
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        section_text = text[start:end].strip()
+        if section_text:
+            sections.append((pasal_number, section_text))
+
+    return sections
+
+
+def _infer_level(raw: dict):
+    """Tentukan level_number dan HierarchyLevel dari raw chunk dict."""
+    section = raw.get("section", "")
+    chunk_type = raw.get("type", "child")
+    is_parent = chunk_type == "parent"
+
+    if section == "Konsiderans":
+        return (0, HierarchyLevel.DOCUMENT) if is_parent else (1, HierarchyLevel.BAB)
+
+    if section == "Batang Tubuh":
+        if is_parent:
+            return (2, HierarchyLevel.PASAL)
+        else:
+            metadata = raw.get("metadata", {})
+            if "ayat" in metadata:
+                return (3, HierarchyLevel.AYAT)
+            return (2, HierarchyLevel.PASAL)
+
+    if section == "Penjelasan":
+        return (2, HierarchyLevel.PASAL) if is_parent else (3, HierarchyLevel.AYAT)
+
+    return (1, HierarchyLevel.BAB)
