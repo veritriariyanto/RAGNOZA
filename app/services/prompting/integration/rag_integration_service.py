@@ -163,31 +163,7 @@ class RAGIntegrationService:
                     material_payload
                 )
 
-                # ── Tahap 6: Simpan History ───────────────────────────────────
-                # Tahap 6: Simpan History — simpan dulu, ambil id-nya
-                session_title = (
-                    repaired_text[:80]
-                    if repaired_text
-                    else raw_transcribe[:80]
-                    if raw_transcribe
-                    else "Session Tanpa Judul"
-                )
-                saved_history = SessionService.save_history(
-                    db=self.db,
-                    session_id=rag_session_id,
-                    session_title=session_title,
-                    knowledge_base=knowledge_base,
-                    provider=provider,
-                    raw_transcribe=raw_transcribe,
-                    repaired_text=repaired_text,
-                    search_query=search_query,
-                    retrieved_context=combined_context,
-                    final_material=final_material,
-                )
-                history_id = saved_history.id if saved_history else None
-                rag_session_id = saved_history.session_id if saved_history else rag_session_id
-
-            # ── Tahap 7: Jalankan Evaluasi di Background Task ──────────────
+                # ── Tahap 7: Jalankan Evaluasi di Background Task ──────────────
                 if auto_evaluate and background_tasks and combined_context and final_material:
                     background_tasks.add_task(
                         trigger_auto_evaluation,
@@ -198,9 +174,32 @@ class RAGIntegrationService:
                         source_label="rag_pipeline",
                         history_id=history_id
                     )
-
             else:
                 fallback_message = "Tidak ada konteks hukum yang cukup relevan ditemukan di Knowledge Base."
+
+            # ── Tahap 6: Simpan History (SELALU dijalankan, baik ada context maupun tidak) ──
+            session_title = (
+                repaired_text[:80]
+                if repaired_text
+                else raw_transcribe[:80]
+                if raw_transcribe
+                else "Session Tanpa Judul"
+            )
+            saved_history = SessionService.save_history(
+                db=self.db,
+                session_id=rag_session_id,
+                session_title=session_title,
+                knowledge_base=knowledge_base,
+                provider=provider,
+                raw_transcribe=raw_transcribe,
+                repaired_text=repaired_text,
+                search_query=search_query,
+                retrieved_context=combined_context,
+                final_material=final_material,
+            )
+            history_id = saved_history.id if saved_history else None
+            rag_session_id = saved_history.session_id if saved_history else rag_session_id
+
 
            # ── Tahap 8: Return Response Ter validasi ─────────────────────────
             return RAGIntegrationResponse(
@@ -313,23 +312,6 @@ class RAGIntegrationService:
                     material_payload
                 )
 
-                # ── Tahap 5: Simpan History ───────────────────────────────────
-                session_title = repaired_text[:80] if repaired_text else "Session Tanpa Judul"
-                saved_history = SessionService.save_history(
-                    db=self.db,
-                    session_id=rag_session_id,
-                    session_title=session_title,
-                    knowledge_base=knowledge_base,
-                    provider="text_input",
-                    raw_transcribe=raw_text,
-                    repaired_text=repaired_text,
-                    search_query=search_query,
-                    retrieved_context=combined_context,
-                    final_material=final_material,
-                )
-                history_id = saved_history.id if saved_history else None
-                rag_session_id = saved_history.session_id if saved_history else rag_session_id
-
                 # ── Tahap 6: Evaluasi RAGAS di Background ─────────────────────
                 if auto_evaluate and background_tasks and combined_context and final_material:
                     background_tasks.add_task(
@@ -344,7 +326,25 @@ class RAGIntegrationService:
             else:
                 fallback_message = "Tidak ada konteks hukum yang cukup relevan ditemukan di Knowledge Base."
 
+            # ── Tahap 5: Simpan History (SELALU dijalankan, baik ada context maupun tidak) ──
+            session_title = repaired_text[:80] if repaired_text else "Session Tanpa Judul"
+            saved_history = SessionService.save_history(
+                db=self.db,
+                session_id=rag_session_id,
+                session_title=session_title,
+                knowledge_base=knowledge_base,
+                provider="text_input",
+                raw_transcribe=raw_text,
+                repaired_text=repaired_text,
+                search_query=search_query,
+                retrieved_context=combined_context,
+                final_material=final_material,
+            )
+            history_id = saved_history.id if saved_history else None
+            rag_session_id = saved_history.session_id if saved_history else rag_session_id
+
             # ── Return Response ────────────────────────────────────────────────
+
             return RAGIntegrationResponse(
                 raw_transcribe=raw_text,
                 final_repaired_text=repaired_text,
