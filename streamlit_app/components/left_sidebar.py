@@ -68,6 +68,7 @@ _SIDEBAR_CSS = """
     div[data-testid="stSidebar"] button[kind="secondary"]:hover {
         background: rgba(255,255,255,0.06) !important;
     }
+
     div[data-testid="stSidebar"] .sidebar-group-label {
         font-size: 0.7rem;
         font-weight: 600;
@@ -88,6 +89,14 @@ _SIDEBAR_CSS = """
         text-align: center;
         padding: 20px 0;
     }
+    
+    /* Memastikan tombol popover ⚙️ rapi & tidak meluber */
+    div[data-testid="stSidebar"] div[data-testid="stPopover"] button {
+        padding: 0px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
 </style>
 """
 
@@ -96,7 +105,7 @@ def render_left_sidebar():
     _inject_styles()
     st.markdown(_SIDEBAR_CSS, unsafe_allow_html=True)
 
-    # ── Header ────────────────────────────────────────────────────────────────
+    # 1. LOGO & BRANDING (Paling Atas)
     st.markdown(
         """
         <div class="ac-header">🧠 RAGNOZA</div>
@@ -104,6 +113,12 @@ def render_left_sidebar():
         """,
         unsafe_allow_html=True,
     )
+    st.divider()
+
+    # 2. NAVIGASI HALAMAN (Aplikasi & Hasil Generate)
+    st.page_link("app.py", label="Input Sumber Hukum dan Audio", icon="📥")
+    st.page_link("pages/1_Hasil_Generate.py", label="Detail Generate dan Analisis", icon="📊")
+    st.divider()
 
     # ── Search ────────────────────────────────────────────────────────────────
     search_query = st.text_input(
@@ -133,8 +148,6 @@ def render_left_sidebar():
     else:
         filtered_db = db_histories
 
-    st.divider()
-
     # ── Empty state ───────────────────────────────────────────────────────────
     if not filtered_db:
         st.markdown(
@@ -156,18 +169,18 @@ def render_left_sidebar():
             unsafe_allow_html=True,
         )
 
+        # 🛠️ PERBAIKAN: Seluruh logika penayangan item dimasukkan ke dalam loop `for h in items:`
         for h in items:
             title = (
                 h.get("session_title")
                 or h.get("search_query")
                 or "Session Tanpa Judul"
             )
-            # Truncate for display
-            display_title = title[:45] + ("..." if len(title) > 45 else "")
+            # Truncate untuk display judul
+            display_title = title[:40] + ("..." if len(title) > 40 else "")
 
-            col_title, col_edit, col_del = st.columns(
-                [7, 0.8, 0.8], vertical_alignment="center"
-            )
+            # Cukup bagi menjadi 2 Kolom: Judul (Lebar) dan Menu Aksi Popover (Sempit)
+            col_title, col_action = st.columns([8.2, 1.8], vertical_alignment="center")
 
             with col_title:
                 if st.button(
@@ -180,38 +193,34 @@ def render_left_sidebar():
                     st.session_state.pop("selected_history", None)
                     st.switch_page("pages/1_Hasil_Generate.py")
 
-            with col_edit:
-                if st.button(
-                    "✏️",
-                    key=f"edit_title_{h['id']}",
-                    use_container_width=True,
-                ):
-                    st.session_state["editing_history_id"] = h["id"]
-
-            with col_del:
-                if st.button(
-                    "🗑️",
-                    key=f"del_hist_{h['id']}",
-                    use_container_width=True,
-                ):
-                    if delete_history(h["id"]):
-                        st.session_state.pop("_db_history_cache", None)
-                        if st.session_state.get("selected_history_id") == h["id"]:
-                            st.session_state.pop("selected_history_id", None)
+            # 🛠️ Menggunakan Popover sebagai Dropdown Menu Aksi
+            with col_action:
+                with st.popover("⚙️", help="Aksi dokumen", use_container_width=True):
+                    # Tombol Edit di dalam Popover
+                    if st.button("✏️ Ubah Judul", key=f"edit_title_{h['id']}", use_container_width=True):
+                        st.session_state["editing_history_id"] = h["id"]
                         st.rerun()
+                        
+                    # Tombol Hapus di dalam Popover
+                    if st.button("🗑️ Hapus Riwayat", key=f"del_hist_{h['id']}", use_container_width=True):
+                        if delete_history(h["id"]):
+                            st.session_state.pop("_db_history_cache", None)
+                            if st.session_state.get("selected_history_id") == h["id"]:
+                                st.session_state.pop("selected_history_id", None)
+                            st.rerun()
 
-            # ── Inline edit form ──────────────────────────────────────────
+            # ── Inline edit form (Tetap di bawahnya jika sedang mode edit) ──────────────────────────────────────────
             if st.session_state.get("editing_history_id") == h["id"]:
+                st.markdown("---")
                 new_title = st.text_input(
-                    "Judul",
+                    "Edit Judul:",
                     value=title,
                     key=f"title_input_{h['id']}",
-                    label_visibility="collapsed",
                 )
                 save_col, cancel_col = st.columns(2)
 
                 with save_col:
-                    if st.button("💾", key=f"save_title_{h['id']}", use_container_width=True):
+                    if st.button("💾 Simpan", key=f"save_title_{h['id']}", use_container_width=True):
                         if update_history_title(h["id"], new_title.strip()):
                             st.session_state.pop("_db_history_cache", None)
                             st.session_state.pop("editing_history_id", None)
@@ -220,7 +229,7 @@ def render_left_sidebar():
                             st.error("Gagal")
 
                 with cancel_col:
-                    if st.button("❌", key=f"cancel_title_{h['id']}", use_container_width=True):
+                    if st.button("❌ Batal", key=f"cancel_title_{h['id']}", use_container_width=True):
                         st.session_state.pop("editing_history_id", None)
                         st.rerun()
 
