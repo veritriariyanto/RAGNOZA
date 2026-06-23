@@ -6,6 +6,7 @@ from api.history.history_api import get_history_by_id, get_all_history
 from api.evaluasi.evaluation_api import run_ragas_evaluation, run_ragas_reeval
 from components.left_sidebar import render_left_sidebar
 from utils.session import init_session_state
+from components.evaluation_ui import render_evaluation_section
 
 # Inisialisasi session state agar sidebar tidak error saat properti belum ada
 init_session_state()
@@ -70,137 +71,7 @@ if session_id:
         st.divider()
 
         # =========================================
-        # EVALUATION SECTION (Prominent Display)
-        # =========================================
-        ragas_status = data.get("ragas_status", "skipped")
-        ragas_metrics = data.get("ragas_metrics")
-        ragas_evals = data.get("ragas_evaluations", [])
-
-        if ragas_status == "success" and ragas_metrics:
-            st.markdown("### 📊 Evaluasi RAGAS")
-            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
-            with col_m1:
-                st.metric("Faithfulness",
-                          f"{(ragas_metrics.get('faithfulness') or 0):.2f}")
-            with col_m2:
-                st.metric("Answer Relevancy",
-                          f"{(ragas_metrics.get('answer_relevancy') or 0):.2f}")
-            with col_m3:
-                st.metric("Context Precision",
-                          f"{(ragas_metrics.get('context_precision') or 0):.2f}")
-            with col_m4:
-                st.metric("Context Recall",
-                          f"{(ragas_metrics.get('context_recall') or 0):.2f}")
-
-            # Risk faithfulness if available
-            risk_f = ragas_metrics.get("risk_faithfulness")
-            if risk_f is not None:
-                st.metric("Risk Faithfulness", f"{risk_f:.2f}")
-
-        elif ragas_status == "error":
-            st.warning(
-                "⚠️ Evaluasi RAGAS gagal. Klik tombol di bawah untuk mencoba lagi.")
-
-        else:
-            st.info("Evaluasi RAGAS belum dijalankan untuk riwayat ini.")
-
-        # Evaluation section
-        eval_col1, eval_col2 = st.columns([1, 3])
-        with eval_col1:
-            if st.button(
-                "📊 Evaluasi Sekarang" if ragas_status != "success" else "🔄 Evaluasi Ulang",
-                key=f"btn_eval_{session_id}",
-                use_container_width=True,
-                type="primary" if ragas_status != "success" else "secondary",
-            ):
-                question = data.get("search_query") or data.get(
-                    "repaired_text") or ""
-                context = data.get("retrieved_context") or ""
-                mat = data.get("generate_material") or data.get(
-                    "generated_material") or {}
-                if isinstance(mat, str):
-                    try:
-                        mat = json.loads(mat)
-                    except json.JSONDecodeError:
-                        mat = {}
-
-                if not question or not context:
-                    st.warning(
-                        "⚠️ Data tidak lengkap untuk evaluasi (query atau konteks kosong).")
-                else:
-                    with st.spinner("⏳ Menjalankan evaluasi RAGAS... (1–5 menit)"):
-                        eval_result = run_ragas_evaluation(
-                            question=question,
-                            context=context,
-                            material_dict=mat,
-                            history_id=session_id,
-                        )
-                    if eval_result.get("status") == "success":
-                        st.success("✅ Evaluasi berhasil! Memuat ulang...")
-                        st.session_state.pop("_db_history_cache", None)
-                        st.rerun()
-                    else:
-                        st.error(
-                            f"❌ Evaluasi gagal: {eval_result.get('error', 'Unknown error')}")
-
-        with eval_col2:
-            st.caption(
-                "Evaluasi menghitung metrik: Faithfulness, Answer Relevancy, Context Precision, dan Context Recall menggunakan RAGAS.")
-
-        # Ground truth re-evaluation (optional)
-        has_precision = ragas_metrics and ragas_metrics.get(
-            "context_precision") is not None if ragas_metrics else False
-
-        expander_label = (
-            "🔄 Evaluasi Ulang dengan Ground Truth" if has_precision
-            else "➕ Tambah Ground Truth untuk Context Precision & Recall"
-        )
-        with st.expander(expander_label, expanded=False):
-            if has_precision:
-                st.info(
-                    "✅ Sudah dievaluasi dengan ground truth. Isi ulang untuk evaluasi ulang dengan jawaban referensi baru.")
-            else:
-                st.caption(
-                    "Ground truth adalah jawaban ideal/referensi dari legal expert. "
-                    "Jika diisi, akan mengaktifkan 2 metrik tambahan: Context Precision dan Context Recall."
-                )
-            gt_input = st.text_area(
-                "Ground Truth",
-                placeholder="Masukkan jawaban referensi ideal dari legal expert...",
-                height=100,
-                key=f"gt_input_{session_id}",
-            )
-            if st.button(
-                "🔄 Evaluasi dengan Ground Truth",
-                key=f"btn_reeval_{session_id}",
-                use_container_width=True,
-            ):
-                if not gt_input.strip():
-                    st.warning("⚠️ Ground truth tidak boleh kosong.")
-                else:
-                    question = data.get("search_query") or data.get(
-                        "repaired_text") or ""
-                    context = data.get("retrieved_context") or ""
-                    with st.spinner("⏳ Menjalankan evaluasi dengan ground truth..."):
-                        reeval_result = run_ragas_reeval(
-                            ground_truth=gt_input.strip(),
-                            history_id=session_id,
-                            question=question,
-                            context=context,
-                        )
-                    if reeval_result.get("status") == "success":
-                        st.success(
-                            "✅ Evaluasi ground truth berhasil! Memuat ulang...")
-                        st.session_state.pop("_db_history_cache", None)
-                        st.rerun()
-                    else:
-                        st.error(
-                            f"❌ Evaluasi gagal: {reeval_result.get('error', 'Unknown error')}")
-
-        st.divider()
-
-        # =========================================
-        # KOMPONEN 6 TABS UTAMA (Bebas dari Bungkus JSON)
+        # KOMPONEN 6 TABS UTAMA
         # =========================================
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📝 Ringkasan", "⚠️ Risiko", "❓ Q&A",
@@ -212,7 +83,6 @@ if session_id:
             st.write("### 📝 Ringkasan Kasus Eksekutif")
             summary_raw = material.get("summary")
 
-            # Deteksi jika summary_raw dikirim berupa JSON String/Dict oleh backend
             if isinstance(summary_raw, str) and summary_raw.strip().startswith("{"):
                 try:
                     summary_raw = json.loads(summary_raw)
@@ -239,7 +109,6 @@ if session_id:
             st.write("### ⚠️ Review Risiko Finansial & Hukum")
             risk_raw = material.get("risk_review")
 
-            # 1. Jika datanya string JSON, bongkar dulu menjadi Dictionary Python
             if isinstance(risk_raw, str):
                 risk_raw = risk_raw.strip()
                 if risk_raw.startswith("{"):
@@ -248,9 +117,7 @@ if session_id:
                     except:
                         pass
 
-            # 2. Render jika data berupa Dictionary (Sesuai dengan JSON asli database)
             if isinstance(risk_raw, dict):
-                # Baris metrik status dan skor risiko
                 col_r1, col_r2 = st.columns(2)
                 with col_r1:
                     status_risiko = risk_raw.get("status", "N/A")
@@ -262,12 +129,10 @@ if session_id:
 
                 st.divider()
 
-                # Tampilkan text analisis utama
                 if risk_raw.get("analysis"):
                     st.markdown(
                         f"#### 🔍 Analisis Mendalam:\n{risk_raw.get('analysis')}")
 
-                # Tampilkan daftar list point-point risiko
                 risks_list = risk_raw.get("risks", [])
                 if risks_list:
                     st.markdown("#### 🚨 Daftar Bahaya Risiko yang Terdeteksi:")
@@ -276,12 +141,10 @@ if session_id:
                             '[', '').replace(']', '').replace('"', '')
                         st.error(f"**{idx}.** {rsk_clean}")
 
-                # Tampilkan rekomendasi tindakan
                 if risk_raw.get("recommendation"):
                     st.warning(
                         f"💡 **Rekomendasi Utama:** {risk_raw.get('recommendation')}")
 
-                # Tampilkan langkah mitigasi pencegahan
                 mitigasi_list = risk_raw.get("mitigation_steps", [])
                 if mitigasi_list:
                     st.markdown("#### 🛡️ Langkah Mitigasi / Pencegahan:")
@@ -290,24 +153,21 @@ if session_id:
                             '[', '').replace(']', '').replace('"', '')
                         st.info(f"**Langkah {idx}:** {mit_clean}")
 
-            # 3. Fallback jika strukturnya berupa list murni (antisipasi legacy data)
             elif isinstance(risk_raw, list):
                 for index, risk in enumerate(risk_raw, 1):
                     risk_str = str(risk).replace("[", "").replace(
                         "]", "").replace('"', '').replace("'", "")
                     if risk_str.strip():
                         st.error(f"**Risiko #{index}:** {risk_str}")
-
             else:
                 st.warning(
                     "Data analisis risiko kosong atau tidak kompatibel dengan format sistem.")
 
-        # --- TAB 4: LEGAL QA (Rekomendasi Tindakan) ---
+        # --- TAB 3: LEGAL QA ---
         with tab3:
             st.write("### ❓ Rekomendasi Tindakan (Q&A/Saran)")
             legal_qa_raw = material.get("legal_qa")
 
-            # Deteksi jika data berupa array string ["Pastikan ada bukti...", "Jangan memaksakan..."]
             if isinstance(legal_qa_raw, str) and legal_qa_raw.strip().startswith("["):
                 try:
                     legal_qa_raw = json.loads(legal_qa_raw)
@@ -317,13 +177,11 @@ if session_id:
             if isinstance(legal_qa_raw, list):
                 st.markdown("#### 💡 Langkah/Saran Strategis Hukum:")
                 for index, item in enumerate(legal_qa_raw, 1):
-                    # Jika berupa list of dict
                     if isinstance(item, dict):
                         q = item.get("question", "Pertanyaan")
                         a = item.get("answer", "Jawaban")
                         st.markdown(f"**Q: {q}**\n\n*A: {a}*")
                         st.divider()
-                    # Jika berupa list of string murni
                     else:
                         st.info(f"**Langkah {index}:** {item}")
             elif isinstance(legal_qa_raw, str):
@@ -331,7 +189,7 @@ if session_id:
             else:
                 st.warning("Tidak ada data rekomendasi hukum untuk kasus ini.")
 
-        # --- TAB 5: REFERENCES ---
+        # --- TAB 4: REFERENCES ---
         with tab4:
             st.write("### 📂 Referensi Pasal Konstitusi (Qdrant)")
             retrieved_preview = data.get(
@@ -342,7 +200,7 @@ if session_id:
             else:
                 st.warning("Tidak ada lampiran pasal spesifik.")
 
-        # --- TAB 6: TRANSCRIPTION ---
+        # --- TAB 5: TRANSCRIPTION ---
         with tab5:
             st.write("### 🗣️ Transkripsi Audio")
             col_t1, col_t2 = st.columns(2)
@@ -353,16 +211,17 @@ if session_id:
                 st.success(
                     f"**✨ Hasil Perbaikan Teks (Repaired):**\n\n{data.get('repaired_text')}")
 
-            # Additional metadata
             st.divider()
             st.markdown("#### 🔍 Query Pencarian")
             st.code(data.get('search_query') or '-', language='text')
 
-        # --- TAB 7: RAW LOG ---
+        # --- TAB 6: RAW LOG ---
         with tab6:
             st.write("### ⚙️ Raw Metadata & JSONB Response")
             with st.expander("Lihat Raw JSON Payload"):
                 st.json(data)
+        
+        render_evaluation_section(data=data, session_id=session_id)
 
     else:
         st.error("Gagal memuat detail riwayat dari database Postgres.")
