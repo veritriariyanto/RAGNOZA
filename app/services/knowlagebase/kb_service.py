@@ -58,6 +58,12 @@ class KnowledgeBaseService:
     async def get_kb_info(self, base_name: str) -> Dict:
         return await self.qdrant_service.get_kb_info(base_name)
 
+    async def get_chunks_preview(self, base_name: str, limit: int = 10) -> Dict:
+        return await self.qdrant_service.get_chunks_preview(base_name, limit)
+
+    async def get_monitor_data(self, base_name: str, preview_limit: int = 5) -> Dict:
+        return await self.qdrant_service.get_monitor_data(base_name, preview_limit)
+
     async def search_knowledgebase(
         self,
         base_name: str,

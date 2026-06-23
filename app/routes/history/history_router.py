@@ -55,7 +55,7 @@ def _serialize_process(item: RAGProcess) -> dict:
     session = item.session
     evaluations = sorted(
         list(item.evaluations or []),
-        key=lambda ev: ev.created_at or datetime.min,
+        key=lambda ev: ev.created_at or datetime.datetime.min,
         reverse=True,
     )
     latest_eval = evaluations[0] if evaluations else None

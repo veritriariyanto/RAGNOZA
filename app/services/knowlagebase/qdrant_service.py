@@ -108,9 +108,41 @@ class QdrantService:
             if c.name.endswith("_parent") or c.name.endswith("_child")
         })
 
+    async def _resolve_collection_name(self, base_name: str) -> str:
+        """
+        Menerjemahkan nama base KB case-insensitive menjadi nama asli (case-sensitive)
+        yang tersimpan di Qdrant. Contoh: 'uuno2002' -> 'UUNO2002'.
+        """
+        client = self._get_client()
+        clean_base = base_name.replace("_parent", "").replace("_child", "").strip()
+        try:
+            cols = await client.get_collections()
+            all_names = {c.name for c in cols.collections}
+            
+            # 1. Coba exact match dulu
+            for suffix in ["_parent", "_child", ""]:
+                if f"{clean_base}{suffix}" in all_names:
+                    return clean_base
+            
+            # 2. Coba case-insensitive match
+            base_lower = clean_base.lower()
+            for col_name in all_names:
+                col_lower = col_name.lower()
+                for suffix in ["_parent", "_child"]:
+                    if col_lower == f"{base_lower}{suffix}":
+                        resolved = col_name[:-len(suffix)]
+                        logger.info(f"[QDRANT] Mengatasi case mismatch: '{clean_base}' -> '{resolved}'")
+                        return resolved
+                if col_lower == base_lower:
+                    return col_name
+        except Exception as e:
+            logger.warning(f"[QDRANT] Gagal resolusi nama koleksi: {e}")
+        
+        return clean_base
+
     async def delete_knowledgebase(self, base_name: str) -> bool:
         client = self._get_client()
-        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        clean_base = await self._resolve_collection_name(base_name)
         for suffix in ["_parent", "_child"]:
             try:
                 await client.delete_collection(f"{clean_base}{suffix}")
@@ -121,7 +153,7 @@ class QdrantService:
 
     async def get_stats(self, base_name: str) -> Dict:
         client = self._get_client()
-        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        clean_base = await self._resolve_collection_name(base_name)
         try:
             p = await client.get_collection(f"{clean_base}_parent")
             c = await client.get_collection(f"{clean_base}_child")
@@ -132,6 +164,74 @@ class QdrantService:
             }
         except Exception as e:
             return {"error": str(e), "status": "error"}
+
+    async def get_monitor_data(self, base_name: str, preview_limit: int = 5) -> Dict:
+        """
+        Endpoint khusus monitoring — mengembalikan dalam satu call:
+          - Nama kedua collection Qdrant
+          - Point count parent & child
+          - Cuplikan (preview) dokumen dari masing-masing collection
+        """
+        client = self._get_client()
+        clean_base = await self._resolve_collection_name(base_name)
+        parent_col = f"{clean_base}_parent"
+        child_col  = f"{clean_base}_child"
+
+        result: Dict = {
+            "base_name": clean_base,
+            "parent_collection": parent_col,
+            "child_collection":  child_col,
+            "status": "active",
+            "parent_count": 0,
+            "child_count": 0,
+            "parent_preview": [],
+            "child_preview": [],
+            "errors": [],
+        }
+
+        # ── Parent ────────────────────────────────────────────────────────────
+        try:
+            p_info = await client.get_collection(parent_col)
+            result["parent_count"] = p_info.points_count or 0
+            p_points, _ = await client.scroll(
+                collection_name=parent_col,
+                limit=preview_limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            result["parent_preview"] = [pt.payload for pt in p_points]
+        except Exception as e:
+            err_str = str(e)
+            if "not found" in err_str.lower() or "404" in err_str:
+                result["errors"].append(f"Parent collection `{parent_col}` tidak ditemukan di Qdrant. Pastikan dokumen telah di-embed dan diindeks.")
+            else:
+                result["errors"].append(f"parent: {err_str}")
+            result["status"] = "partial_error"
+
+        # ── Child ─────────────────────────────────────────────────────────────
+        try:
+            c_info = await client.get_collection(child_col)
+            result["child_count"] = c_info.points_count or 0
+            c_points, _ = await client.scroll(
+                collection_name=child_col,
+                limit=preview_limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            result["child_preview"] = [pt.payload for pt in c_points]
+        except Exception as e:
+            err_str = str(e)
+            if "not found" in err_str.lower() or "404" in err_str:
+                result["errors"].append(f"Child collection `{child_col}` tidak ditemukan di Qdrant. Pastikan dokumen telah di-embed dan diindeks.")
+            else:
+                result["errors"].append(f"child: {err_str}")
+            result["status"] = "partial_error"
+
+        # Tandai sebagai "not_found" jika keduanya tidak ada
+        if result["parent_count"] == 0 and result["child_count"] == 0 and result["errors"]:
+            result["status"] = "not_found"
+
+        return result
 
     # ── Store (dari raw_chunks baru) ──────────────────────
 
@@ -294,7 +394,7 @@ class QdrantService:
             {total_results, results: [{score, child, parent}]}
         """
         client = self._get_client()
-        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        clean_base = await self._resolve_collection_name(base_name)
         child_col  = f"{clean_base}_child"
         parent_col = f"{clean_base}_parent"
 
@@ -427,7 +527,7 @@ class QdrantService:
     async def get_kb_info(self, base_name: str) -> Dict:
         """Ambil metadata dasar dari collection parent."""
         client = self._get_client()
-        clean_base = base_name.replace("_parent", "").replace("_child", "")
+        clean_base = await self._resolve_collection_name(base_name)
         parent_col = f"{clean_base}_parent"
         points, _ = await client.scroll(
             collection_name=parent_col,
@@ -444,6 +544,40 @@ class QdrantService:
             "source": payload.get("source"),
             "created_at": payload.get("created_at"),
         }
+
+    async def get_chunks_preview(self, base_name: str, limit: int = 10) -> Dict:
+        """Ambil cuplikan parent dan child chunks dari Qdrant."""
+        client = self._get_client()
+        clean_base = await self._resolve_collection_name(base_name)
+        parent_col = f"{clean_base}_parent"
+        child_col  = f"{clean_base}_child"
+
+        try:
+            # Scroll parent points
+            parent_resp, _ = await client.scroll(
+                collection_name=parent_col,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+            # Scroll child points
+            child_resp, _ = await client.scroll(
+                collection_name=child_col,
+                limit=limit,
+                with_payload=True,
+                with_vectors=False,
+            )
+
+            parents = [p.payload for p in parent_resp]
+            children = [c.payload for c in child_resp]
+
+            return {
+                "status": "success",
+                "parents": parents,
+                "children": children
+            }
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
 
     # ── Legacy compat (upsert_chunks dari DocumentChunk list) ─────────────────
 

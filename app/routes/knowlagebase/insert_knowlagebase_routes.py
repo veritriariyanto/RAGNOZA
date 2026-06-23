@@ -93,13 +93,24 @@ async def upload_and_clean(file: UploadFile = File(..., description="File PDF un
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Cleaning gagal: {str(e)}")
 
+    # Ambil cuplikan halaman pertama untuk preview before/after
+    raw_snippet   = ""
+    clean_snippet = ""
+    if result.cleaned_pages:
+        first_page = result.cleaned_pages[0]
+        raw_snippet   = (first_page.raw_text or "")[:600]
+        clean_snippet = (first_page.cleaned_text or "")[:600]
+
     return JSONResponse(content={
         "success": True,
         "message": f"Cleaning berhasil: {file.filename}",
         "document_id": result.document_id,
+        "metadata": result.metadata,
         "data": {
             "total_pages": result.total_pages,
             "total_words": result.total_words,
+            "raw_snippet":   raw_snippet,
+            "clean_snippet": clean_snippet,
         }
     })
 
@@ -132,11 +143,21 @@ async def process_pdf(
     all_chunks = chunking_result.all_chunks
     raw_chunks = chunking_result.__dict__.get("raw_chunks", [])
 
+    # Cuplikan halaman pertama untuk preview before/after di dashboard
+    raw_snippet   = ""
+    clean_snippet = ""
+    if cleaning_result.cleaned_pages:
+        fp = cleaning_result.cleaned_pages[0]
+        raw_snippet   = (fp.raw_text or "")[:600]
+        clean_snippet = (fp.cleaned_text or "")[:600]
+
     response_data: Dict = {
         "cleaning_stats": {
             "total_pages": cleaning_result.total_pages,
             "total_words": cleaning_result.total_words,
             "metadata": cleaning_result.metadata,
+            "raw_snippet":   raw_snippet,
+            "clean_snippet": clean_snippet,
         },
         "chunking_stats": {
             "total_chunks": chunking_result.total_chunks,
@@ -338,7 +359,38 @@ async def get_kb_info(base_name: str):
             status_code=500, 
             detail=f"Gagal mengambil informasi KB: {str(e)}"
         )
-    
+
+@router.get("/preview/{base_name}", response_model=Dict)
+async def get_kb_preview(base_name: str, limit: int = Query(10)):
+    """Mendapatkan preview parent dan child chunks dari Knowledge Base."""
+    try:
+        formatted_name = base_name.lower().strip().replace(" ", "_")
+        preview = await kb_service.get_chunks_preview(formatted_name, limit)
+        return preview
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Gagal mengambil preview KB: {str(e)}"
+        )
+
+
+@router.get("/monitor/{base_name}", response_model=Dict)
+async def get_kb_monitor(base_name: str, preview_limit: int = Query(5)):
+    """
+    [Monitoring Tab] Satu endpoint untuk semua kebutuhan monitoring KB:
+    - Nama collection parent & child
+    - Jumlah point (parent_count, child_count)
+    - Cuplikan dokumen dari kedua collection (parent_preview, child_preview)
+    """
+    try:
+        formatted_name = base_name.lower().strip().replace(" ", "_")
+        data = await kb_service.get_monitor_data(formatted_name, preview_limit)
+        return data
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Gagal mengambil data monitoring KB: {str(e)}"
+        )
 @router.delete("/delete/{base_name}", response_model=DeleteResponse)
 async def delete_kb(base_name: str):
     """
