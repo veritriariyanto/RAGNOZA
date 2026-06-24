@@ -152,22 +152,24 @@ def search_similarity(
     section_type: str = None,
     pasal_type: str = None,
     limit: int = 5,
+    score_threshold: float = 0.15,
 ) -> dict:
     """POST /api/v1/knowledgebase/qdran/search/{base_name}"""
     try:
         payload = {
             "query": query,
-            "limit": limit
+            "limit": limit,
+            "score_threshold": score_threshold,
         }
-        if section_type and section_type != "Semua":
+        if section_type and section_type.strip().lower() not in ("semua", "all", ""):
             payload["section_type"] = section_type
-        if pasal_type and pasal_type.strip():
+        if pasal_type and str(pasal_type).strip():
             payload["pasal_type"] = pasal_type
 
         response = requests.post(
             f"{BASE_URL}/knowledgebase/qdran/search/{base_name}",
             data=payload,
-            timeout=20,
+            timeout=25,
         )
         if response.status_code == 200:
             return {"success": True, "data": response.json()}

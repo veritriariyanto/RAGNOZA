@@ -377,7 +377,7 @@ class QdrantService:
         section: Optional[str] = None,
         pasal: Optional[int] = None,
         limit: int = 5,
-        score_threshold: float = 0.5,
+        score_threshold: float = 0.15,
     ) -> Dict:
         """
         Cari child chunks yang relevan, lalu fetch parent-nya untuk konteks.
@@ -429,16 +429,23 @@ class QdrantService:
         if not search_resp.points:
             return {"total_results": 0, "results": []}
 
-        # Fetch parent chunks sekaligus (batch)
+        # Fetch parent chunks — support kedua format payload (lama & baru)
+        def _get_parent_id(payload: dict) -> str:
+            """Ambil parent_id dari payload, support field lama & baru."""
+            return (
+                payload.get("parent_id")
+                or payload.get("parent_chunk_id")
+                or ""
+            )
+
         parent_chunk_ids = list({
-            hit.payload.get("parent_id")
+            _get_parent_id(hit.payload)
             for hit in search_resp.points
-            if hit.payload.get("parent_id")
+            if _get_parent_id(hit.payload)
         })
 
         parent_map: Dict[str, Any] = {}
         if parent_chunk_ids:
-            # scroll by chunk_id filter
             for pid in parent_chunk_ids:
                 scroll_resp, _ = await client.scroll(
                     collection_name=parent_col,
@@ -457,31 +464,28 @@ class QdrantService:
 
         results = []
         for hit in search_resp.points:
-            parent_id = hit.payload.get("parent_id", "")
+            parent_id = _get_parent_id(hit.payload)
             parent_payload = parent_map.get(parent_id, {})
+            # Support field "content" dan "text" (format lama)
+            child_content = hit.payload.get("content") or hit.payload.get("text", "")
+            parent_content = parent_payload.get("content") or parent_payload.get("text", "")
             results.append({
                 "score": round(hit.score, 4),
                 "child": {
                     "chunk_id":  hit.payload.get("chunk_id"),
                     "section":   hit.payload.get("section"),
-                    "content":   hit.payload.get("content"),
-                    "raw_text":  hit.payload.get("content"),  # legacy compat
-                    "type":      hit.payload.get("section"),   # legacy compat
-                    "reference_label": hit.payload.get("chunk_id"), # legacy compat
+                    "content":   child_content,
                     "pasal":     hit.payload.get("pasal"),
                     "ayat":      hit.payload.get("ayat"),
                     "poin":      hit.payload.get("poin"),
                     "parent_id": parent_id,
-                    "keyword_tags": [],  # legacy compat
                 },
                 "parent": {
                     "chunk_id": parent_payload.get("chunk_id"),
                     "title":    parent_payload.get("title"),
-                    "content":  parent_payload.get("content"),
+                    "content":  parent_content,
                     "section":  parent_payload.get("section"),
                     "pasal":    parent_payload.get("pasal"),
-                    "reference_label": parent_payload.get("title") or parent_payload.get("chunk_id"), # legacy compat
-                    "pasal_nomor": parent_payload.get("pasal"), # legacy compat
                 },
             })
 
@@ -493,7 +497,8 @@ class QdrantService:
         query: str,
         section_type: Optional[str] = None,
         pasal_type: Optional[str] = None,
-        limit: int = 5
+        limit: int = 5,
+        score_threshold: float = 0.15,
     ) -> Dict:
         """
         Backward-compatible wrapper untuk pencarian RAG.
@@ -502,7 +507,10 @@ class QdrantService:
         import re
         from app.core.embeddings import embeddings
         query_vector = await asyncio.to_thread(embeddings.embed_query, query)
-        
+
+        # Abaikan filter "Semua" agar tidak ikut di-filter ke Qdrant
+        section = section_type if section_type and section_type.strip().lower() not in ("semua", "all", "") else None
+
         # Parse nomor pasal jika berupa teks
         pasal_filter = None
         if pasal_type:
@@ -516,11 +524,11 @@ class QdrantService:
         results_dict = await self.search(
             base_name=base_name,
             query_vector=query_vector,
-            section=section_type,
+            section=section,
             pasal=pasal_filter,
-            limit=limit
+            limit=limit,
+            score_threshold=score_threshold,
         )
-        # Menambahkan parameter query untuk kompatibilitas respons
         results_dict["query"] = query
         return results_dict
 

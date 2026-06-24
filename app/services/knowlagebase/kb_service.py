@@ -70,14 +70,16 @@ class KnowledgeBaseService:
         query: str,
         section_type: Optional[str] = None,
         pasal_type: Optional[str] = None,
-        limit: int = 5
+        limit: int = 5,
+        score_threshold: float = 0.15,
     ) -> Dict:
         return await self.qdrant_service.search_knowledgebase(
             base_name=base_name,
             query=query,
             section_type=section_type,
             pasal_type=pasal_type,
-            limit=limit
+            limit=limit,
+            score_threshold=score_threshold,
         )
 
 # Singleton

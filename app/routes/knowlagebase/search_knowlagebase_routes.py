@@ -12,16 +12,17 @@ async def search_kb(
     query: str = Form(...),
     section_type: str = Form(None),
     pasal_type: str = Form(None),
-    limit: int = Form(5)
+    limit: int = Form(5),
+    score_threshold: float = Form(0.15),
 ):
     try:
-        # ✅ Cukup panggil service, tidak perlu tahu implementasi di bawahnya
         result = await kb_service.search_knowledgebase(
             base_name=base_name,
             query=query,
             section_type=section_type,
             pasal_type=pasal_type,
-            limit=limit
+            limit=limit,
+            score_threshold=score_threshold,
         )
         return result
     except HTTPException:

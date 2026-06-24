@@ -268,6 +268,12 @@ def _render_chunk_card(chunk: dict):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _tab_monitoring():
+    # Banner peringatan jika model embedding pernah diganti
+    st.info(
+        "ℹ️ **Model Embedding Aktif:** `paraphrase-multilingual-MiniLM-L12-v2` (Multilingual)  \n"
+        "Jika KB ini di-index dengan model lama (`all-MiniLM-L6-v2`), hasil pencarian tidak akan relevan. "
+        "**Hapus dan re-ingest KB** tersebut via tab *Upload & Proses*."
+    )
     st.markdown('<div class="diff-bar"></div>', unsafe_allow_html=True)
 
     # ── Pilih KB ──────────────────────────────────────────────────────────────
@@ -678,11 +684,13 @@ def _render_chunk_preview():
 def _tab_similarity_test():
     st.markdown(
         '<div class="ac-label-step">UJI COBA RETRIEVAL & SIMILARITY</div>'
-        '<div class="ac-subheader" style="margin-bottom:15px;">'
+        '<div class="ac-subheader" style="margin-bottom:6px;">'
         'Uji pencarian dokumen menggunakan model embedding dan vector store secara langsung.'
         '</div>',
         unsafe_allow_html=True,
     )
+    st.caption("🤖 Model aktif: `paraphrase-multilingual-MiniLM-L12-v2` — mendukung Bahasa Indonesia & 50+ bahasa lainnya")
+    st.markdown("")
 
     # Ambil daftar KB
     kb_list = get_knowledgebase_list()
@@ -710,6 +718,13 @@ def _tab_similarity_test():
             )
         with col_pasal:
             pasal_type = st.text_input("Filter Pasal (Angka saja)", placeholder="Contoh: 5", key="kb_sim_pasal")
+        st.markdown("---")
+        score_threshold = st.slider(
+            "Score Threshold (Minimum Similarity)",
+            min_value=0.0, max_value=1.0, value=0.15, step=0.01,
+            key="kb_sim_threshold",
+            help="Turunkan nilai ini jika tidak ada hasil. Model MiniLM-L6 umumnya menghasilkan skor 0.1–0.5 untuk teks Bahasa Indonesia."
+        )
 
     # Tombol Cari
     if st.button("🔍 Jalankan Pencarian", use_container_width=True, key="kb_sim_search_btn"):
@@ -721,9 +736,10 @@ def _tab_similarity_test():
             res = search_similarity(
                 base_name=selected_kb,
                 query=query,
-                section_type=section_type,
-                pasal_type=pasal_type,
-                limit=limit
+                section_type=section_type if section_type != "Semua" else None,
+                pasal_type=pasal_type if pasal_type.strip() else None,
+                limit=int(limit),
+                score_threshold=score_threshold,
             )
 
         if not res.get("success"):
@@ -734,50 +750,72 @@ def _tab_similarity_test():
         results = data.get("results", [])
 
         if not results:
-            st.info("ℹ Tidak ada hasil yang cocok dengan filter atau query tersebut.")
+            st.warning("⚠️ Tidak ada hasil yang ditemukan. Coba turunkan **Score Threshold** di Filter Tambahan (mis. ke 0.05).")
             return
 
-        st.markdown(
-            f'<div style="font-size:13px;color:var(--text-muted);margin-bottom:12px;">'
-            f'Ditemukan <b>{len(results)}</b> hasil retrieval:'
-            f'</div>',
-            unsafe_allow_html=True
-        )
+        st.caption(f"Ditemukan **{len(results)}** hasil retrieval untuk query: `{query}`")
+        st.markdown("---")
 
-        # Render list hasil
+        # Render setiap hasil dengan Streamlit native components
         for idx, item in enumerate(results):
             score = item.get("score", 0.0)
             child = item.get("child", {})
             parent = item.get("parent", {})
 
-            # Dapatkan detail meta child
-            child_id = child.get("chunk_id", "N/A")
-            child_sec = child.get("section", "N/A")
-            child_pasal = f"Pasal {child.get('pasal')}" if child.get('pasal') else ""
-            child_ayat = f"Ayat {child.get('ayat')}" if child.get('ayat') else ""
-            child_meta = ", ".join([f for f in [child_sec, child_pasal, child_ayat] if f])
+            child_id    = child.get("chunk_id") or "—"
+            child_sec   = child.get("section") or "—"
+            child_pasal = child.get("pasal")
+            child_ayat  = child.get("ayat")
+            child_text  = child.get("content") or "—"
 
-            # Dapatkan detail meta parent
-            parent_id = parent.get("chunk_id", "N/A")
-            parent_title = parent.get("title", "N/A")
+            parent_id    = parent.get("chunk_id") or "—"
+            parent_title = parent.get("title") or parent_id
+            parent_text  = parent.get("content") or "—"
 
-            # Render card
-            card_html = f"""
-            <div class="sim-card">
-                <span class="sim-score-badge">Similarity: {score:.4f}</span>
-                
-                <div class="sim-label sim-label-child">🟢 Child Chunk (Retrieved)</div>
-                <div class="sim-meta">ID: {child_id} | Bagian: {child_meta}</div>
-                <div class="chunk-text">{_esc(child.get('content', ''))}</div>
-                
-                <div class="sim-divider"></div>
-                
-                <div class="sim-label sim-label-parent">🟡 Parent Chunk (Context)</div>
-                <div class="sim-meta">ID: {parent_id} | Title: {parent_title}</div>
-                <div class="chunk-text">{_esc(parent.get('content', ''))}</div>
-            </div>
-            """
-            st.markdown(card_html, unsafe_allow_html=True)
+            # ── Score header ──────────────────────────────────────
+            col_lbl, col_score = st.columns([5, 1])
+            with col_lbl:
+                st.markdown(f"**Hasil #{idx + 1}**")
+            with col_score:
+                # Warna badge berdasarkan skor
+                if score >= 0.4:
+                    badge_color = "#2eb87a"
+                elif score >= 0.2:
+                    badge_color = "#d4a853"
+                else:
+                    badge_color = "#888"
+                st.markdown(
+                    f'<span style="background:{badge_color};color:#fff;font-size:11px;'
+                    f'font-weight:700;padding:3px 10px;border-radius:6px;">'
+                    f'{score:.4f}</span>',
+                    unsafe_allow_html=True,
+                )
+
+            # ── Child chunk ───────────────────────────────────────
+            with st.container(border=True):
+                meta_parts = [child_sec]
+                if child_pasal:
+                    meta_parts.append(f"Pasal {child_pasal}")
+                if child_ayat:
+                    meta_parts.append(f"Ayat {child_ayat}")
+                st.markdown(
+                    f"🟢 **Child Chunk**  \n"
+                    f"<small style='color:#888;'>ID: `{child_id}` &nbsp;|&nbsp; {' · '.join(meta_parts)}</small>",
+                    unsafe_allow_html=True,
+                )
+                st.text(child_text[:600] + ("…" if len(child_text) > 600 else ""))
+
+                st.markdown("<hr style='margin:8px 0;opacity:.3;'>", unsafe_allow_html=True)
+
+                # ── Parent chunk ──────────────────────────────────
+                st.markdown(
+                    f"🟡 **Parent Chunk (Context)**  \n"
+                    f"<small style='color:#888;'>ID: `{parent_id}` &nbsp;|&nbsp; {parent_title}</small>",
+                    unsafe_allow_html=True,
+                )
+                st.text(parent_text[:800] + ("…" if len(parent_text) > 800 else ""))
+
+            st.markdown("")  # spacing
 
 
 # ─────────────────────────────────────────────────────────────────────────────
