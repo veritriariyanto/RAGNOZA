@@ -83,11 +83,17 @@ class RAGIntegrationService:
             refinement = await self.text_service.repair_legal_text(raw_transcribe)
             repaired_text = refinement["repaired_text"]
             search_query = refinement["search_query"]
+            pasal_number = refinement.get("pasal_number")
+            ayat_number = refinement.get("ayat_number")
 
             # ── Tahap 3: Semantic Search ke Qdrant (Child-Parent) ─────────────
+            # PERBAIKAN: Gunakan pasal_number sebagai filter agar hasil search
+            # lebih relevan dengan pasal yang dimaksud user.
+            pasal_filter = str(pasal_number) if pasal_number is not None else None
             kb_results = await self.vector_service.search_knowledgebase(
                 base_name=knowledge_base,
                 query=search_query,
+                pasal_type=pasal_filter,
                 limit=3,
             )
 
@@ -158,6 +164,7 @@ class RAGIntegrationService:
                         f"\n\nFAKTA/TRANSKRIPSI:\n{repaired_text}"
                     ),
                     user_scenario=repaired_text,
+                    raw_transcribe=raw_transcribe,
                 )
                 final_material = await self.material_service.generate_legal_material(
                     material_payload
@@ -253,11 +260,17 @@ class RAGIntegrationService:
             refinement = await self.text_service.repair_legal_text(raw_text)
             repaired_text = refinement["repaired_text"]
             search_query = refinement["search_query"]
+            pasal_number = refinement.get("pasal_number")
+            ayat_number = refinement.get("ayat_number")
 
             # ── Tahap 2: Semantic Search ke Qdrant (Child-Parent) ─────────────
+            # PERBAIKAN: Gunakan pasal_number sebagai filter agar hasil search
+            # lebih relevan dengan pasal yang dimaksud user.
+            pasal_filter = str(pasal_number) if pasal_number is not None else None
             kb_results = await self.vector_service.search_knowledgebase(
                 base_name=knowledge_base,
                 query=search_query,
+                pasal_type=pasal_filter,
                 limit=3,
             )
 
@@ -307,6 +320,7 @@ class RAGIntegrationService:
                         f"\n\nFAKTA/TRANSKRIPSI:\n{repaired_text}"
                     ),
                     user_scenario=repaired_text,
+                    raw_transcribe=raw_text,
                 )
                 final_material = await self.material_service.generate_legal_material(
                     material_payload

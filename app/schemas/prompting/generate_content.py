@@ -7,6 +7,8 @@ class MaterialRequest(BaseModel):
         ..., description="Dokumen UU atau aturan hukum terkait (dari hasil retrieval RAG)")
     user_scenario: str = Field(
         ..., description="Kasus nyata atau rencana tindakan yang ingin dievaluasi oleh pengguna")
+    raw_transcribe: Optional[str] = Field(
+        default=None, description="Teks transkripsi mentah sebelum repair (untuk intent classification)")
 
 
 class SummaryBlock(BaseModel):

@@ -26,6 +26,7 @@ _KEY_UPLOAD_BYTES = "_audio_upload_bytes"
 _KEY_UPLOAD_NAME = "_audio_upload_name"
 _KEY_RECORD_BYTES = "_audio_record_bytes"
 _KEY_TRANSCRIPTION = "_audio_transcription"
+_KEY_TEXT_INPUT = "_text_input_content"
 
 
 # =============================================================================
@@ -132,9 +133,9 @@ def render_audio_controls():
     st.markdown(
         """
         <div style="margin-top:8px;margin-bottom:4px;">
-            <div class="ac-header">🎙️ Audio ke Analisis Hukum</div>
+            <div class="ac-header">🎙️ Analisis Hukum Berbasis AI</div>
             <div class="ac-subheader">
-                Upload atau rekam audio — sistem akan mentranskrip, mencari referensi hukum,
+                Upload audio, rekam langsung, atau ketik teks — sistem akan mencari referensi hukum
                 dan menghasilkan analisis SPK secara otomatis.
             </div>
         </div>
@@ -189,8 +190,8 @@ def render_audio_controls():
 
     st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
 
-    tab_upload, tab_record = st.tabs(
-        ["  📂  Upload File  ", "  🔴  Rekam Langsung  "])
+    tab_upload, tab_record, tab_text = st.tabs(
+        ["  📂  Upload File  ", "  🔴  Rekam Langsung  ", "  ✏️  Input Teks  "])
 
     # Dynamic button label based on toggle state
     _rag_btn_label = "🚀  Proses RAG & Evaluasi" if auto_eval else "🚀  Proses RAG"
@@ -304,6 +305,53 @@ def render_audio_controls():
                 else:
                     st.session_state[_KEY_TRANSCRIPTION] = transcription
                     st.rerun()
+
+    # ── TAB TEXT INPUT ─────────────────────────────────────────────────────────
+    with tab_text:
+        st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+        st.caption(
+            "Ketik atau tempel teks pertanyaan/kasus hukum Anda, lalu proses langsung ke pipeline RAG."
+        )
+
+        # Ambil nilai tersimpan dari session state (jika ada)
+        saved_text = st.session_state.get(_KEY_TEXT_INPUT, "")
+
+        text_content = st.text_area(
+            "Teks Pertanyaan",
+            value=saved_text,
+            height=200,
+            placeholder="Contoh: Bagaimana ketentuan pasal 33 UUD 1945 tentang perekonomian nasional?",
+            key="text_input_area",
+            label_visibility="collapsed",
+            help="Masukkan teks pertanyaan atau deskripsi kasus hukum untuk dianalisis.",
+        )
+
+        # Update session state jika teks berubah
+        if text_content != saved_text:
+            st.session_state[_KEY_TEXT_INPUT] = text_content
+
+        # Tombol aksi
+        col_process_text, col_clear_text = st.columns([4, 1])
+        with col_process_text:
+            process_text_btn = st.button(
+                _rag_btn_label,
+                use_container_width=True,
+                key="btn_rag_text",
+                type="primary",
+                disabled=not text_content.strip(),
+                help="Proses teks langsung ke pipeline RAG (Repair → Search → Generate → Save).",
+            )
+        with col_clear_text:
+            if st.button("🗑️", use_container_width=True, key="btn_clear_text", help="Hapus teks"):
+                st.session_state.pop(_KEY_TEXT_INPUT, None)
+                st.rerun()
+
+        if process_text_btn:
+            text_to_process = text_content.strip()
+            if not text_to_process:
+                st.warning("⚠️ Teks kosong, silakan masukkan teks terlebih dahulu.")
+            else:
+                _run_text_pipeline(text_to_process, knowledge_base, auto_eval)
 
     # ── Hasil transkripsi (STT only) ─────────────────────────────────────────
     transcription = st.session_state.get(_KEY_TRANSCRIPTION)

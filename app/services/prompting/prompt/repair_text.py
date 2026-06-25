@@ -14,7 +14,7 @@ class TextRefinerService:
 
     async def repair_legal_text(self, raw_text: str) -> dict:
         if not raw_text or not raw_text.strip():
-            return {"repaired_text": "", "search_query": ""}
+            return {"repaired_text": "", "search_query": "", "pasal_number": None, "ayat_number": None}
 
         system_prompt = (
             "Anda adalah editor naskah hukum dan analis teks spesialis peraturan perundang-undangan Indonesia. "
@@ -22,14 +22,17 @@ class TextRefinerService:
             "1. Perbaiki teks transkripsi agar rapi sesuai PUEBI & terminologi hukum resmi.\n"
             "2. Hapus total karakter pengganggu cetak atau noise seperti 'SK No XXXXX', '--- PAGE X ---'.\n"
             "3. Pertahankan struktur kalimat asli pasal. JANGAN mengubah esensi, makna, nomor pasal, atau nomor ayat.\n"
-            "4. Ekstrak 'search_query': 1 kalimat singkat, padat, & spesifik yang mencerminkan materi hukum pada potongan teks tersebut.\n\n"
+            "4. Ekstrak 'search_query': 1 kalimat singkat, padat, & spesifik yang MENCANTUMKAN NOMOR PASAL, AYAT, dan HURUF jika disebutkan dalam teks. "
+            "Contoh: jika teks menyebut 'Pasal 15 ayat (2) huruf f', search_query harus mengandung 'Pasal 15 ayat 2 huruf f'.\n"
+            "5. Ekstrak 'pasal_number': nomor pasal yang disebut dalam teks (integer), atau null jika tidak ada.\n"
+            "6. Ekstrak 'ayat_number': nomor ayat yang disebut (integer), atau null jika tidak ada.\n\n"
             "WAJIB kembalikan HANYA JSON valid dengan skema yang diminta. Tanpa markdown code block."
         )
 
         human_prompt = (
             f"Teks mentah: {raw_text}\n\n"
             "Format output JSON yang diminta:\n"
-            '{"repaired_text": "teks yang sudah diperbaiki", "search_query": "query pencarian"}'
+            '{"repaired_text": "teks yang sudah diperbaiki", "search_query": "query pencarian", "pasal_number": null, "ayat_number": null}'
         )
 
         max_retries = 3
@@ -45,6 +48,10 @@ class TextRefinerService:
 
                 if not isinstance(response, dict) or "repaired_text" not in response or "search_query" not in response:
                     raise ValueError("Output LLM tidak sesuai skema JSON")
+
+                # Fallback untuk field baru jika LLM tidak mengembalikannya
+                response.setdefault("pasal_number", None)
+                response.setdefault("ayat_number", None)
 
                 return response
 
@@ -63,7 +70,9 @@ class TextRefinerService:
         # Fallback aman jika seluruh retry gagal atau terjadi error non-429
         return {
             "repaired_text": raw_text.strip(),
-            "search_query": raw_text.strip()[:200]
+            "search_query": raw_text.strip()[:200],
+            "pasal_number": None,
+            "ayat_number": None,
         }
 
 # Inisialisasi instance
