@@ -30,6 +30,14 @@ async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
             ← {question, context, answer, ground_truth?}
         → EvaluationResponse {status, metrics, error?}
     """
+    # ← TAMBAH INI sebagai baris pertama
+    logger.info(
+        "[Evaluator:8001] Request diterima | question='%s' | answer_qa='%s' | answer_risk='%s'",
+        request.question[:150] if request.question else "KOSONG",
+        request.answer_qa[:100] if request.answer_qa else "KOSONG",
+        request.answer_risk[:50] if request.answer_risk else "KOSONG",
+    )
+    
     try:
         result = await evaluation_service.run_evaluation(
             question=request.question,
@@ -47,6 +55,7 @@ async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
             existing_risk_faithfulness=request.existing_risk_faithfulness,
             existing_overall=request.existing_overall,
             existing_segments=request.existing_segments or [],
+            context_chunks=request.context_chunks or [], 
         )
         return result
 

@@ -90,6 +90,7 @@ class RAGIntegrationService:
             # PERBAIKAN: Gunakan pasal_number sebagai filter agar hasil search
             # lebih relevan dengan pasal yang dimaksud user.
             pasal_filter = str(pasal_number) if pasal_number is not None else None
+            print(f"Nilai query: {search_query}")
             kb_results = await self.vector_service.search_knowledgebase(
                 base_name=knowledge_base,
                 query=search_query,

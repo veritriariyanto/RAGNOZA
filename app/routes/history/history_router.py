@@ -24,7 +24,6 @@ def _parse_json_field(raw: str | None) -> dict | list | None:
     except (json.JSONDecodeError, TypeError):
         return None
 
-
 def _serialize_evaluation(item: RAGASEvaluation) -> dict:
     return {
         "id": item.id,
@@ -49,7 +48,6 @@ def _serialize_evaluation(item: RAGASEvaluation) -> dict:
         "status": item.status,
         "created_at": item.created_at,
     }
-
 
 def _serialize_process(item: RAGProcess) -> dict:
     session = item.session
@@ -77,7 +75,6 @@ def _serialize_process(item: RAGProcess) -> dict:
                 if latest_eval.evaluated_segments
                 else []
             ),
-
 }
 
     return {

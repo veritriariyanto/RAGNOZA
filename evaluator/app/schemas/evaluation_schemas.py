@@ -24,6 +24,10 @@ class EvaluationRequest(BaseModel):
     ground_truth: Optional[str] = None
     history_id: Optional[int] = None
     source_label: Optional[str] = "rag_pipeline"
+    context_chunks: Optional[List[str]] = Field(
+    default=None,
+    description="Actual retrieved chunks dari RAG pipeline untuk context_precision dan context_recall"
+)
 
     # FIX #3 — re-evaluasi efisien
     is_reeval: bool = Field(

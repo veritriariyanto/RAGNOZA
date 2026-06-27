@@ -51,6 +51,7 @@ async def trigger_auto_evaluation(
     ground_truth: Optional[str] = None,
     source_label: str = "rag_pipeline",
     history_id: Optional[int] = None,
+    context_chunks: Optional[list[str]] = None,   # ← tambah ini
     # CATATAN: jangan terima 'db' dari request — buat session baru di dalam
 ) -> dict:
     """
@@ -84,7 +85,19 @@ async def trigger_auto_evaluation(
 
         "ground_truth": ground_truth,
         "source_label": source_label,
+        "context_chunks": context_chunks or [],   # ← tambah ini
     }
+
+    # Tambahkan di dalam _build_payload_from_material sebelum return dict
+    if not question or len(question.strip()) == 0:
+        logger.error("[PayloadCheck] 🚨 CRITICAL: Question kosong dari hulu pipeline!")
+    
+    logger.info(
+        "[PayloadCheck] question='%s' | faithfulness_text_len=%d | answer_qa='%s'",
+        question[:100] if question else "EMPTY",
+        len(segments.get("faithfulness", "")),
+        segments.get("qa", "")[:200],
+    )
 
     # 4. EKSEKUSI PANGGILAN HTTP:
     # Menembak microservice evaluator secara asinkron dan menunggu hasilnya kembali

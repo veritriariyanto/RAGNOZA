@@ -196,10 +196,10 @@ class EvaluationService:
             evaluated_segments.append("faithfulness")
 
         # JALUR 2: QA → Relevancy (+ precision/recall jika ada GT)
-        answer_relevancy_score = context_precision_score = context_recall_score = None
+        answer_relevancy_score = context_precision_score = context_recall_score = qa_faithfulness_score = None
         if answer_qa.strip() not in ("-", "", "None"):
             logger.info("[EvalService][full] [2/3] Relevancy segmen QA...")
-            metric_types = ["answer_relevancy"]
+            metric_types = ["faithfulness", "answer_relevancy"]   # ← tambah faithfulness
             if ground_truth:
                 metric_types.extend(["context_precision", "context_recall"])
 
@@ -209,8 +209,10 @@ class EvaluationService:
                 answer=answer_qa,
                 metric_types=metric_types, 
                 ground_truth=ground_truth,
+                context_chunks=context_chunks,   # ← teruskan chunks
             )
             scores = result.to_pandas().to_dict(orient="records")[0]
+            qa_faithfulness_score    = scores.get("faithfulness")   # ← ambil ini
             answer_relevancy_score   = scores.get("answer_relevancy")
             context_precision_score  = scores.get("context_precision")
             context_recall_score     = scores.get("context_recall")
@@ -237,9 +239,10 @@ class EvaluationService:
                     source_label, risk_faithfulness_score,
                 )
         
+        # Rekapitulasi — gabungkan faithfulness summary + qa
+        scores_faith = [s for s in [faithfulness_score, qa_faithfulness_score] if s is not None]
+        f  = _safe_round(sum(scores_faith) / len(scores_faith)) if scores_faith else None
 
-        # Rekapitulasi
-        f  = _safe_round(faithfulness_score)
         r  = _safe_round(answer_relevancy_score)
         p  = _safe_round(context_precision_score)
         c  = _safe_round(context_recall_score)

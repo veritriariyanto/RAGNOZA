@@ -21,6 +21,10 @@ class MaterialEvaluationRequest(BaseModel):
     ground_truth: Optional[str] = Field(None, description="Jawaban ideal dari legal expert")
     history_id: Optional[int] = Field(None, description="ID history untuk update DB")
     source_label: Optional[str] = Field("frontend_eval", description="Label asal request")
+    context_chunks: Optional[List[str]] = Field(
+    default=None,
+    description="Chunks hasil retrieval RAG untuk evaluasi precision/recall"
+)
 
 # Model/Schema ini digunakan pada router / ragas-auto-2metriks
 class ReevalRequest(BaseModel):

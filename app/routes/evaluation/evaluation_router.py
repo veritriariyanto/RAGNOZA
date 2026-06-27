@@ -12,9 +12,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from app.core.postgres import get_db
 from app.schemas.evaluation.evaluation_schemas import (   # ← fix: folder baru
+    EvaluationInput,
     MaterialEvaluationRequest,
     ReevalRequest,
     EvaluationResponse,
@@ -34,6 +36,8 @@ def _build_payload_from_material(
     material: MaterialResponse,
     ground_truth, 
     source_label: str,
+    context_chunks: Optional[list[str]] = None,
+    
 ) -> dict:
     """
     Fungsi Helper Sinkron (Synchronous) untuk menyusun dan menstandarisasi 
@@ -55,6 +59,14 @@ def _build_payload_from_material(
     # menjadi potongan teks spesifik (segmentasi) berdasarkan metrik targetnya masing-masing.
     segments = extract_segments_for_ragas(material)
 
+    # TAMBAHKAN LOG DI SINI
+    logger.info(
+        "[PayloadCheckRouter] question='%s' | faithfulness_text_len=%d | answer_qa='%s'",
+        question[:100],
+        len(segments.get("faithfulness", "")),
+        segments.get("qa", "")[:200],
+    )
+
     # Menyusun kamus data (dictionary) sesuai dengan kontrak API yang diminta oleh service Evaluator :8001
     return {
         "question": question,
@@ -69,6 +81,7 @@ def _build_payload_from_material(
 
         "ground_truth": ground_truth,
         "source_label": source_label,
+        "context_chunks": context_chunks or [],   # ← tambah ini
         # Karena ini jalur 'Auto-Eval' pertama kali, flag 'is_reeval' diset False.
         "is_reeval": False,
     }
@@ -82,6 +95,13 @@ async def evaluate_ragas_auto_2metrics(
     payload: MaterialEvaluationRequest,
     db: Session = Depends(get_db),
 ):
+    # ← TAMBAH INI SEBAGAI BARIS PERTAMA
+    logger.info(
+        "[EvalRouter] Payload diterima | question='%s' | history_id=%s",
+        payload.question[:100] if payload.question else "KOSONG",
+        payload.history_id,
+    )
+    
     """Auto eval: terima MaterialResponse, ekstrak segmen, kirim ke evaluator."""
     try:
         material = MaterialResponse.model_validate(payload.material)
@@ -96,7 +116,46 @@ async def evaluate_ragas_auto_2metrics(
         source_label=payload.source_label or "frontend_eval",
     )
 
-    result = await call_evaluator(evaluator_payload, source_label="frontend_eval")  # ← reuse
+    # =============================================================================
+    # 🛑 PROTEKSI & GUARDRAIL VALIDASI INPUT (TAMBAHKAN DI SINI)
+    # =============================================================================
+    q_text = evaluator_payload.get("question", "").strip()
+    faith_text = evaluator_payload.get("faithfulness_text", "").strip()
+
+    # Siapkan skema input untuk audit log di frontend walaupun statusnya skipped
+    fallback_input = EvaluationInput(
+        question=payload.question or "-",
+        context=payload.context or "-",
+        answer=evaluator_payload.get("answer", "-"),
+        ground_truth=payload.ground_truth,
+        answer_qa=evaluator_payload.get("answer_qa", "-"),
+        source_label=payload.source_label or "frontend_eval"
+    )
+
+    # 1. Deteksi jika question kosong dari Whisper atau diisi teks default template
+    if not q_text or q_text in ["-", "NONE", "null"]:
+        logger.warning("[EvalRouter] 🛑 Evaluasi dilewati: 'question' kosong atau tidak valid.")
+        return EvaluationResponse(
+            status="skipped",
+            metrics=None,
+            input=fallback_input,
+            error="User question is empty or invalid from pipeline."
+        )
+
+    # 2. Deteksi jika text pendukung evaluasi kosong (kasus ANSWER hanya berisi "-")
+    if not faith_text or faith_text == "-":
+        logger.warning("[EvalRouter] 🛑 Evaluasi dilewati: Segmen jawaban kosong/hanya template strip.")
+        return EvaluationResponse(
+            status="skipped",
+            metrics=None,
+            input=fallback_input,
+            error="Evaluated segments (answer) are empty or blank templates."
+        )
+    # =============================================================================
+
+
+    # Jika lolos validasi di atas, baru microservice evaluator (Groq/Ragas) ditembak
+    result = await call_evaluator(evaluator_payload, source_label="frontend_eval")
 
     if result.get("status") == "error":
         raise HTTPException(status_code=500, detail=f"Evaluasi gagal: {result.get('error')}")

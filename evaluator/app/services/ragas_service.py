@@ -155,13 +155,21 @@ class RagasService:
             if "context_recall" in metric_types:
                 metrics.append(ContextRecall(llm=self.evaluator_llm))
 
-            if context_chunks and len(context_chunks) > 1:
-                chunks_for_eval = context_chunks
+            is_faithfulness_only = all(m in ["faithfulness", "answer_relevancy"] for m in metric_types)
+
+            if is_faithfulness_only:
+                # Faithfulness dan Answer Relevancy tidak butuh chunk granular
+                # Gunakan context penuh agar klaim tidak terlalu mudah ter-cover
+                chunks_for_eval = [context] if not context_chunks else context_chunks
             else:
-                # Pecah context besar jadi paragraf — minimal ada beberapa item untuk diranking
-                chunks_for_eval = [c.strip() for c in context.split("\n\n") if c.strip()]
-                if not chunks_for_eval:
-                    chunks_for_eval = [context]
+                # Precision dan Recall butuh actual retrieved chunks
+                if context_chunks and len(context_chunks) >= 1:
+                    chunks_for_eval = context_chunks
+                else:
+                    # Fallback: paragraph splitting hanya jika context_chunks benar-benar tidak ada
+                    chunks_for_eval = [c.strip() for c in context.split("\n\n") if c.strip()]
+                    if not chunks_for_eval:
+                        chunks_for_eval = [context]
 
             data = {
                 "question": [question],
