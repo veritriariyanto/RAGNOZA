@@ -86,14 +86,20 @@ def build_output_instructions(intent: str) -> str:
         "   - VALIDASI PASAL: Jika pengguna menyebut nomor pasal tertentu dalam query:\n"
         "     a) Verifikasi apakah pasal tersebut ADA dalam konteks yang diberikan.\n"
         "     b) Jika TIDAK ADA: nyatakan di field 'relevance' bahwa pasal tersebut "
-        "tidak ditemukan, lalu rekomendasikan pasal yang paling relevan dari konteks.\n"
+        "tidak ditemukan, lalu cari dan tampilkan pasal LAIN yang paling relevan "
+        "dengan TINDAKAN yang dideskripsikan pengguna.\n"
         "     c) Jika pasal ADA namun pengguna menyebut ayat/huruf yang keliru: "
         "koreksi dan tunjukkan pasal/ayat yang tepat beserta alasannya.\n"
         "     d) DILARANG mengarang isi pasal yang tidak ada di konteks.\n"
         "   - CLAUSE HONESTY: Jika tidak ada pasal yang secara spesifik mengatur hal "
         "yang ditanyakan, pilih pasal terdekat dan nyatakan secara eksplisit di field "
         "'relevance' bahwa ini merupakan ketentuan umum/terdekat yang tersedia, "
-        "bukan pasal yang secara langsung mengatur.\n\n"
+        "bukan pasal yang secara langsung mengatur.\n"
+        "   - PASAL SALAH ≠ BEBAS RISIKO: Ketidakhadiran nomor pasal yang disebutkan "
+        "pengguna dalam konteks BUKAN berarti tindakan pengguna aman atau patuh. "
+        "Evaluasi TINDAKAN yang dideskripsikan tetap wajib dilakukan berdasarkan "
+        "pasal lain yang relevan dari konteks. Risk Review TIDAK BOLEH bernilai "
+        "'Patuh' atau score tinggi semata karena pasal yang disebutkan tidak ditemukan.\n\n"
         "3. LEGAL Q&A\n"
         "   - Jawab HANYA pertanyaan yang secara eksplisit diajukan pengguna.\n"
         "   - DILARANG mengarang pertanyaan turunan yang tidak diminta.\n"
@@ -135,6 +141,20 @@ def build_output_instructions(intent: str) -> str:
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
+
+
+def _is_insufficient_context(context_text: str) -> bool:
+    """
+    Deteksi apakah konteks yang di-retrieve terlalu tipis untuk dianalisis.
+    Threshold: < 300 karakter atau < 2 pasal teridentifikasi.
+    """
+    if not context_text or len(context_text.strip()) < 300:
+        return True
+    pasal_count = context_text.lower().count("pasal")
+    if pasal_count < 2:
+        return True
+    return False
+
 
 class MaterialGeneratorService:
     def __init__(self):
@@ -204,6 +224,16 @@ class MaterialGeneratorService:
             "   Untuk tipe 'konsultasi', DILARANG mengembalikan Risk Review kosong "
             "atau bernilai default '-'. Ini adalah pelanggaran instruksi.\n\n"
 
+            "6. PASAL SALAH ≠ TINDAKAN AMAN\n"
+            "   Jika pengguna menyebut nomor pasal yang TIDAK ADA dalam konteks:\n"
+            "   a) Nyatakan pasal tersebut tidak ditemukan di konteks yang diberikan.\n"
+            "   b) JANGAN simpulkan bahwa tindakan pengguna 'patuh' atau 'tidak berisiko' "
+            "hanya karena pasal yang disebutkan tidak ada.\n"
+            "   c) TETAP evaluasi tindakan yang dideskripsikan pengguna berdasarkan pasal "
+            "LAIN yang relevan dari konteks yang tersedia.\n"
+            "   d) Risk Review WAJIB mencerminkan risiko atas TINDAKAN, bukan atas "
+            "ketepatan nomor pasal yang disebutkan.\n\n"
+
             "Gunakan gaya bahasa formal, tegas, lugas, dan patuhi PUEBI. "
             "Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan, "
             "dan wajib mengikuti schema yang diberikan."
@@ -240,13 +270,25 @@ class MaterialGeneratorService:
 
                 validated = MaterialResponse.model_validate(response)
 
-                # --- Post-validation: pastikan risk_review tidak kosong untuk konsultasi ---
                 if intent == "konsultasi":
                     rr = validated.risk_review
-                    if not rr or rr.analysis in ("-", "", None):
+                    # Jika score=100 dan status=Patuh tapi summary menyebut "tidak ada" pasal
+                    summary_text = ((validated.summary.overview or "") + 
+                                    (validated.summary.conclusion or "")).lower()
+                    false_safe_signals = [
+                        "tidak ada dalam konteks",
+                        "pasal tersebut tidak ada",
+                        "tidak ditemukan dalam konteks",
+                    ]
+                    is_false_safe = (
+                        rr.score >= 90 and
+                        any(sig in summary_text for sig in false_safe_signals)
+                    )
+                    if is_false_safe:
                         logger.warning(
-                            "MaterialGeneratorService: Risk Review kosong untuk intent "
-                            "'konsultasi' — kemungkinan LLM mengabaikan instruksi. "
+                            "MaterialGeneratorService: Terdeteksi FALSE SAFE — LLM menyimpulkan "
+                            "'Patuh' karena pasal yang disebutkan tidak ada, bukan karena "
+                            "tindakan dinilai aman. Kemungkinan perlu re-evaluate. "
                             f"raw_snippet='{raw_text[:80]}'"
                         )
 
@@ -265,16 +307,55 @@ class MaterialGeneratorService:
             f"MaterialGeneratorService: Semua {max_attempts} attempt gagal. "
             f"Error terakhir: {str(last_error)}"
         )
-        return MaterialResponse(
-            summary={
+        # ── Cek apakah konteks terlalu tipis ────────────────────────────────
+        is_thin_context = _is_insufficient_context(data.context_text)
+
+        if is_thin_context:
+            fallback_summary = {
+                "title": "Konteks Tidak Mencukupi",
+                "overview": (
+                    "Konteks dokumen hukum yang tersedia terlalu sedikit untuk "
+                    "menghasilkan analisis yang akurat."
+                ),
+                "key_points": [
+                    "Dokumen hukum yang diunggah mungkin belum mencakup pasal yang relevan.",
+                    "Coba tambahkan lebih banyak dokumen atau perluas cakupan knowledge base.",
+                    "Pastikan query Anda sesuai dengan isi dokumen yang tersedia.",
+                ],
+                "conclusion": (
+                    "Analisis tidak dapat dilakukan karena konteks hukum yang ditemukan "
+                    "tidak mencukupi. Silakan tambahkan dokumen pendukung."
+                ),
+            }
+            fallback_risk = {
+                "status": "KONTEKS_TIDAK_CUKUP",
+                "score": 0,
+                "analysis": (
+                    "Sistem tidak dapat mengevaluasi risiko karena konteks dokumen hukum "
+                    "yang tersedia terlalu sedikit atau tidak relevan dengan pertanyaan Anda. "
+                    "Tambahkan lebih banyak dokumen hukum ke knowledge base untuk hasil yang lebih akurat."
+                ),
+                "risks": [
+                    "Analisis risiko tidak dapat dilakukan tanpa konteks hukum yang memadai."
+                ],
+                "mitigation_steps": [
+                    "Tambahkan dokumen hukum yang relevan ke knowledge base.",
+                    "Pastikan knowledge base mencakup UU atau peraturan yang Anda tanyakan.",
+                    "Coba reformulasi pertanyaan agar lebih sesuai dengan dokumen yang tersedia.",
+                ],
+                "recommendation": (
+                    "Lengkapi knowledge base dengan dokumen hukum yang relevan, "
+                    "kemudian ulangi pertanyaan Anda."
+                ),
+            }
+        else:
+            fallback_summary = {
                 "title": "Summary",
                 "overview": "Terjadi kegagalan sistem saat menyusun ringkasan hukum.",
                 "key_points": ["Proses generate gagal dijalankan"],
                 "conclusion": "Data tidak dapat diproses saat ini.",
-            },
-            clause_search=[],
-            legal_qa=[],
-            risk_review={
+            }
+            fallback_risk = {
                 "status": "ERROR_SISTEM",
                 "score": 0,
                 "analysis": (
@@ -286,7 +367,13 @@ class MaterialGeneratorService:
                     "Coba ulang proses setelah sistem kembali stabil"
                 ],
                 "recommendation": "Ulangi permintaan setelah perbaikan sistem.",
-            },
+            }
+
+        return MaterialResponse(
+            summary=fallback_summary,
+            clause_search=[],
+            legal_qa=[],
+            risk_review=fallback_risk,
             referensi_uu=[],
         )
 
