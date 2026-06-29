@@ -1,5 +1,4 @@
-# app/schemas/evaluasi/evaluation_schemas.py
-#
+# app/schemas/evaluation/evaluation_schemas.py
 
 from pydantic import BaseModel, Field
 from typing import Optional, List, Any

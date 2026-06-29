@@ -1,3 +1,5 @@
+# app/core/postgres.py
+
 from urllib.parse import parse_qsl
 
 from sqlalchemy import create_engine
