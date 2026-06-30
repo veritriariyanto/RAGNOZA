@@ -1,4 +1,4 @@
-# embeddings.py
+# app/core/embeddings.py
 
 from langchain_huggingface import HuggingFaceEmbeddings
 

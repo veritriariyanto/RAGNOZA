@@ -36,9 +36,9 @@ class RagasService:
             from app.core.embeddings import embeddings
 
             eval_llm_raw = ThrottledChatGroq(
-                temperature=settings.ragas_llm_temperature,
+                temperature=settings.RAGAS_LLM_TEMPERATURE,
                 groq_api_key=settings.GROQ_API_KEY,
-                model_name=settings.ragas_llm_model,       # llama-3.1-70b-versatile
+                model_name=settings.RAGAS_LLM_MODEL,       # llama-3.1-70b-versatile
             )
 
             # Tidak perlu wrapper tambahan — throttle sudah di dalam llm
@@ -47,7 +47,7 @@ class RagasService:
             self._available = True
             logger.info(
                 "✅ RagasService siap | evaluator_model=%s",
-                settings.ragas_llm_model,
+                settings.RAGAS_LLM_MODEL,
             )
         except Exception as exc:
             self._availability_error = str(exc)

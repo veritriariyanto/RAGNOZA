@@ -106,6 +106,7 @@ async def upload_and_clean(file: UploadFile = File(..., description="File PDF un
         "message": f"Cleaning berhasil: {file.filename}",
         "document_id": result.document_id,
         "metadata": result.metadata,
+        "repair_stats": result.repair_stats,
         "data": {
             "total_pages": result.total_pages,
             "total_words": result.total_words,
@@ -156,6 +157,7 @@ async def process_pdf(
             "total_pages": cleaning_result.total_pages,
             "total_words": cleaning_result.total_words,
             "metadata": cleaning_result.metadata,
+            "repair_stats": cleaning_result.repair_stats,
             "raw_snippet":   raw_snippet,
             "clean_snippet": clean_snippet,
         },

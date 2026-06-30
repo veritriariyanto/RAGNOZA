@@ -153,17 +153,33 @@ async def evaluate_ragas_auto_2metrics(
         )
     # =============================================================================
 
+    # =============================================================================
 
-    # Jika lolos validasi di atas, baru microservice evaluator (Groq/Ragas) ditembak
-    result = await call_evaluator(evaluator_payload, source_label="frontend_eval")
+    try:
+        # Jika lolos validasi di atas, baru microservice evaluator (Groq/Ragas) ditembak
+        result = await call_evaluator(evaluator_payload, source_label="frontend_eval")
+        
+        # Pastikan result tidak None sebelum di-get
+        if not result or result.get("status") == "error":
+            error_msg = result.get("error") if result else "Response dari evaluator kosong"
+            logger.error(f"[EvalRouter] Evaluator gagal: {error_msg}")
+            raise HTTPException(status_code=500, detail=f"Evaluasi gagal: {error_msg}")
 
-    if result.get("status") == "error":
-        raise HTTPException(status_code=500, detail=f"Evaluasi gagal: {result.get('error')}")
+        if payload.history_id is not None:
+            try:
+                HistoryService.update_ragas(db=db, history_id=payload.history_id, ragas_result=result)
+            except Exception as db_exc:
+                # Log error DB tapi jangan gagalkan return agar user tetap dapat hasil
+                logger.error(f"[EvalRouter] Gagal menyimpan hasil Ragas ke DB: {db_exc}")
+                # Optional: tetap lanjut karena evaluasinya sendiri sebenarnya sukses
+        
+        return result
 
-    if payload.history_id is not None:
-        HistoryService.update_ragas(db=db, history_id=payload.history_id, ragas_result=result)
-
-    return result
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as general_exc:
+        logger.exception("[EvalRouter] Terjadi unhandled exception di endpoint evaluasi")
+        raise HTTPException(status_code=500, detail=f"Internal Server Error: {str(general_exc)}")
 
 # =============================================================================
 # ENDPOINT 2: /ragas-ground-truth — Path B (user input ground truth)

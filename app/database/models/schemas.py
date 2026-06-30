@@ -79,6 +79,20 @@ class CleaningResult(BaseModel):
     parsed_structure: ParsedStructure = Field(default_factory=ParsedStructure)
     status: CleaningStatus = CleaningStatus.SUCCESS
     issues: List[str] = []
+    repair_stats: dict = Field(
+        default_factory=lambda: {
+            "hyphenation_fixes":     0,
+            "spaced_char_fixes":     0,
+            "ocr_noise_fixes":       0,
+            "broken_sentence_fixes": 0,
+            "total_fixes":           0,
+            "was_repaired":          False,
+        },
+        description=(
+            "Statistik text repair: jumlah perbaikan per kategori. "
+            "was_repaired=True jika minimal satu perbaikan dilakukan."
+        ),
+    )
 
     @property
     def total_words(self) -> int:

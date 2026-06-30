@@ -39,6 +39,8 @@ from app.utils.text_utils import (
     normalize_whitespace,
     remove_page_numbers,
     remove_header_footer_candidates,
+    repair_text,
+    repair_text_with_stats,
 )
 
 logger = logging.getLogger(__name__)
@@ -119,12 +121,25 @@ class CleaningService:
         logger.info(f"[CLEANING] Memulai: {source_filename} ({len(pdf_bytes):,} bytes)")
         result = CleaningResult(source_filename=source_filename, total_pages=0)
         try:
-            pages = self._extract_pages(pdf_bytes)
+            pages, page_repair_stats = self._extract_pages(pdf_bytes)
             result.total_pages = len(pages)
             result.cleaned_pages = pages
 
-            full_text = self._join_pages(pages)
+            full_text, doc_repair_stats = self._join_pages(pages)
             result.full_cleaned_text = full_text
+
+            # ── Gabungkan repair stats dari dua pass ────────────────────
+            combined_stats = {
+                "hyphenation_fixes":     page_repair_stats["hyphenation_fixes"]     + doc_repair_stats["hyphenation_fixes"],
+                "spaced_char_fixes":     page_repair_stats["spaced_char_fixes"]     + doc_repair_stats["spaced_char_fixes"],
+                "ocr_noise_fixes":       page_repair_stats["ocr_noise_fixes"]       + doc_repair_stats["ocr_noise_fixes"],
+                "broken_sentence_fixes": page_repair_stats["broken_sentence_fixes"] + doc_repair_stats["broken_sentence_fixes"],
+            }
+            combined_stats["total_fixes"] = sum(
+                v for k, v in combined_stats.items() if k.endswith("_fixes")
+            )
+            combined_stats["was_repaired"] = combined_stats["total_fixes"] > 0
+            result.repair_stats = combined_stats
 
             result.metadata = extract_uu_metadata(full_text)
             self._enrich_metadata(result.metadata, source_filename)
@@ -139,11 +154,21 @@ class CleaningService:
             result.__dict__["pasal_data"] = parsed["pasal_data"]
 
             result.status = CleaningStatus.SUCCESS
+            repair_summary = (
+                f"repair={combined_stats['total_fixes']} perbaikan "
+                f"(hyph={combined_stats['hyphenation_fixes']}, "
+                f"space={combined_stats['spaced_char_fixes']}, "
+                f"ocr={combined_stats['ocr_noise_fixes']}, "
+                f"brkn={combined_stats['broken_sentence_fixes']})"
+                if combined_stats["was_repaired"]
+                else "repair=tidak ada"
+            )
             logger.info(
                 f"[CLEANING] Selesai: {len(pages)} halaman, "
                 f"{len(parsed['structure'].pasal_list)} pasal, "
                 f"konsiderans={'ya' if parsed['konsiderans']['menimbang'] else 'tidak'}, "
-                f"penjelasan={'ya' if parsed['penjelasan_text'] else 'tidak'}"
+                f"penjelasan={'ya' if parsed['penjelasan_text'] else 'tidak'}, "
+                f"{repair_summary}"
             )
         except Exception as e:
             logger.error(f"[CLEANING] Gagal: {e}", exc_info=True)
@@ -153,14 +178,25 @@ class CleaningService:
 
     # ── PDF Extraction ─────────────────────────────────────
 
-    def _extract_pages(self, pdf_bytes: bytes) -> List[PageContent]:
-        """Ekstrak teks per halaman menggunakan PyMuPDF lalu bersihkan."""
+    def _extract_pages(self, pdf_bytes: bytes) -> tuple[list, dict]:
+        """Ekstrak teks per halaman menggunakan PyMuPDF lalu bersihkan.
+
+        Returns:
+            (pages, aggregated_repair_stats)  — stats dari semua halaman digabung.
+        """
         pages: List[PageContent] = []
+        agg_stats: dict = {
+            "hyphenation_fixes": 0, "spaced_char_fixes": 0,
+            "ocr_noise_fixes": 0, "broken_sentence_fixes": 0,
+        }
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         for i in range(len(doc)):
             page = doc.load_page(i)
             raw_text = page.get_text("text")
-            cleaned = self._clean_page_text(raw_text)
+            cleaned, page_stats = self._clean_page_text(raw_text)
+            # Akumulasi stats per halaman
+            for key in agg_stats:
+                agg_stats[key] += page_stats.get(key, 0)
             pages.append(
                 PageContent(
                     page_number=i + 1,
@@ -171,27 +207,62 @@ class CleaningService:
                 )
             )
         doc.close()
-        return pages
+        return pages, agg_stats
 
-    def _clean_page_text(self, text: str) -> str:
-        """Bersihkan satu halaman teks dari artefak umum PDF."""
+    def _clean_page_text(self, text: str) -> tuple[str, dict]:
+        """
+        Bersihkan satu halaman teks dari artefak umum PDF.
+
+        Pipeline (per halaman):
+          1. normalize_unicode        → normalisasi encoding
+          2. fix_common_pdf_artifacts → perbaiki ligature & karakter khusus
+          3. repair_hyphenation       → gabung suku kata terpotong di akhir baris
+          4. repair_spaced_characters → gabung karakter yang terpisah spasi
+          5. repair_ocr_noise         → bersihkan karakter noise / placeholder
+          6. remove_page_numbers      → hapus nomor halaman standalone
+          7. normalize_whitespace     → ratakan spasi & baris kosong berlebih
+
+        Returns:
+            (cleaned_text, repair_stats_dict)
+        """
         text = normalize_unicode(text)
         text = fix_common_pdf_artifacts(text)
+        # ── Text Repair ──────────────────────────────────────
+        # Jalankan repair per-halaman terlebih dahulu agar artefak baris
+        # tidak terbawa saat halaman digabung.
+        text, stats = repair_text_with_stats(text)
         text = remove_page_numbers(text)
         text = normalize_whitespace(text)
-        return text
+        return text, stats
 
-    def _join_pages(self, pages: List[PageContent]) -> str:
-        """Gabungkan semua halaman, hilangkan header/footer berulang."""
+    def _join_pages(self, pages: List[PageContent]) -> tuple[str, dict]:
+        """
+        Gabungkan semua halaman, hilangkan header/footer berulang.
+
+        Setelah halaman digabung, jalankan `repair_text_with_stats` sekali lagi
+        di level dokumen penuh untuk menangkap kalimat yang terputus di batas
+        halaman (line break antar-halaman tidak terlihat di level per-halaman).
+
+        Returns:
+            (full_text, repair_stats_dict)
+        """
+        # Pecah baris per halaman untuk mode page-aware remove_header_footer_candidates
+        pages_lines = [p.cleaned_text.split("\n") for p in pages]
+        filtered_pages_lines = remove_header_footer_candidates(pages_lines, threshold=3)
+
+        # Gabungkan semua baris kembali
         all_lines: List[str] = []
-        for p in pages:
-            all_lines.extend(p.cleaned_text.split("\n"))
+        for lines in filtered_pages_lines:
+            all_lines.extend(lines)
 
-        filtered = remove_header_footer_candidates(all_lines, threshold=3)
-        full_text = "\n".join(filtered)
+        full_text = "\n".join(all_lines)
         # Hilangkan page marker jika ada
         full_text = _RE_PAGE_MARKER.sub("", full_text)
-        return normalize_whitespace(full_text)
+        # ── Repair lintas-halaman ────────────────────────────
+        # Setelah semua halaman digabung, perbaiki kalimat yang terputus
+        # di batas halaman yang tidak bisa diperbaiki per-halaman.
+        full_text, doc_stats = repair_text_with_stats(full_text)
+        return normalize_whitespace(full_text), doc_stats
 
     # ── Metadata ───────────────────────────────────────────
 

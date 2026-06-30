@@ -17,6 +17,7 @@ from typing import Any, List, Optional
 from langchain_core.messages import BaseMessage
 from langchain_core.outputs import ChatResult
 from langchain_groq import ChatGroq
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -94,8 +95,10 @@ class _SlidingWindowThrottle:
             )
 
 
-_throttle = _SlidingWindowThrottle(tpm_limit=4500, min_gap_sec=1.2)
-
+_throttle = _SlidingWindowThrottle(
+    tpm_limit=settings.GROQ_TPM_LIMIT, 
+    min_gap_sec=settings.GROQ_MIN_GAP_SEC
+)
 
 def _estimate_tokens(messages: List[BaseMessage]) -> int:
     """

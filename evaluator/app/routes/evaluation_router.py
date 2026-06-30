@@ -6,9 +6,7 @@ Endpoint ini dipanggil oleh service utama (port 8000) sebagai background task HT
 """
 
 import logging
-
 from fastapi import APIRouter, HTTPException
-
 from app.schemas.evaluation_schemas import EvaluationResponse, EvaluationRequest
 from app.services.evaluation_service import EvaluationService
 
@@ -30,15 +28,17 @@ async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
             ← {question, context, answer, ground_truth?}
         → EvaluationResponse {status, metrics, error?}
     """
-    # ← TAMBAH INI sebagai baris pertama
+    # Mengamankan logging dari nilai None (jika field bersifat optional di schema)
+    q_log = request.question[:150] if getattr(request, 'question', None) else "KOSONG"
+    ans_log = request.answer[:100] if getattr(request, 'answer', None) else "KOSONG"
+    
     logger.info(
-        "[Evaluator:8001] Request diterima | question='%s' | answer_qa='%s' | answer_risk='%s'",
-        request.question[:150] if request.question else "KOSONG",
-        request.answer_qa[:100] if request.answer_qa else "KOSONG",
-        request.answer_risk[:50] if request.answer_risk else "KOSONG",
+        "[Evaluator:8001] Request diterima | question='%s' | answer='%s'", 
+        q_log, ans_log
     )
     
     try:
+        # Memanggil service untuk mengeksekusi evaluasi matematika/LLM RAGAS
         result = await evaluation_service.run_evaluation(
             question=request.question,
             context=request.context,
@@ -48,7 +48,6 @@ async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
             answer_risk=request.answer_risk,
             ground_truth=request.ground_truth,
             source_label=request.source_label or "rag_pipeline",
-            # FIX #3 — teruskan semua field reeval
             is_reeval=request.is_reeval,
             existing_faithfulness=request.existing_faithfulness,
             existing_answer_relevancy=request.existing_answer_relevancy,

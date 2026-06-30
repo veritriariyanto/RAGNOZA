@@ -3,24 +3,24 @@ evaluator/app/core/llm_provider.py
 """
 
 import logging
-# UBAH: ganti import ChatGroq biasa dengan ThrottledChatGroq
-# Sebelumnya: from langchain_groq import ChatGroq
-from app.core.throttled_llm import ThrottledChatGroq          # ← BARU
+from app.core.throttled_llm import ThrottledChatGroq
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Inisialisasi awal variabel llm
+llm = None
+
 try:
-    # UBAH: ganti ChatGroq(...) dengan ThrottledChatGroq(...)
-    # Semua parameter sama persis, hanya class-nya yang berbeda
-    llm = ThrottledChatGroq(                                   # ← UBAH
-        temperature=settings.evaluator_llm_temperature,
+    # UPDATE: Mengubah properti settings menjadi HURUF BESAR
+    llm = ThrottledChatGroq(
+        temperature=settings.EVALUATOR_LLM_TEMPERATURE,
         groq_api_key=settings.GROQ_API_KEY,
-        model_name=settings.evaluator_llm_model,
+        model_name=settings.EVALUATOR_LLM_MODEL,
     )
     logger.info(
         "✅ Evaluator LLM initialized (throttled): %s",
-        settings.evaluator_llm_model
+        settings.EVALUATOR_LLM_MODEL
     )
 except Exception as exc:
     logger.error("❌ Gagal inisialisasi evaluator LLM: %s", exc)

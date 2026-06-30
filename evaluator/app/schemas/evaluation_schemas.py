@@ -38,18 +38,10 @@ class EvaluationRequest(BaseModel):
             "faithfulness/relevancy/risk_faithfulness diambil dari existing_* fields."
         ),
     )
-    existing_faithfulness: Optional[float] = Field(
-        None, description="Skor faithfulness dari auto eval sebelumnya"
-    )
-    existing_answer_relevancy: Optional[float] = Field(
-        None, description="Skor answer_relevancy dari auto eval sebelumnya"
-    )
-    existing_risk_faithfulness: Optional[float] = Field(
-        None, description="Skor risk_faithfulness dari auto eval sebelumnya"
-    )
-    existing_overall: Optional[float] = Field(
-        None, description="Overall Quality Score (Weighted) dari auto eval sebelumnya (akan dihitung ulang)"
-    )
+    existing_faithfulness: Optional[float] = Field(None, description="Skor faithfulness dari auto eval sebelumnya")
+    existing_answer_relevancy: Optional[float] = Field(None, description="Skor answer_relevancy dari auto eval sebelumnya")
+    existing_risk_faithfulness: Optional[float] = Field(None, description="Skor risk_faithfulness dari auto eval sebelumnya")
+    existing_overall: Optional[float] = Field(None, description="Overall Quality Score (Weighted) dari auto eval sebelumnya (akan dihitung ulang)")
     existing_segments: Optional[List[str]] = Field(
         default_factory=list,
         description="Segmen yang sudah dievaluasi di auto eval, misal: ['summary','qa','risk']",

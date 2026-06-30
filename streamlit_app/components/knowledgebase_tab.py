@@ -179,6 +179,81 @@ _KB_CSS = """
     border-top: 1px dashed var(--border-soft);
     margin: 10px 0;
 }
+
+/* ── Repair Stats panel ── */
+.repair-panel {
+    background: rgba(93,190,138,0.05);
+    border: 1px solid rgba(93,190,138,0.22);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    font-family: 'DM Sans', sans-serif;
+}
+.repair-panel-none {
+    background: rgba(255,255,255,0.03);
+    border: 1px dashed rgba(255,255,255,0.10);
+    border-radius: 10px;
+    padding: 10px 16px;
+    margin-bottom: 10px;
+    font-family: 'DM Sans', sans-serif;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.repair-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--green);
+    margin-bottom: 10px;
+}
+.repair-total-badge {
+    display: inline-block;
+    background: rgba(93,190,138,0.15);
+    border: 1px solid rgba(93,190,138,0.35);
+    color: var(--green);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 6px;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+.repair-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 8px;
+}
+.repair-item {
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    padding: 8px 10px;
+    text-align: center;
+}
+.repair-item-value {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.4rem;
+    color: var(--green);
+    line-height: 1.1;
+}
+.repair-item-zero {
+    color: var(--text-muted) !important;
+}
+.repair-item-label {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-top: 3px;
+}
+.repair-item-icon {
+    font-size: 14px;
+    margin-bottom: 2px;
+}
 </style>
 """
 
@@ -225,6 +300,70 @@ def _esc(text: str) -> str:
         .replace("<", "&lt;")
         .replace(">", "&gt;")
     )
+
+
+def _render_repair_stats(repair_stats: dict):
+    """Render panel statistik text repair — tampilkan jika ada perbaikan, badge kecil jika tidak."""
+    if not repair_stats:
+        return
+
+    was_repaired = repair_stats.get("was_repaired", False)
+    total        = repair_stats.get("total_fixes", 0)
+    hyph         = repair_stats.get("hyphenation_fixes", 0)
+    spcd         = repair_stats.get("spaced_char_fixes", 0)
+    ocr          = repair_stats.get("ocr_noise_fixes", 0)
+    brkn         = repair_stats.get("broken_sentence_fixes", 0)
+
+    if not was_repaired:
+        st.markdown(
+            '<div class="repair-panel-none">'
+            '<span style="font-size:15px;">✔️</span>'
+            '<span style="font-size:11px;color:var(--text-muted);">'
+            '<b style="color:var(--text-secondary);">Text Repair</b>'
+            ' — Tidak ada artefak yang perlu diperbaiki pada dokumen ini.'
+            '</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        return
+
+    items = [
+        ("✂️", str(hyph), "Hyphenation",       "Suku kata terpotong"),
+        ("⠿", str(spcd), "Spaced Chars",       "Karakter terpisah spasi"),
+        ("🔧", str(ocr),  "OCR Noise",          "Karakter noise / placeholder"),
+        ("📎", str(brkn), "Broken Sentences",   "Kalimat terpecah baris"),
+    ]
+
+    def _item_html(icon: str, val: str, label: str) -> str:
+        extra_cls = " repair-item-zero" if int(val) == 0 else ""
+        return (
+            '<div class="repair-item">'
+            '<div class="repair-item-icon">' + icon + '</div>'
+            '<div class="repair-item-value' + extra_cls + '">' + val + '</div>'
+            '<div class="repair-item-label">' + label + '</div>'
+            '</div>'
+        )
+
+    items_html = "".join(_item_html(icon, val, label) for icon, val, label, _ in items)
+
+    st.markdown(
+        '<div class="repair-panel">'
+        '<div class="repair-title">🔨 Text Repair Dilakukan'
+        f'<span class="repair-total-badge">{total} perbaikan</span>'
+        '</div>'
+        f'<div class="repair-grid">{items_html}</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    # Tooltip detail per kategori
+    with st.expander("📋 Detail repair per kategori", expanded=False):
+        for icon, val, label, desc in items:
+            st.markdown(
+                f"**{icon} {label}** — `{val}` perbaikan  "
+                f"<small style='color:var(--text-muted);'>({desc})</small>",
+                unsafe_allow_html=True,
+            )
 
 
 def _render_chunk_card(chunk: dict):
@@ -548,12 +687,13 @@ def _render_clean_preview():
     if not result:
         return
 
-    resp     = result.get("data", {})
-    doc_data = resp.get("data", {})
-    raw_snip  = doc_data.get("raw_snippet", "")
-    cln_snip  = doc_data.get("clean_snippet", "")
-    metadata  = resp.get("metadata", {})
-    source    = metadata.get("source_label", "")
+    resp         = result.get("data", {})
+    doc_data     = resp.get("data", {})
+    raw_snip     = doc_data.get("raw_snippet", "")
+    cln_snip     = doc_data.get("clean_snippet", "")
+    metadata     = resp.get("metadata", {})
+    repair_stats = resp.get("repair_stats", {})
+    source       = metadata.get("source_label", "")
 
     if not raw_snip and not cln_snip:
         return
@@ -564,6 +704,11 @@ def _render_clean_preview():
     st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
     st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
     st.markdown(lbl_html, unsafe_allow_html=True)
+
+    # ── Repair Stats Panel ──────────────────────────────────────────────────
+    _render_repair_stats(repair_stats)
+
+    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
     _render_before_after(raw_snip or "(tidak tersedia)", cln_snip or "(tidak tersedia)")
 
 
@@ -616,11 +761,17 @@ def _render_chunk_preview():
     # ── Before / After snippet ───────────────────────────────────────────────
     meta = cl_stats.get("metadata", {})
     source_label = meta.get("source_label", "")
+    repair_stats = cl_stats.get("repair_stats", {})
 
     # Bangun label di luar f-string (hindari backslash Python <3.12)
     src_span2 = ("  \u2014  <span style='color:var(--text-muted);'>" + source_label + "</span>") if source_label else ""
     label2_html = '<div class="ac-label" style="color:var(--gold-dim);margin-bottom:6px;">\U0001F4DD Before &amp; After Cleaning' + src_span2 + '</div>'
     st.markdown(label2_html, unsafe_allow_html=True)
+
+    # ── Repair Stats Panel ──────────────────────────────────────────────────
+    _render_repair_stats(repair_stats)
+
+    st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
 
     # Ambil before/after dari cleaning_stats (dikembalikan backend)
     raw_snip  = cl_stats.get("raw_snippet", "")
@@ -642,6 +793,7 @@ def _render_chunk_preview():
                 "Contoh isi setelah cleaning (lihat sebelah kanan) ]"
             )
             _render_before_after(fallback_raw, first_parent["text"][:400])
+
 
     # ── Filter & Chunk Preview ───────────────────────────────────────────────
     st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
