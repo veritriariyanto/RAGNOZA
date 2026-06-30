@@ -87,16 +87,29 @@ class RAGIntegrationService:
             ayat_number = refinement.get("ayat_number")
 
             # ── Tahap 3: Semantic Search ke Qdrant (Child-Parent) ─────────────
-            # PERBAIKAN: Gunakan pasal_number sebagai filter agar hasil search
-            # lebih relevan dengan pasal yang dimaksud user.
+            # PERBAIKAN: Gunakan pasal_number & ayat_number sebagai filter agar
+            # hasil search lebih relevan dengan pasal/ayat yang dimaksud user.
+            # PERBAIKAN KRITIS: Qdrant otomatis retry tanpa filter jika filter
+            # pasal/ayat menghasilkan 0 hasil → flag pasal_not_found dikembalikan.
             pasal_filter = str(pasal_number) if pasal_number is not None else None
-            print(f"Nilai query: {search_query}")
+            ayat_filter = str(ayat_number) if ayat_number is not None else None
+            print(f"Nilai query: {search_query} | pasal_filter: {pasal_filter} | ayat_filter: {ayat_filter}")
             kb_results = await self.vector_service.search_knowledgebase(
                 base_name=knowledge_base,
                 query=search_query,
                 pasal_type=pasal_filter,
+                ayat_type=ayat_filter,
                 limit=3,
             )
+
+            # ── Cek apakah pasal yang disebut user tidak ditemukan di KB ──
+            pasal_not_found = kb_results.get("pasal_not_found", False)
+            if pasal_not_found:
+                logger.info(
+                    "[RAGIntegration] Pasal %s tidak ditemukan di KB '%s'. "
+                    "Hasil bersumber dari retry tanpa filter.",
+                    pasal_filter, knowledge_base,
+                )
 
             # ── DEBUG SEMENTARA: lihat struktur penuh result pertama ──
             if kb_results.get("results"):
@@ -141,6 +154,29 @@ class RAGIntegrationService:
 
             combined_context = "\n\n".join(contexts)
 
+            # ── Sisipkan CATATAN SISTEM jika pasal tidak ditemukan ────────────
+            # Ini memberi sinyal eksplisit ke LLM bahwa nomor pasal yang disebut
+            # user tidak ada di KB, sehingga LLM tidak bisa menyimpulkan
+            # "patuh"/aman hanya karena pasal yang disebut tidak ditemukan.
+            # CATATAN: material_payload sudah menambahkan label "KONTEKS HUKUM:\n"
+            # di depan combined_context, jadi tidak perlu diulang di sini.
+            if pasal_not_found and combined_context.strip():
+                combined_context = (
+                    f"CATATAN SISTEM: Nomor pasal yang disebutkan pengguna "
+                    f"(Pasal {pasal_filter}) TIDAK DITEMUKAN di knowledge base. "
+                    f"Konteks hukum berikut bersumber dari pasal-pasal LAIN yang "
+                    f"relevan dengan topik query.\n"
+                    f"IMBAUAN: Jangan simpulkan tindakan pengguna sebagai "
+                    f"'Patuh'/'aman' semata karena pasal yang disebutkan tidak ada. "
+                    f"NAMUN DEMIKIAN, 'tetap evaluasi tindakan' BUKAN berarti "
+                    f"memaksakan korelasi ke pasal yang TIDAK RELEVAN secara "
+                    f"substansi. Pasal internal (mengatur tugas/wewenang lembaga) "
+                    f"tidak boleh dijadikan dasar kesimpulan pelanggaran warga "
+                    f"sipil. Jika tidak ada pasal yang tepat, akui keterbatasan "
+                    f"konteks secara jujur.\n\n"
+                    f"{combined_context}"
+                )
+
             logger.info(
                 "[RAGIntegration] Context terkumpul: %d chunk, total %d chars",
                 len(contexts), len(combined_context)
@@ -183,7 +219,21 @@ class RAGIntegrationService:
                         history_id=history_id
                     )
             else:
-                fallback_message = "Tidak ada konteks hukum yang cukup relevan ditemukan di Knowledge Base."
+                # Bedakan pesan fallback berdasarkan apakah pasal disebut tapi error,
+                # atau benar-benar tidak ada konteks sama sekali
+                if pasal_not_found:
+                    fallback_message = (
+                        "Pasal yang Anda sebutkan tidak ditemukan di Knowledge Base, "
+                        "dan tidak ada pasal lain yang cukup relevan dengan topik "
+                        "pertanyaan. Silakan tambahkan dokumen hukum yang memuat pasal "
+                        "tersebut, atau perluas cakupan knowledge base."
+                    )
+                else:
+                    fallback_message = (
+                        "Tidak ada konteks hukum yang cukup relevan ditemukan di "
+                        "Knowledge Base untuk pertanyaan Anda. Coba tambahkan detail "
+                        "lebih spesifik atau gunakan knowledge base yang berbeda."
+                    )
 
             # ── Tahap 6: Simpan History (SELALU dijalankan, baik ada context maupun tidak) ──
             session_title = (
@@ -265,15 +315,29 @@ class RAGIntegrationService:
             ayat_number = refinement.get("ayat_number")
 
             # ── Tahap 2: Semantic Search ke Qdrant (Child-Parent) ─────────────
-            # PERBAIKAN: Gunakan pasal_number sebagai filter agar hasil search
-            # lebih relevan dengan pasal yang dimaksud user.
+            # PERBAIKAN: Gunakan pasal_number & ayat_number sebagai filter agar
+            # hasil search lebih relevan dengan pasal/ayat yang dimaksud user.
+            # PERBAIKAN KRITIS: Qdrant otomatis retry tanpa filter jika filter
+            # pasal/ayat menghasilkan 0 hasil → flag pasal_not_found dikembalikan.
             pasal_filter = str(pasal_number) if pasal_number is not None else None
+            ayat_filter = str(ayat_number) if ayat_number is not None else None
+            print(f"Nilai query: {search_query} | pasal_filter: {pasal_filter} | ayat_filter: {ayat_filter}")
             kb_results = await self.vector_service.search_knowledgebase(
                 base_name=knowledge_base,
                 query=search_query,
                 pasal_type=pasal_filter,
+                ayat_type=ayat_filter,
                 limit=3,
             )
+
+            # ── Cek apakah pasal yang disebut user tidak ditemukan di KB ──
+            pasal_not_found = kb_results.get("pasal_not_found", False)
+            if pasal_not_found:
+                logger.info(
+                    "[TextPipeline] Pasal %s tidak ditemukan di KB '%s'. "
+                    "Hasil bersumber dari retry tanpa filter.",
+                    pasal_filter, knowledge_base,
+                )
 
             # ── Tahap 3: Ekstraksi Konteks ────────────────────────────────────
             contexts = []
@@ -302,6 +366,26 @@ class RAGIntegrationService:
                     )
 
             combined_context = "\n\n".join(contexts)
+
+            # ── Sisipkan CATATAN SISTEM jika pasal tidak ditemukan ────────────
+            # CATATAN: material_payload sudah menambahkan label "KONTEKS HUKUM:\n"
+            # di depan combined_context, jadi tidak perlu diulang di sini.
+            if pasal_not_found and combined_context.strip():
+                combined_context = (
+                    f"CATATAN SISTEM: Nomor pasal yang disebutkan pengguna "
+                    f"(Pasal {pasal_filter}) TIDAK DITEMUKAN di knowledge base. "
+                    f"Konteks hukum berikut bersumber dari pasal-pasal LAIN yang "
+                    f"relevan dengan topik query.\n"
+                    f"IMBAUAN: Jangan simpulkan tindakan pengguna sebagai "
+                    f"'Patuh'/'aman' semata karena pasal yang disebutkan tidak ada. "
+                    f"NAMUN DEMIKIAN, 'tetap evaluasi tindakan' BUKAN berarti "
+                    f"memaksakan korelasi ke pasal yang TIDAK RELEVAN secara "
+                    f"substansi. Pasal internal (mengatur tugas/wewenang lembaga) "
+                    f"tidak boleh dijadikan dasar kesimpulan pelanggaran warga "
+                    f"sipil. Jika tidak ada pasal yang tepat, akui keterbatasan "
+                    f"konteks secara jujur.\n\n"
+                    f"{combined_context}"
+                )
 
             logger.info(
                 "[TextPipeline] Context terkumpul: %d chunk, total %d chars",
@@ -339,7 +423,21 @@ class RAGIntegrationService:
                         history_id=history_id
                     )
             else:
-                fallback_message = "Tidak ada konteks hukum yang cukup relevan ditemukan di Knowledge Base."
+                # Bedakan pesan fallback berdasarkan apakah pasal disebut tapi error,
+                # atau benar-benar tidak ada konteks sama sekali
+                if pasal_not_found:
+                    fallback_message = (
+                        "Pasal yang Anda sebutkan tidak ditemukan di Knowledge Base, "
+                        "dan tidak ada pasal lain yang cukup relevan dengan topik "
+                        "pertanyaan. Silakan tambahkan dokumen hukum yang memuat pasal "
+                        "tersebut, atau perluas cakupan knowledge base."
+                    )
+                else:
+                    fallback_message = (
+                        "Tidak ada konteks hukum yang cukup relevan ditemukan di "
+                        "Knowledge Base untuk pertanyaan Anda. Coba tambahkan detail "
+                        "lebih spesifik atau gunakan knowledge base yang berbeda."
+                    )
 
             # ── Tahap 5: Simpan History (SELALU dijalankan, baik ada context maupun tidak) ──
             session_title = repaired_text[:80] if repaired_text else "Session Tanpa Judul"

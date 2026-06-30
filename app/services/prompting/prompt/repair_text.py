@@ -1,3 +1,4 @@
+import re
 from app.core.llm_provider import llm
 import asyncio
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -7,6 +8,67 @@ class TextRefinerService:
     def __init__(self):
         self.engine = llm
         self.json_parser = JsonOutputParser()
+
+    # ── Regex extraction helpers ─────────────────────────────────────────────
+
+    @staticmethod
+    def _extract_pasal_number(text: str) -> int | None:
+        """
+        Ekstrak nomor pasal pertama yang disebut dalam teks.
+        Cocok: 'Pasal 15', 'pasal 15 ayat (2)', 'ps 15'
+        """
+        m = re.search(r"(?:pasal|ps\.?)\s*(\d+)", text, re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+        return None
+
+    @staticmethod
+    def _extract_ayat_number(text: str) -> int | None:
+        """
+        Ekstrak nomor ayat pertama yang disebut dalam teks.
+        Cocok: 'ayat (2)', 'ayat 2', 'Ayat (1)'
+        """
+        m = re.search(r"ayat\s*\(?(\d+)\)?", text, re.IGNORECASE)
+        if m:
+            return int(m.group(1))
+        return None
+
+    @staticmethod
+    def _extract_huruf(text: str) -> str | None:
+        """
+        Ekstrak huruf pertama yang disebut dalam teks.
+        Cocok: 'huruf f', 'huruf (a)', 'Huruf C'
+        """
+        m = re.search(r"huruf\s*\(?([a-zA-Z])\)?", text, re.IGNORECASE)
+        if m:
+            return m.group(1).lower()
+        return None
+
+    @staticmethod
+    def _build_search_query(text: str) -> str:
+        """
+        Bangun search_query yang bersih dan spesifik untuk semantic search.
+        Strategi:
+        1. Ambil fragment yang mengandung pasal/ayat — itu yang paling relevan untuk search.
+        2. Jika ada pasal+ayat: "Pasal {N} ayat {M} [tentang ...kata sekitar...]"
+        3. Jika hanya pasal: "Pasal {N} [tentang ...kata sekitar...]"
+        4. Fallback: 150 karakter pertama yang bersih.
+        """
+        lower = text.lower()
+
+        # Coba ekstrak kalimat/frasa yang mengandung "pasal"
+        pasal_match = re.search(r"[^.]*pasal\s*\d+[^.]*\.?", text, re.IGNORECASE)
+        if pasal_match:
+            candidate = pasal_match.group(0).strip()
+            # Bersihkan noise question words di awal
+            question_words = r"^(apa|apakah|bagaimana|siapa|kapan|mengapa|kenapa|dimana|berapa|jelaskan|sebutkan|tolong|mohon|cari|temukan|bandingkan|analisis|ringkas)\s+"
+            candidate = re.sub(question_words, "", candidate, flags=re.IGNORECASE).strip()
+            if len(candidate) > 10:
+                return candidate[:300]
+
+        # Fallback: ambil 150 karakter pertama bersih
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        return cleaned[:200]
 
     def _is_question_input(self, text: str) -> bool:
         """Deteksi apakah input adalah pertanyaan/query, bukan fragmen dokumen hukum."""
@@ -55,14 +117,29 @@ class TextRefinerService:
         # Guard: jika input adalah pertanyaan/query, skip LLM repair
         if self._is_question_input(raw_text):
             cleaned = raw_text.strip()
-            print(f"[Info] TextRefinerService: Input terdeteksi sebagai pertanyaan/query, di-passthrough tanpa repair.")
+            # PERBAIKAN: Ekstrak pasal/ayat/huruf via regex agar search_query tetap
+            # relevan meski tanpa LLM repair.
+            pasal_number = self._extract_pasal_number(cleaned)
+            ayat_number = self._extract_ayat_number(cleaned)
+            search_query = self._build_search_query(cleaned)
+            print(
+                f"[Info] TextRefinerService: Input terdeteksi sebagai pertanyaan/query, "
+                f"di-passthrough tanpa repair. "
+                f"search_query='{search_query[:80]}...' pasal={pasal_number} ayat={ayat_number}"
+            )
             return {
                 "repaired_text": cleaned,
-                "search_query": cleaned,
-                "pasal_number": None,
-                "ayat_number": None,
+                "search_query": search_query,
+                "pasal_number": pasal_number,
+                "ayat_number": ayat_number,
                 "is_passthrough": True,
             }
+
+        # ── Non-passthrough: jalankan LLM repair ─────────────────────────────
+        # PERBAIKAN: Gunakan regex sebagai fallback untuk pasal/ayat jika LLM gagal
+        pasal_fallback = self._extract_pasal_number(raw_text)
+        ayat_fallback = self._extract_ayat_number(raw_text)
+        search_fallback = self._build_search_query(raw_text)
 
         system_prompt = (
             "Anda adalah editor naskah hukum dan analis teks spesialis peraturan perundang-undangan Indonesia. "
@@ -124,11 +201,13 @@ class TextRefinerService:
                 break
 
         # Fallback aman jika seluruh retry gagal atau terjadi error non-429
+        # PERBAIKAN: Gunakan regex fallback yang sudah diekstrak
+        print(f"[Warning] TextRefinerService: Seluruh retry gagal. Fallback ke regex extraction.")
         return {
             "repaired_text": raw_text.strip(),
-            "search_query": raw_text.strip()[:200],
-            "pasal_number": None,
-            "ayat_number": None,
+            "search_query": search_fallback,
+            "pasal_number": pasal_fallback,
+            "ayat_number": ayat_fallback,
             "is_passthrough": False,
         }
 

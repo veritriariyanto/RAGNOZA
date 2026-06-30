@@ -376,6 +376,7 @@ class QdrantService:
         query_vector: List[float],
         section: Optional[str] = None,
         pasal: Optional[int] = None,
+        ayat: Optional[int] = None,
         limit: int = 5,
         score_threshold: float = 0.15,
     ) -> Dict:
@@ -387,6 +388,7 @@ class QdrantService:
             query_vector  : vektor hasil embed query
             section       : filter section ("Konsiderans"/"Batang Tubuh"/"Penjelasan")
             pasal         : filter nomor pasal
+            ayat          : filter nomor ayat
             limit         : jumlah hasil
             score_threshold: batas minimal similarity score
 
@@ -414,6 +416,13 @@ class QdrantService:
                     match=qmodels.MatchValue(value=pasal),
                 )
             )
+        if ayat is not None:
+            conditions.append(
+                qmodels.FieldCondition(
+                    key="ayat",
+                    match=qmodels.MatchValue(value=ayat),
+                )
+            )
         q_filter = qmodels.Filter(must=conditions) if conditions else None
 
         # Search di koleksi child
@@ -426,8 +435,29 @@ class QdrantService:
             score_threshold=score_threshold,
         )
 
+        pasal_not_found = False
+
+        # ── Retry if filter caused empty results ────────────────────────────
+        # Jika pasal/ayat filter dipasang tapi hasil kosong, coba tanpa filter
+        # agar user tetap mendapat konteks relevan secara semantik.
+        if not search_resp.points and (pasal is not None or ayat is not None):
+            logger.info(
+                "[QDRANT] Hasil kosong dengan filter pasal=%s ayat=%s. "
+                "Retry tanpa filter untuk fallback semantik.",
+                pasal, ayat,
+            )
+            search_resp = await client.query_points(
+                collection_name=child_col,
+                query=query_vector,
+                limit=limit,
+                query_filter=None,  # tanpa filter apapun
+                with_payload=True,
+                score_threshold=score_threshold,
+            )
+            pasal_not_found = True
+
         if not search_resp.points:
-            return {"total_results": 0, "results": []}
+            return {"total_results": 0, "results": [], "pasal_not_found": pasal_not_found}
 
         # Fetch parent chunks — support kedua format payload (lama & baru)
         def _get_parent_id(payload: dict) -> str:
@@ -489,7 +519,7 @@ class QdrantService:
                 },
             })
 
-        return {"total_results": len(results), "results": results}
+        return {"total_results": len(results), "results": results, "pasal_not_found": pasal_not_found}
 
     async def search_knowledgebase(
         self,
@@ -497,6 +527,7 @@ class QdrantService:
         query: str,
         section_type: Optional[str] = None,
         pasal_type: Optional[str] = None,
+        ayat_type: Optional[str] = None,
         limit: int = 5,
         score_threshold: float = 0.15,
     ) -> Dict:
@@ -521,11 +552,22 @@ class QdrantService:
             except Exception:
                 pass
 
+        # Parse nomor ayat jika berupa teks
+        ayat_filter = None
+        if ayat_type:
+            try:
+                m = re.search(r"\d+", ayat_type)
+                if m:
+                    ayat_filter = int(m.group(0))
+            except Exception:
+                pass
+
         results_dict = await self.search(
             base_name=base_name,
             query_vector=query_vector,
             section=section,
             pasal=pasal_filter,
+            ayat=ayat_filter,
             limit=limit,
             score_threshold=score_threshold,
         )
