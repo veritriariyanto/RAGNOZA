@@ -99,7 +99,7 @@ class RAGIntegrationService:
                 query=search_query,
                 pasal_type=pasal_filter,
                 ayat_type=ayat_filter,
-                limit=3,
+                limit=2,  # PERBAIKAN: turunkan dari 3 ke 2 agar token tidak overflow
             )
 
             # ── Cek apakah pasal yang disebut user tidak ditemukan di KB ──
@@ -119,16 +119,48 @@ class RAGIntegrationService:
                 logger.debug("[RAGIntegration] Qdrant sample parent keys: %s", list(
                     first.get("parent", {}).keys()))
 
-            # ── Tahap 4: Ekstraksi Konteks ─────────────────────────────────────────
+            # ── Tahap 4: Ekstraksi & Filter Konteks ──────────────────────────────
+            # Deduplikasi: hindari parent content yang sama muncul berkali-kali
+            seen_parents = set()
             contexts = []
+            
+            # Filter: eksklusi pasal internal (tugas/wewenang lembaga) yang tidak
+            # relevan untuk analisis kepatuhan warga sipil. Sesuaikan untuk setiap UU.
+            PASAL_INTERNAL = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30}
+            # Catatan: Pasal 20 mengatur komposisi keanggotaan Polri, bukan sanksi disiplin.
+            # Pasal 16-17 mengatur wewenang pidana Polri (penangkapan, penyitaan).
+
             for res in kb_results.get("results", []):
+                # Cek apakah hasil ini exact match dengan pasal user
+                is_exact = res.get("is_exact_pasal_match", False) or \
+                           res.get("is_exact_ayat_match", False)
+                
+                # Ambil nomor pasal — fallback ke parent jika child tidak punya metadata pasal
+                child_pasal = res.get("child", {}).get("pasal")
+                if child_pasal is None:
+                    child_pasal = res.get("parent", {}).get("pasal")
+                
+                # Skip pasal internal (kecuali itu exact match dengan yang disebut user)
+                if child_pasal in PASAL_INTERNAL and not is_exact:
+                    logger.debug(
+                        "[RAGIntegration] Skip pasal internal %d (skor=%.3f)",
+                        child_pasal, res.get("score", 0),
+                    )
+                    continue
+
+                # Deduplikasi: skip jika parent_id sudah pernah diproses
+                parent_id = res.get("child", {}).get("parent_id", "")
+                if parent_id and parent_id in seen_parents:
+                    logger.debug(
+                        "[RAGIntegration] Skip duplikat parent_id=%s",
+                        parent_id,
+                    )
+                    continue
+                if parent_id:
+                    seen_parents.add(parent_id)
+
                 # Prioritas pengambilan konten — dari yang paling lengkap
-                # 1. parent.content (full pasal/section)
-                # 2. child.content (chunk dengan prefix lengkap)
-                # 3. child.raw_text (teks mentah tanpa prefix)
-
                 content = None
-
                 parent_content = res.get("parent", {}).get("content", "")
                 child_content = res.get("child", {}).get("content", "")
                 child_raw = res.get("child", {}).get("raw_text", "")
@@ -143,7 +175,6 @@ class RAGIntegrationService:
                 if content:
                     contexts.append(content)
                 else:
-                    # Log supaya kita tahu data mana yang kosong
                     logger.warning(
                         "[RAGIntegration] Hasil Qdrant diabaikan — semua field terlalu pendek. "
                         "score=%.3f | child_content=%r | parent_content=%r",
@@ -155,11 +186,6 @@ class RAGIntegrationService:
             combined_context = "\n\n".join(contexts)
 
             # ── Sisipkan CATATAN SISTEM jika pasal tidak ditemukan ────────────
-            # Ini memberi sinyal eksplisit ke LLM bahwa nomor pasal yang disebut
-            # user tidak ada di KB, sehingga LLM tidak bisa menyimpulkan
-            # "patuh"/aman hanya karena pasal yang disebut tidak ditemukan.
-            # CATATAN: material_payload sudah menambahkan label "KONTEKS HUKUM:\n"
-            # di depan combined_context, jadi tidak perlu diulang di sini.
             if pasal_not_found and combined_context.strip():
                 combined_context = (
                     f"CATATAN SISTEM: Nomor pasal yang disebutkan pengguna "
@@ -176,6 +202,19 @@ class RAGIntegrationService:
                     f"konteks secara jujur.\n\n"
                     f"{combined_context}"
                 )
+
+            # ── Batasi panjang konteks agar tidak overflow token Groq ──────────
+            # Groq free tier: max 6000 TPM. Total request = system_prompt (~2500 chars)
+            # + format_instructions (~4000 chars) + FAKTA (~250 chars) + KONTEKS.
+            # Maka KONTEKS harus ≤ 1200 chars agar total aman.
+            MAX_CONTEXT_CHARS = 1200
+            if len(combined_context) > MAX_CONTEXT_CHARS:
+                logger.warning(
+                    "[RAGIntegration] Konteks terlalu panjang (%d chars). "
+                    "Dipangkas ke %d chars.",
+                    len(combined_context), MAX_CONTEXT_CHARS,
+                )
+                combined_context = combined_context[:MAX_CONTEXT_CHARS] + "..."
 
             logger.info(
                 "[RAGIntegration] Context terkumpul: %d chunk, total %d chars",
@@ -327,7 +366,7 @@ class RAGIntegrationService:
                 query=search_query,
                 pasal_type=pasal_filter,
                 ayat_type=ayat_filter,
-                limit=3,
+                limit=2,  # PERBAIKAN: turunkan dari 3 ke 2 agar token tidak overflow
             )
 
             # ── Cek apakah pasal yang disebut user tidak ditemukan di KB ──
@@ -339,9 +378,44 @@ class RAGIntegrationService:
                     pasal_filter, knowledge_base,
                 )
 
-            # ── Tahap 3: Ekstraksi Konteks ────────────────────────────────────
+            # ── Tahap 3: Ekstraksi & Filter Konteks ────────────────────────────
+            seen_parents = set()
             contexts = []
+            
+            # Filter: eksklusi pasal internal (sama seperti di audio pipeline)
+            PASAL_INTERNAL = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30}
+            # Catatan: Pasal 20 mengatur komposisi keanggotaan Polri, bukan sanksi disiplin.
+            # Pasal 16-17 mengatur wewenang pidana Polri (penangkapan, penyitaan).
+
             for res in kb_results.get("results", []):
+                # Cek apakah hasil ini exact match dengan pasal user
+                is_exact = res.get("is_exact_pasal_match", False) or \
+                           res.get("is_exact_ayat_match", False)
+                
+                # Ambil nomor pasal — fallback ke parent jika child tidak punya metadata pasal
+                child_pasal = res.get("child", {}).get("pasal")
+                if child_pasal is None:
+                    child_pasal = res.get("parent", {}).get("pasal")
+                
+                # Skip pasal internal (kecuali exact match)
+                if child_pasal in PASAL_INTERNAL and not is_exact:
+                    logger.debug(
+                        "[TextPipeline] Skip pasal internal %d (skor=%.3f)",
+                        child_pasal, res.get("score", 0),
+                    )
+                    continue
+
+                # Deduplikasi parent_id
+                parent_id = res.get("child", {}).get("parent_id", "")
+                if parent_id and parent_id in seen_parents:
+                    logger.debug(
+                        "[TextPipeline] Skip duplikat parent_id=%s",
+                        parent_id,
+                    )
+                    continue
+                if parent_id:
+                    seen_parents.add(parent_id)
+
                 content = None
                 parent_content = res.get("parent", {}).get("content", "")
                 child_content = res.get("child", {}).get("content", "")
@@ -368,8 +442,6 @@ class RAGIntegrationService:
             combined_context = "\n\n".join(contexts)
 
             # ── Sisipkan CATATAN SISTEM jika pasal tidak ditemukan ────────────
-            # CATATAN: material_payload sudah menambahkan label "KONTEKS HUKUM:\n"
-            # di depan combined_context, jadi tidak perlu diulang di sini.
             if pasal_not_found and combined_context.strip():
                 combined_context = (
                     f"CATATAN SISTEM: Nomor pasal yang disebutkan pengguna "
@@ -386,6 +458,15 @@ class RAGIntegrationService:
                     f"konteks secara jujur.\n\n"
                     f"{combined_context}"
                 )
+
+            # ── Batasi panjang konteks agar tidak overflow token Groq ──────────
+            MAX_CONTEXT_CHARS = 1200
+            if len(combined_context) > MAX_CONTEXT_CHARS:
+                logger.warning(
+                    "[TextPipeline] Konteks terlalu panjang (%d chars). Dipangkas ke %d.",
+                    len(combined_context), MAX_CONTEXT_CHARS,
+                )
+                combined_context = combined_context[:MAX_CONTEXT_CHARS] + "..."
 
             logger.info(
                 "[TextPipeline] Context terkumpul: %d chunk, total %d chars",

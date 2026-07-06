@@ -370,6 +370,46 @@ class QdrantService:
 
     # ── Search ────────────────────────────────────────────
 
+    @staticmethod
+    def _hybrid_rerank(
+        results: list,
+        pasal_user: Optional[int] = None,
+        ayat_user: Optional[int] = None,
+    ) -> list:
+        """
+        Hybrid reranking: boost hasil yang exact match dengan pasal/ayat yang disebut user.
+        Jika user menyebut pasal yang salah, semantic score akan tetap rendah → tidak di-boost.
+        """
+        if pasal_user is None and ayat_user is None:
+            return results  # tidak ada reranking jika tidak ada filter
+
+        for r in results:
+            child = r.get("child", {})
+            child_pasal = child.get("pasal")
+            child_ayat = child.get("ayat")
+            
+            # Boost jika pasal match dengan yang disebut user
+            if pasal_user is not None and child_pasal == pasal_user:
+                r["score"] = round(r["score"] + 0.5, 4)
+                r["is_exact_pasal_match"] = True
+                logger.debug(
+                    "[HYBRID] Boost pasal=%d → score=%.4f",
+                    child_pasal, r["score"],
+                )
+            
+            # Boost jika ayat match dengan yang disebut user (dan pasal juga match)
+            if ayat_user is not None and child_ayat == ayat_user and child_pasal == pasal_user:
+                r["score"] = round(r["score"] + 0.3, 4)
+                r["is_exact_ayat_match"] = True
+                logger.debug(
+                    "[HYBRID] Boost ayat=%d pasal=%d → score=%.4f",
+                    child_ayat, child_pasal, r["score"],
+                )
+
+        # Sort ulang berdasarkan score yang sudah di-boost
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results
+
     async def search(
         self,
         base_name: str,
@@ -377,6 +417,7 @@ class QdrantService:
         section: Optional[str] = None,
         pasal: Optional[int] = None,
         ayat: Optional[int] = None,
+        huruf: Optional[str] = None,
         limit: int = 5,
         score_threshold: float = 0.15,
     ) -> Dict:
@@ -389,6 +430,7 @@ class QdrantService:
             section       : filter section ("Konsiderans"/"Batang Tubuh"/"Penjelasan")
             pasal         : filter nomor pasal
             ayat          : filter nomor ayat
+            huruf         : filter huruf (a/b/c/dll)
             limit         : jumlah hasil
             score_threshold: batas minimal similarity score
 
@@ -437,14 +479,36 @@ class QdrantService:
 
         pasal_not_found = False
 
-        # ── Retry if filter caused empty results ────────────────────────────
-        # Jika pasal/ayat filter dipasang tapi hasil kosong, coba tanpa filter
-        # agar user tetap mendapat konteks relevan secara semantik.
-        if not search_resp.points and (pasal is not None or ayat is not None):
+        # ── Retry conditions ─────────────────────────────────────────────────
+        # Retry tanpa filter jika:
+        #   A) Hasil kosong (pasal/ayat disebut user tidak ada di DB)
+        #   B) Hasil ada TAPI skor semantic rendah (< 0.3) — pasal/ayat ditemukan
+        #      secara eksak tapi kontennya tidak relevan secara topik.
+        #   C) Tidak ada filter pasal/ayat → skip (semantic search murni)
+        should_retry = False
+        retry_reason = None
+
+        if search_resp.points and (pasal is not None or ayat is not None):
+            # Hitung skor semantic tertinggi dari hasil filter
+            max_semantic_score = max(hit.score for hit in search_resp.points)
+            if max_semantic_score < 0.3:
+                should_retry = True
+                retry_reason = (
+                    f"skor semantic rendah (max={max_semantic_score:.4f}) "
+                    f"dengan filter pasal={pasal} ayat={ayat}. "
+                    "Pasal ditemukan secara eksak tapi konten tidak relevan secara topik."
+                )
+        elif not search_resp.points and (pasal is not None or ayat is not None):
+            should_retry = True
+            retry_reason = (
+                f"hasil kosong dengan filter pasal={pasal} ayat={ayat}. "
+                "Pasal yang disebut user tidak ditemukan di DB."
+            )
+
+        if should_retry:
             logger.info(
-                "[QDRANT] Hasil kosong dengan filter pasal=%s ayat=%s. "
-                "Retry tanpa filter untuk fallback semantik.",
-                pasal, ayat,
+                "[QDRANT] %s Retry tanpa filter untuk fallback semantik.",
+                retry_reason,
             )
             search_resp = await client.query_points(
                 collection_name=child_col,
@@ -459,7 +523,7 @@ class QdrantService:
         if not search_resp.points:
             return {"total_results": 0, "results": [], "pasal_not_found": pasal_not_found}
 
-        # Fetch parent chunks — support kedua format payload (lama & baru)
+        # ── Fetch parent chunks ────────────────────────────────────────────
         def _get_parent_id(payload: dict) -> str:
             """Ambil parent_id dari payload, support field lama & baru."""
             return (
@@ -519,6 +583,9 @@ class QdrantService:
                 },
             })
 
+        # ── Hybrid rerank: boost hasil yang exact match dengan pasal/ayat user ──
+        results = self._hybrid_rerank(results, pasal, ayat)
+
         return {"total_results": len(results), "results": results, "pasal_not_found": pasal_not_found}
 
     async def search_knowledgebase(
@@ -572,6 +639,9 @@ class QdrantService:
             score_threshold=score_threshold,
         )
         results_dict["query"] = query
+        # Sertakan pasal/ayat yang di-parse untuk downstream (integration service)
+        results_dict["pasal_filter_used"] = pasal_filter
+        results_dict["ayat_filter_used"] = ayat_filter
         return results_dict
 
     async def get_kb_info(self, base_name: str) -> Dict:
