@@ -124,10 +124,15 @@ class RAGIntegrationService:
                 is_exact = res.get("is_exact_pasal_match", False) or \
                            res.get("is_exact_ayat_match", False)
                 
-                # Ambil nomor pasal — fallback ke parent jika child tidak punya metadata pasal
+                # Ambil nomor pasal — fallback ke pasal_rujukan (chunk Penjelasan)
+                # lalu ke parent jika child tidak punya metadata pasal sama sekali
                 child_pasal = res.get("child", {}).get("pasal")
                 if child_pasal is None:
+                    child_pasal = res.get("child", {}).get("pasal_rujukan")
+                if child_pasal is None:
                     child_pasal = res.get("parent", {}).get("pasal")
+                if child_pasal is None:
+                    child_pasal = res.get("parent", {}).get("pasal_rujukan")
                 
                 # Skip pasal internal (kecuali itu exact match dengan yang disebut user)
                 if child_pasal in PASAL_INTERNAL and not is_exact:
@@ -381,10 +386,15 @@ class RAGIntegrationService:
                 is_exact = res.get("is_exact_pasal_match", False) or \
                            res.get("is_exact_ayat_match", False)
                 
-                # Ambil nomor pasal — fallback ke parent jika child tidak punya metadata pasal
+                # Ambil nomor pasal — fallback ke pasal_rujukan (chunk Penjelasan)
+                # lalu ke parent jika child tidak punya metadata pasal sama sekali
                 child_pasal = res.get("child", {}).get("pasal")
                 if child_pasal is None:
+                    child_pasal = res.get("child", {}).get("pasal_rujukan")
+                if child_pasal is None:
                     child_pasal = res.get("parent", {}).get("pasal")
+                if child_pasal is None:
+                    child_pasal = res.get("parent", {}).get("pasal_rujukan")
                 
                 # Skip pasal internal (kecuali exact match)
                 if child_pasal in PASAL_INTERNAL and not is_exact:
