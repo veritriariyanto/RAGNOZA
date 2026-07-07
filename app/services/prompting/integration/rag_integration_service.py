@@ -1,14 +1,3 @@
-"""
-rag_integration_service.py  (updated)
-
-Perubahan dari versi lama:
-- Evaluasi RAGAS dipindah ke BackgroundTask → tidak blocking response user
-- Menggunakan EvaluationService (bukan RagasService mentah) → hasil lebih konsisten
-- Menggunakan auto_evaluation_hook → ground truth otomatis dari context
-- Hasil evaluasi di-log dengan format terstruktur (tidak hanya print)
-- BackgroundTasks diteruskan dari router agar FastAPI bisa manage lifecycle-nya
-"""
-
 import logging
 from typing import Optional
 
