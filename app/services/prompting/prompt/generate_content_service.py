@@ -188,7 +188,7 @@ class MaterialGeneratorService:
 
         return MaterialResponse(
             dasar_hukum=[],
-            ringkasan=[{"poin": f"Terjadi kegagalan sistem: {str(last_error)}"}],
+            ringkasan=[{"poin": "Terjadi kegagalan sistem saat memproses permintaan. Silakan coba lagi."}],
             konteks_tambahan="-",
             analisa_risiko=[],
             qa=[],

@@ -191,9 +191,12 @@ class TextRefinerService:
                     print(f"[Warning] TextRefinerService: repaired_text terdeteksi terlalu panjang (kemungkinan hallusinasi). Fallback ke teks asli.")
                     response["repaired_text"] = raw_text.strip()
 
-                # search_query = repaired_text yang sudah dibersihkan dari noise
-                # (tanda tanya, kata tanya, dll) agar konsisten dengan hasil repair
-                response["search_query"] = self._clean_query(response["repaired_text"])
+                # Bersihkan search_query hasil LLM (yang sudah mencantumkan pasal/ayat/huruf
+                # sesuai instruksi prompt) dari noise. Fallback ke repaired_text hanya jika
+                # LLM tidak mengisi search_query sama sekali.
+                llm_search_query = response.get("search_query") or ""
+                source_for_query = llm_search_query.strip() or response["repaired_text"]
+                response["search_query"] = self._clean_query(source_for_query)
 
                 response.setdefault("pasal_number", None)
                 response.setdefault("ayat_number", None)
