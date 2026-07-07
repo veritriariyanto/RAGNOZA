@@ -747,20 +747,24 @@ class QdrantService:
         for c in chunks:
             if c.embedding is None:
                 continue
+            
+            payload = {
+                "chunk_id": c.chunk_id,
+                "content": c.content,
+                "is_parent": c.metadata.is_parent,
+                "level_number": c.metadata.level_number,
+                "document_id": c.metadata.document_id,
+                "source_filename": c.metadata.source_filename,
+                "pasal_number": c.metadata.pasal_number,
+            }
+            if not c.metadata.is_parent:
+                payload["ayat_number"] = c.metadata.ayat_number
+                payload["parent_chunk_id"] = c.metadata.parent_chunk_id
+
             point = _m.PointStruct(
                 id=str(uuid.uuid4()),
                 vector=c.embedding,
-                payload={
-                    "chunk_id": c.chunk_id,
-                    "content": c.content,
-                    "is_parent": c.metadata.is_parent,
-                    "level_number": c.metadata.level_number,
-                    "document_id": c.metadata.document_id,
-                    "source_filename": c.metadata.source_filename,
-                    "pasal_number": c.metadata.pasal_number,
-                    "ayat_number": c.metadata.ayat_number,
-                    "parent_chunk_id": c.metadata.parent_chunk_id,
-                },
+                payload=payload,
             )
             # Jika c.metadata.is_parent True, masukkan ke parent collection
             if c.metadata.is_parent:
