@@ -461,18 +461,20 @@ class QdrantService:
                 )
             )
         if pasal is not None:
+            # Skema baru pakai key "pasal", skema lama (legacy upsert_chunks) pakai
+            # "pasal_number" — cek keduanya (OR) supaya filter tetap kena di data lama.
             conditions.append(
-                qmodels.FieldCondition(
-                    key="pasal",
-                    match=qmodels.MatchValue(value=pasal),
-                )
+                qmodels.Filter(should=[
+                    qmodels.FieldCondition(key="pasal", match=qmodels.MatchValue(value=pasal)),
+                    qmodels.FieldCondition(key="pasal_number", match=qmodels.MatchValue(value=pasal)),
+                ])
             )
         if ayat is not None:
             conditions.append(
-                qmodels.FieldCondition(
-                    key="ayat",
-                    match=qmodels.MatchValue(value=ayat),
-                )
+                qmodels.Filter(should=[
+                    qmodels.FieldCondition(key="ayat", match=qmodels.MatchValue(value=ayat)),
+                    qmodels.FieldCondition(key="ayat_number", match=qmodels.MatchValue(value=ayat)),
+                ])
             )
         q_filter = qmodels.Filter(must=conditions) if conditions else None
 
@@ -539,8 +541,18 @@ class QdrantService:
         # ── Relative threshold: buang kandidat yang jauh lebih lemah dari skor
         #    tertinggi di batch ini, kecuali exact match dengan pasal/ayat user ──
         def _hit_pasal(payload: dict) -> Optional[int]:
-            """Nomor pasal chunk ini — fallback ke pasal_rujukan untuk chunk Penjelasan."""
-            return payload.get("pasal") if payload.get("pasal") is not None else payload.get("pasal_rujukan")
+            """
+            Nomor pasal chunk ini — fallback ke pasal_rujukan (chunk Penjelasan)
+            lalu ke pasal_number (skema lama legacy upsert_chunks).
+            """
+            for key in ("pasal", "pasal_rujukan", "pasal_number"):
+                if payload.get(key) is not None:
+                    return payload.get(key)
+            return None
+
+        def _hit_ayat(payload: dict) -> Optional[int]:
+            """Nomor ayat chunk ini — fallback ke ayat_number (skema lama)."""
+            return payload.get("ayat") if payload.get("ayat") is not None else payload.get("ayat_number")
 
         def _is_exact_match(hit) -> bool:
             if pasal is None:
@@ -548,7 +560,7 @@ class QdrantService:
             hit_pasal = _hit_pasal(hit.payload)
             if hit_pasal != pasal:
                 return False
-            return ayat is None or hit.payload.get("ayat") == ayat
+            return ayat is None or _hit_ayat(hit.payload) == ayat
 
         max_score = max(hit.score for hit in search_resp.points)
         score_cutoff = max_score * relative_threshold
@@ -606,8 +618,8 @@ class QdrantService:
                     "chunk_id":  hit.payload.get("chunk_id"),
                     "section":   hit.payload.get("section"),
                     "content":   child_content,
-                    "pasal":     hit.payload.get("pasal"),
-                    "ayat":      hit.payload.get("ayat"),
+                    "pasal":     _hit_pasal(hit.payload),
+                    "ayat":      _hit_ayat(hit.payload),
                     "poin":      hit.payload.get("poin"),
                     "parent_id": parent_id,
                     "pasal_rujukan": hit.payload.get("pasal_rujukan"),
@@ -617,7 +629,7 @@ class QdrantService:
                     "title":    parent_payload.get("title"),
                     "content":  parent_content,
                     "section":  parent_payload.get("section"),
-                    "pasal":    parent_payload.get("pasal"),
+                    "pasal":    _hit_pasal(parent_payload),
                     "pasal_rujukan": parent_payload.get("pasal_rujukan"),
                 },
             })

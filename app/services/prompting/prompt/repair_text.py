@@ -83,10 +83,11 @@ class TextRefinerService:
         
         # Cek kata tanya di awal kalimat
         question_starters = (
-            "apa", "apakah", "bagaimana", "siapa", "kapan", 
+            "apa", "apakah", "bagaimana", "siapa", "kapan",
             "mengapa", "kenapa", "dimana", "di mana", "berapa",
             "jelaskan", "sebutkan", "tolong", "mohon", "cari",
-            "temukan", "bandingkan", "analisis", "ringkas"
+            "temukan", "bandingkan", "analisis", "analisa", "ringkas",
+            "saya ingin", "saya mau", "coba", "bisa", "boleh", "minta",
         )
         lower = cleaned.lower()
         if any(lower.startswith(starter) for starter in question_starters):
@@ -200,6 +201,12 @@ class TextRefinerService:
 
                 response.setdefault("pasal_number", None)
                 response.setdefault("ayat_number", None)
+                # Fallback regex kalau LLM gagal/lupa mengisi pasal_number/ayat_number,
+                # padahal nomornya eksplisit ada di teks (mis. "Pasal 39 tentang ...").
+                if response["pasal_number"] is None:
+                    response["pasal_number"] = self._extract_pasal_number(response["repaired_text"])
+                if response["ayat_number"] is None:
+                    response["ayat_number"] = self._extract_ayat_number(response["repaired_text"])
                 # Ekstrak huruf dari repaired_text sebagai fallback
                 response.setdefault("huruf", self._extract_huruf(response["repaired_text"]))
                 response["is_passthrough"] = False

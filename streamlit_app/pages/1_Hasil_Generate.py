@@ -87,8 +87,8 @@ if session_id:
         # KOMPONEN 5 TABS UTAMA (Raw Log dihapus)
         # =========================================
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
-            "📝 Ringkasan", "⚠️ Risiko", "❓ Q&A",
-            "📂 Pasal", "🗣️ Transkripsi"
+            "📝 Ringkasan", "⚠️ Potensi Penyimpangan", "❓ Tanya Jawab",
+            "📂 Sumber Pasal", "🗣️ Transkripsi"
         ])
 
         # --- PESAN NO CONTEXT (ditampilkan di semua tab jika tidak ada referensi) ---
@@ -113,13 +113,13 @@ if session_id:
 
         # --- TAB 1: SUMMARY ---
         with tab1:
-            st.write("### 📝 Ringkasan Kasus Eksekutif")
+            st.write("### 📝 Ringkasan Analisis Pasal")
             if is_no_context:
                 st.markdown(no_context_html, unsafe_allow_html=True)
             else:
                 if "dasar_hukum" in material or "ringkasan" in material:
                     # Render new structure
-                    st.markdown("#### **Poin Ringkasan Kasus:**")
+                    st.markdown("#### **Poin-Poin Penting:**")
                     ringkasan_list = material.get("ringkasan") or []
                     if ringkasan_list:
                         for item in ringkasan_list:
@@ -177,24 +177,26 @@ if session_id:
 
         # --- TAB 2: RISK REVIEW ---
         with tab2:
-            st.write("### ⚠️ Review Risiko Finansial & Hukum")
+            st.write("### ⚠️ Potensi Penyimpangan Terhadap Pasal")
             if is_no_context:
                 st.markdown(no_context_html, unsafe_allow_html=True)
             else:
                 if "analisa_risiko" in material:
-                    st.markdown("#### ⚠️ Analisa Risiko & Contoh Pelanggaran")
-                    st.caption("Ilustrasi edukatif umum mengenai potensi pelanggaran hukum berdasarkan aturan terkait.")
+                    st.caption(
+                        "Contoh kondisi yang TIDAK SESUAI dengan ketentuan pasal di atas — "
+                        "ilustrasi edukatif umum, bukan penilaian terhadap tindakan Anda secara spesifik."
+                    )
                     risiko_list = material.get("analisa_risiko") or []
                     if risiko_list:
                         for idx, item in enumerate(risiko_list, 1):
                             if isinstance(item, dict):
                                 skenario = item.get("skenario") or ""
                                 penjelasan = item.get("penjelasan") or ""
-                                st.error(f"**Skenario Pelanggaran #{idx}:**\n{skenario}")
+                                st.warning(f"**Contoh Penyimpangan #{idx}:**\n{skenario}")
                                 st.markdown(f"**Penjelasan:**\n{penjelasan}")
                                 st.divider()
                     else:
-                        st.success("✅ Tidak ada potensi risiko/pelanggaran hukum signifikan yang teridentifikasi.")
+                        st.success("✅ Tidak ditemukan contoh penyimpangan yang relevan untuk pasal ini.")
                 else:
                     # Render old structure
                     risk_raw = material.get("risk_review")
@@ -255,12 +257,12 @@ if session_id:
 
         # --- TAB 3: LEGAL QA ---
         with tab3:
-            st.write("### ❓ Tanya Jawab Hukum (Q&A)")
+            st.write("### ❓ Tanya Jawab Seputar Pasal")
             if is_no_context:
                 st.markdown(no_context_html, unsafe_allow_html=True)
             else:
                 if "qa" in material:
-                    st.markdown("#### 💡 Langkah/Saran Tanya Jawab Hukum (Q&A):")
+                    st.caption("Pertanyaan yang mungkin muncul dari pembaca terkait pasal ini, beserta jawabannya.")
                     qa_list = material.get("qa") or []
                     if qa_list:
                         for index, item in enumerate(qa_list, 1):
@@ -298,7 +300,7 @@ if session_id:
 
         # --- TAB 4: REFERENCES ---
         with tab4:
-            st.write("### 📂 Referensi Pasal Konstitusi (Qdrant)")
+            st.write("### 📂 Sumber Pasal yang Digunakan")
             if is_no_context:
                 st.markdown(no_context_html, unsafe_allow_html=True)
             else:

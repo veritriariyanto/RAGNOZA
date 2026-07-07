@@ -177,11 +177,18 @@ class RAGIntegrationService:
                         parent_content[:50],
                     )
 
-            combined_context = "\n\n".join(contexts)
+            # ── Batasi panjang konteks per BATAS PASAL, bukan potong string mentah ──
+            # Groq free tier: max 6000 TPM. Total request = system_prompt (~2500 chars)
+            # + format_instructions (~4000 chars) + FAKTA (~250 chars) + KONTEKS.
+            # Maka KONTEKS harus ≤ 1200 chars agar total aman. Pasal yang tidak muat
+            # DI-SKIP UTUH (bukan dipotong setengah kalimat) — pasal pertama (paling
+            # relevan, karena `contexts` sudah terurut sesuai skor) selalu disertakan
+            # penuh meski sendirian sudah melebihi budget.
+            MAX_CONTEXT_CHARS = 1200
 
-            # ── Sisipkan CATATAN SISTEM jika pasal tidak ditemukan ────────────
-            if pasal_not_found and combined_context.strip():
-                combined_context = (
+            catatan_prefix = ""
+            if pasal_not_found and contexts:
+                catatan_prefix = (
                     f"CATATAN SISTEM: Nomor pasal yang disebutkan pengguna "
                     f"(Pasal {pasal_filter}) TIDAK DITEMUKAN di knowledge base. "
                     f"Konteks hukum berikut bersumber dari pasal-pasal LAIN yang "
@@ -194,25 +201,28 @@ class RAGIntegrationService:
                     f"tidak boleh dijadikan dasar kesimpulan pelanggaran warga "
                     f"sipil. Jika tidak ada pasal yang tepat, akui keterbatasan "
                     f"konteks secara jujur.\n\n"
-                    f"{combined_context}"
                 )
 
-            # ── Batasi panjang konteks agar tidak overflow token Groq ──────────
-            # Groq free tier: max 6000 TPM. Total request = system_prompt (~2500 chars)
-            # + format_instructions (~4000 chars) + FAKTA (~250 chars) + KONTEKS.
-            # Maka KONTEKS harus ≤ 1200 chars agar total aman.
-            MAX_CONTEXT_CHARS = 1200
-            if len(combined_context) > MAX_CONTEXT_CHARS:
-                logger.warning(
-                    "[RAGIntegration] Konteks terlalu panjang (%d chars). "
-                    "Dipangkas ke %d chars.",
-                    len(combined_context), MAX_CONTEXT_CHARS,
-                )
-                combined_context = combined_context[:MAX_CONTEXT_CHARS] + "..."
+            budget = MAX_CONTEXT_CHARS - len(catatan_prefix)
+            selected_contexts: list = []
+            used_chars = 0
+            for ctx in contexts:
+                added_len = len(ctx) + (2 if selected_contexts else 0)  # pemisah "\n\n"
+                if selected_contexts and used_chars + added_len > budget:
+                    logger.warning(
+                        "[RAGIntegration] %d dari %d pasal di-skip (utuh, bukan dipotong) "
+                        "karena melebihi budget konteks (%d chars).",
+                        len(contexts) - len(selected_contexts), len(contexts), MAX_CONTEXT_CHARS,
+                    )
+                    break
+                selected_contexts.append(ctx)
+                used_chars += added_len
+
+            combined_context = catatan_prefix + "\n\n".join(selected_contexts)
 
             logger.info(
-                "[RAGIntegration] Context terkumpul: %d chunk, total %d chars",
-                len(contexts), len(combined_context)
+                "[RAGIntegration] Context terkumpul: %d/%d chunk, total %d chars",
+                len(selected_contexts), len(contexts), len(combined_context)
             )
 
             # Debug sementara
@@ -438,11 +448,15 @@ class RAGIntegrationService:
                         parent_content[:50],
                     )
 
-            combined_context = "\n\n".join(contexts)
+            # ── Batasi panjang konteks per BATAS PASAL, bukan potong string mentah ──
+            # Pasal yang tidak muat DI-SKIP UTUH (bukan dipotong setengah kalimat) —
+            # pasal pertama (paling relevan) selalu disertakan penuh meski sendirian
+            # sudah melebihi budget.
+            MAX_CONTEXT_CHARS = 1200
 
-            # ── Sisipkan CATATAN SISTEM jika pasal tidak ditemukan ────────────
-            if pasal_not_found and combined_context.strip():
-                combined_context = (
+            catatan_prefix = ""
+            if pasal_not_found and contexts:
+                catatan_prefix = (
                     f"CATATAN SISTEM: Nomor pasal yang disebutkan pengguna "
                     f"(Pasal {pasal_filter}) TIDAK DITEMUKAN di knowledge base. "
                     f"Konteks hukum berikut bersumber dari pasal-pasal LAIN yang "
@@ -455,21 +469,28 @@ class RAGIntegrationService:
                     f"tidak boleh dijadikan dasar kesimpulan pelanggaran warga "
                     f"sipil. Jika tidak ada pasal yang tepat, akui keterbatasan "
                     f"konteks secara jujur.\n\n"
-                    f"{combined_context}"
                 )
 
-            # ── Batasi panjang konteks agar tidak overflow token Groq ──────────
-            MAX_CONTEXT_CHARS = 1200
-            if len(combined_context) > MAX_CONTEXT_CHARS:
-                logger.warning(
-                    "[TextPipeline] Konteks terlalu panjang (%d chars). Dipangkas ke %d.",
-                    len(combined_context), MAX_CONTEXT_CHARS,
-                )
-                combined_context = combined_context[:MAX_CONTEXT_CHARS] + "..."
+            budget = MAX_CONTEXT_CHARS - len(catatan_prefix)
+            selected_contexts: list = []
+            used_chars = 0
+            for ctx in contexts:
+                added_len = len(ctx) + (2 if selected_contexts else 0)  # pemisah "\n\n"
+                if selected_contexts and used_chars + added_len > budget:
+                    logger.warning(
+                        "[TextPipeline] %d dari %d pasal di-skip (utuh, bukan dipotong) "
+                        "karena melebihi budget konteks (%d chars).",
+                        len(contexts) - len(selected_contexts), len(contexts), MAX_CONTEXT_CHARS,
+                    )
+                    break
+                selected_contexts.append(ctx)
+                used_chars += added_len
+
+            combined_context = catatan_prefix + "\n\n".join(selected_contexts)
 
             logger.info(
-                "[TextPipeline] Context terkumpul: %d chunk, total %d chars",
-                len(contexts), len(combined_context)
+                "[TextPipeline] Context terkumpul: %d/%d chunk, total %d chars",
+                len(selected_contexts), len(contexts), len(combined_context)
             )
 
             # ── Tahap 4: Generate Material ────────────────────────────────────
