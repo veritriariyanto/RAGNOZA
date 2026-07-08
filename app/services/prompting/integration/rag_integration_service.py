@@ -207,17 +207,6 @@ class RAGIntegrationService:
                     material_payload
                 )
 
-                # ── Tahap 7: Jalankan Evaluasi di Background Task ──────────────
-                if auto_evaluate and background_tasks and combined_context and final_material:
-                    background_tasks.add_task(
-                        trigger_auto_evaluation,
-                        question=search_query,
-                        context=combined_context,
-                        material=final_material,
-                        ground_truth=None,
-                        source_label="rag_pipeline",
-                        history_id=history_id
-                    )
             else:
                 # Bedakan pesan fallback berdasarkan apakah pasal disebut tapi error,
                 # atau benar-benar tidak ada konteks sama sekali
@@ -258,6 +247,23 @@ class RAGIntegrationService:
             history_id = saved_history.id if saved_history else None
             rag_session_id = saved_history.session_id if saved_history else rag_session_id
 
+            # FIX (arsitektur baru): evaluasi RAGAS sekarang DITUNGGU (synchronous),
+            # bukan lagi background task. Alasan: user ingin generate + evaluasi
+            # selesai SEBELUM redirect ke halaman hasil, bukan redirect duluan lalu
+            # skor evaluasi menyusul belakangan.
+            # KONSEKUENSI: response ke user akan tertunda hingga evaluasi selesai
+            # (bisa 1-3 menit tergantung antrian rate-limit Groq/TPM).
+            ragas_result = None
+            if auto_evaluate and combined_context and final_material:
+                ragas_result = await trigger_auto_evaluation(
+                    question=search_query,
+                    context=combined_context,
+                    material=final_material,
+                    ground_truth=None,
+                    source_label="rag_pipeline",
+                    history_id=history_id,
+                    context_chunks=contexts,
+                )
 
            # ── Tahap 8: Return Response Ter validasi ─────────────────────────
             return RAGIntegrationResponse(
@@ -272,7 +278,10 @@ class RAGIntegrationService:
                 history_id=history_id,
                 session_id=rag_session_id,
                 final_material=final_material,
-                fallback_message=fallback_message
+                fallback_message=fallback_message,
+                ragas_status=ragas_result.get("status") if ragas_result else None,
+                ragas_metrics=ragas_result.get("metrics") if ragas_result else None,
+                ragas_error=ragas_result.get("error") if ragas_result else None,
             )
 
         except Exception as exc:
@@ -288,6 +297,8 @@ class RAGIntegrationService:
         background_tasks: Optional[BackgroundTasks] = None,
         auto_evaluate: bool = True,
         session_id: int | None = None,
+        ground_truth: Optional[str] = None,   # ← baru, default None
+        is_dataset_eval: bool = False,   # ← tambahan baru
     ) -> RAGIntegrationResponse:
         """
         Pipeline dari teks (tanpa STT): Repair → Search → Generate Material → Save → Eval
@@ -411,17 +422,6 @@ class RAGIntegrationService:
                     material_payload
                 )
 
-                # ── Tahap 6: Evaluasi RAGAS di Background ─────────────────────
-                if auto_evaluate and background_tasks and combined_context and final_material:
-                    background_tasks.add_task(
-                        trigger_auto_evaluation,
-                        question=search_query,
-                        context=combined_context,
-                        material=final_material,
-                        ground_truth=None,
-                        source_label="text_pipeline",
-                        history_id=history_id
-                    )
             else:
                 # Bedakan pesan fallback berdasarkan apakah pasal disebut tapi error,
                 # atau benar-benar tidak ada konteks sama sekali
@@ -456,6 +456,19 @@ class RAGIntegrationService:
             history_id = saved_history.id if saved_history else None
             rag_session_id = saved_history.session_id if saved_history else rag_session_id
 
+            # ── Tahap 6 (DIPINDAH KE SINI — FIX BUG KRITIS): Evaluasi RAGAS 
+            ragas_result = None
+            if auto_evaluate and combined_context and final_material:
+                ragas_result = await trigger_auto_evaluation(
+                    question=search_query,
+                    context=combined_context,
+                    material=final_material,
+                    ground_truth=ground_truth,     # ← diubah dari None hardcoded menjadi parameter
+                    source_label="dataset_eval_live" if is_dataset_eval else "text_pipeline",                    
+                    history_id=history_id,
+                    context_chunks=contexts,
+                )
+
             # ── Return Response ────────────────────────────────────────────────
 
             return RAGIntegrationResponse(
@@ -469,7 +482,10 @@ class RAGIntegrationService:
                 history_id=history_id,
                 session_id=rag_session_id,
                 final_material=final_material,
-                fallback_message=fallback_message
+                fallback_message=fallback_message,
+                ragas_status=ragas_result.get("status") if ragas_result else None,
+                ragas_metrics=ragas_result.get("metrics") if ragas_result else None,
+                ragas_error=ragas_result.get("error") if ragas_result else None,
             )
 
         except Exception as exc:

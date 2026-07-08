@@ -185,7 +185,7 @@ def render_audio_controls():
         "📊 Evaluasi RAGAS Otomatis",
         value=False,
         key="toggle_auto_evaluate",
-        help="Jika aktif, metrik RAGAS (Faithfulness, Answer Relevancy, Context Precision/Recall) akan dihitung otomatis di background setelah generate.",
+        help="Jika aktif, metrik RAGAS (Faithfulness, Answer Relevancy) akan dihitung otomatis di background setelah generate.",
     )
 
     st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)

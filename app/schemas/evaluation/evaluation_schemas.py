@@ -78,6 +78,13 @@ class EvaluationMetrics(BaseModel):
         description="Segmen yang dievaluasi, misal: ['summary', 'qa', 'risk']",
     )
 
+    faithfulness_summary: Optional[float] = Field(
+        None, description="Faithfulness khusus segmen Summary saja (0–1)"
+    )
+    faithfulness_qa: Optional[float] = Field(
+        None, description="Faithfulness khusus segmen QA saja (0–1)"
+    )
+
 
 class EvaluationInput(BaseModel):
     """
@@ -89,7 +96,13 @@ class EvaluationInput(BaseModel):
     answer: str
     ground_truth: Optional[str] = None
     answer_qa: Optional[str] = None      # ← tambah ini
-    source_label: Optional[str] = None 
+    source_label: Optional[str] = None
+    # FIX : sinkron dengan evaluator/app/schemas/evaluation_schemas.py —
+    # tanpa ini, response evaluator yang di-parse ulang lewat schema ini akan
+    # KEHILANGAN kedua field ini secara senyap (Pydantic default: ignore extra fields),
+    # sehingga faithfulness_text/answer_risk_text di DB selalu NULL.
+    faithfulness_text: Optional[str] = None
+    answer_risk: Optional[str] = None
 
 # =============================================================================
 # RESPONSE SCHEMA (Format Data yang Keluar/Dikembalikan ke Frontend)

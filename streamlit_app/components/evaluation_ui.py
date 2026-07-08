@@ -37,17 +37,22 @@ def render_evaluation_section(data: dict, session_id: str):
                     * 🔴 **< 0.50** : Perlu Perbaikan
                     """)
 
-            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            col_m1, col_m2, col_m3, col_m4, col_m5 = st.columns(5)
             with col_m1:
-                st.metric("Faithfulness",
-                          f"{(ragas_metrics.get('faithfulness') or 0):.2f}")
+                fs = ragas_metrics.get("faithfulness_summary")
+                st.metric("Faithfulness (Summary)",
+                          f"{fs:.2f}" if fs is not None else "N/A")
             with col_m2:
+                fqa = ragas_metrics.get("faithfulness_qa")
+                st.metric("Faithfulness (QA)",
+                          f"{fqa:.2f}" if fqa is not None else "N/A")
+            with col_m3:
                 st.metric("Answer Relevancy",
                           f"{(ragas_metrics.get('answer_relevancy') or 0):.2f}")
-            with col_m3:
+            with col_m4:
                 st.metric("Context Precision",
                           f"{(ragas_metrics.get('context_precision') or 0):.2f}")
-            with col_m4:
+            with col_m5:
                 st.metric("Context Recall",
                           f"{(ragas_metrics.get('context_recall') or 0):.2f}")
 

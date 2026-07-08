@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from .history.history_router import router as history_router
 from .evaluation.evaluation_router import router as evaluation_router
+from .evaluation.evaluation_dataset_router import router as evaluation_dataset_router   # ← BARU
 
 router = APIRouter()
 
@@ -17,4 +18,10 @@ router.include_router(
 router.include_router(
     evaluation_router,
     prefix="/evaluation"
+)
+
+# ── MEMASUKKAN SUB-ROUTER DATASET EVALUATION (Fase 1) ─────────────────────────
+router.include_router(
+    evaluation_dataset_router,
+    prefix="/evaluation-dataset"
 )

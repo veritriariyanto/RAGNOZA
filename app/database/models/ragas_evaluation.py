@@ -45,6 +45,17 @@ class RAGASEvaluation(Base):
 
     risk_faithfulness = Column(Float, nullable=True)
 
+    # FIX : skor faithfulness per-segmen, agar skor gabungan
+    # (kolom `faithfulness` di atas) tidak menyembunyikan segmen mana yang bermasalah.
+    faithfulness_summary = Column(Float, nullable=True)
+    faithfulness_qa = Column(Float, nullable=True)
+
+    # FIX : simpan teks persis yang dikirim ke LLM judge untuk segmen
+    # yang SEBELUMNYA TIDAK PERNAH tersimpan (kolom `answer_qa` sudah menyimpan
+    # segmen QA sejak awal, jadi tidak perlu duplikat).
+    faithfulness_text = Column(Text, nullable=True)   # segment_faithfulness (Summary+Clause+Reference)
+    answer_risk_text = Column(Text, nullable=True)    # segment_risk
+
     evaluated_segments = Column(JSON, nullable=True)
 
     status = Column(String, nullable=True)

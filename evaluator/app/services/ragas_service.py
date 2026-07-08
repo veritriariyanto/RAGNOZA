@@ -12,11 +12,13 @@ from ragas.run_config import RunConfig
 
 logger = logging.getLogger(__name__)
 
+# ROLLBACK: max_workers=3 terbukti menyebabkan regresi (total waktu naik dari
+# ~2 menit jadi ~8 menit + TimeoutError), karena RAGAS evaluate() sendiri sudah
+# punya concurrency internal per-call — menjalankan beberapa evaluate_rag_custom()
+# bersamaan melipatgandakan request concurrent ke Groq melebihi apa yang throttle
+# TPM-only bisa amankan (throttle tidak membatasi jumlah request bersamaan/RPM,
+# hanya total token/menit). Kembali ke serial.
 _ragas_executor = ThreadPoolExecutor(max_workers=1)
-
-# ── HAPUS semua kode _TokenBucket, _PerRequestThrottle,
-#    _ThrottledLLMWrapper yang ada di sini. Tidak diperlukan lagi. ──
-
 
 class RagasService:
     def __init__(self):

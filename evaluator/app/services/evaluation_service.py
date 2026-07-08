@@ -26,6 +26,7 @@ ALUR YANG BENAR:
 
 import logging
 import asyncio
+import math
 from typing import Optional
 
 from app.schemas.evaluation_schemas import EvaluationMetrics, EvaluationResponse
@@ -36,7 +37,19 @@ logger = logging.getLogger(__name__)
 _eval_semaphore = asyncio.Semaphore(1)
 
 def _safe_round(val) -> Optional[float]:
-    return round(float(val), 4) if val is not None else None
+    """
+    FIX: RAGAS evaluate() tidak melempar exception saat satu baris gagal
+    (mis. rate limit di tengah eksekusi) — ia mengisi sel yang gagal dengan
+    float('nan'), BUKAN None. Tanpa isnan() check, NaN lolos ke DB dan
+    meracuni AVG()/agregat SQL (AVG dengan 1 baris NaN → seluruh hasil NaN,
+    beda dengan NULL yang otomatis diabaikan fungsi agregat).
+    """
+    if val is None:
+        return None
+    val = float(val)
+    if math.isnan(val):
+        return None
+    return round(val, 4)
 
 class EvaluationService:
 
@@ -58,6 +71,8 @@ class EvaluationService:
         existing_overall: Optional[float] = None,
         existing_segments: Optional[list] = None,
         context_chunks: Optional[list[str]] = None,
+        existing_faithfulness_summary: Optional[float] = None,   # ← FIX #7 (Prioritas 4)
+        existing_faithfulness_qa: Optional[float] = None,        # ← FIX #7 (Prioritas 4)
     ) -> EvaluationResponse:
 
         input_payload = {
@@ -67,6 +82,10 @@ class EvaluationService:
             "ground_truth": ground_truth,
             "answer_qa": answer_qa,   # ← tambah ini
             "source_label": source_label,
+            # FIX #Fase0-2 (M13): simpan teks penuh (TIDAK dipotong seperti context/answer di atas),
+            # karena ini yang benar-benar dinilai LLM judge dan wajib bisa ditelusuri ulang.
+            "faithfulness_text": faithfulness_text,
+            "answer_risk": answer_risk,
         }
 
         if not ragas_service.is_available:
@@ -131,6 +150,9 @@ class EvaluationService:
                         existing_risk_faithfulness=existing_risk_faithfulness,
                         existing_segments=existing_segments or [],
                         context_chunks=context_chunks,
+                        faithfulness_text=faithfulness_text,   # ← FIX #5 (Prioritas 2)
+                        existing_faithfulness_summary=existing_faithfulness_summary,   # ← baru
+                        existing_faithfulness_qa=existing_faithfulness_qa,
                     )
 
                 # ─────────────────────────────────────────────────────────────
@@ -180,6 +202,19 @@ class EvaluationService:
         """
         evaluated_segments = []
 
+        # FIX (Merge/Parallelize Evaluation Call): sebelumnya 3 segmen (summary,
+        # qa, risk) dipanggil berurutan dengan `await` satu-satu — total waktu
+        # tunggu = jumlah waktu ketiganya. Throttle TPM sudah global & thread-safe
+        # (lihat throttled_llm.py), jadi ketiganya aman dijalankan BERSAMAAN via
+        # asyncio.gather — throttle tetap menjaga total token/menit, tapi ketiganya
+        # tidak lagi saling menunggu selesai total sebelum yang berikutnya mulai.
+        #
+        # Precision/Recall (2b) TETAP menunggu hasil QA/Summary selesai dulu,
+        # karena basis teksnya (pr_basis_text) baru diketahui setelah itu.
+
+        # ROLLBACK: paralelisasi 3 segmen terbukti regresi (lihat catatan di
+        # ragas_service.py _ragas_executor). Kembali serial.
+
         # JALUR 1: Summary → Faithfulness
         faithfulness_score = None
         if faithfulness_text.strip() not in ("-", "", "None", "none"):
@@ -195,28 +230,55 @@ class EvaluationService:
             faithfulness_score = result.to_pandas().to_dict(orient="records")[0].get("faithfulness")
             evaluated_segments.append("faithfulness")
 
-        # JALUR 2: QA → Relevancy (+ precision/recall jika ada GT)
-        answer_relevancy_score = context_precision_score = context_recall_score = qa_faithfulness_score = None
+        # JALUR 2: QA → Faithfulness + Relevancy (context PENUH)
+        answer_relevancy_score = qa_faithfulness_score = None
         if answer_qa.strip() not in ("-", "", "None"):
-            logger.info("[EvalService][full] [2/3] Relevancy segmen QA...")
-            metric_types = ["faithfulness", "answer_relevancy"]   # ← tambah faithfulness
-            if ground_truth:
-                metric_types.extend(["context_precision", "context_recall"])
-
+            logger.info("[EvalService][full] [2/3] Faithfulness + Relevancy segmen QA (context penuh)...")
             result = await ragas_service.evaluate_rag_custom(
-                question=question, 
-                context=context, 
+                question=question,
+                context=context,
                 answer=answer_qa,
-                metric_types=metric_types, 
+                metric_types=["faithfulness", "answer_relevancy"],
                 ground_truth=ground_truth,
-                context_chunks=context_chunks,   # ← teruskan chunks
+                context_chunks=None,
             )
             scores = result.to_pandas().to_dict(orient="records")[0]
-            qa_faithfulness_score    = scores.get("faithfulness")   # ← ambil ini
-            answer_relevancy_score   = scores.get("answer_relevancy")
-            context_precision_score  = scores.get("context_precision")
-            context_recall_score     = scores.get("context_recall")
+            qa_faithfulness_score  = scores.get("faithfulness")
+            answer_relevancy_score = scores.get("answer_relevancy")
             evaluated_segments.append("qa")
+
+        context_precision_score = context_recall_score = None
+        if ground_truth:
+            pr_basis_text = None
+            pr_basis_label = None
+            if answer_qa.strip() not in ("-", "", "None"):
+                pr_basis_text = answer_qa
+                pr_basis_label = "qa"
+            elif faithfulness_text.strip() not in ("-", "", "None", "none"):
+                pr_basis_text = faithfulness_text
+                pr_basis_label = "summary"
+
+            if pr_basis_text:
+                logger.info(
+                    "[EvalService][full] [2b] Context Precision + Recall (basis=%s, chunk granular)...",
+                    pr_basis_label,
+                )
+                pr_result = await ragas_service.evaluate_rag_custom(
+                    question=question,
+                    context=context,
+                    answer=pr_basis_text,
+                    metric_types=["context_precision", "context_recall"],
+                    ground_truth=ground_truth,
+                    context_chunks=context_chunks,
+                )
+                pr_scores = pr_result.to_pandas().to_dict(orient="records")[0]
+                context_precision_score = pr_scores.get("context_precision")
+                context_recall_score    = pr_scores.get("context_recall")
+            else:
+                logger.warning(
+                    "[EvalService:%s][full] Precision/Recall dilewati — semua segmen (qa & summary) kosong.",
+                    source_label,
+                )
 
         # JALUR 3: Risk → Faithfulness (FIX #2)
         risk_faithfulness_score = None
@@ -239,20 +301,29 @@ class EvaluationService:
                     source_label, risk_faithfulness_score,
                 )
         
-        # Rekapitulasi — gabungkan faithfulness summary + qa
-        scores_faith = [s for s in [faithfulness_score, qa_faithfulness_score] if s is not None]
-        f  = _safe_round(sum(scores_faith) / len(scores_faith)) if scores_faith else None
+        # FIX #Fase0-1: faithfulness gabungan DIHAPUS (bukan lagi rata-rata summary+qa).
+        # Skor per-segmen (faithfulness_summary, faithfulness_qa) sekarang adalah
+        # satu-satunya sumber kebenaran — rata-rata menyembunyikan segmen yang buruk.
+        # Field `faithfulness` dipertahankan di schema untuk backward compatibility,
+        # tapi TIDAK diisi lagi di sini (selalu None dari full eval).
+        f = None
 
         r  = _safe_round(answer_relevancy_score)
         p  = _safe_round(context_precision_score)
         c  = _safe_round(context_recall_score)
         rf = _safe_round(risk_faithfulness_score)
 
+        f_summary = _safe_round(faithfulness_score)
+        f_qa      = _safe_round(qa_faithfulness_score)
+
         logger.info(
-            "[EvalService:%s][full] faith=%.4f | rel=%.4f | risk_faith=%.4f | "
+            "[EvalService:%s][full] faith_summary=%s | faith_qa=%s | rel=%.4f | risk_faith=%s | "
             "prec=%s | rec=%s",
             source_label,
-            f or 0, r or 0, rf or 0,
+            f"{f_summary:.4f}" if f_summary is not None else "N/A",
+            f"{f_qa:.4f}" if f_qa is not None else "N/A",
+            r or 0,
+            f"{rf:.4f}" if rf is not None else "N/A",   # FIX: None ≠ 0.0 — jangan disamakan
             f"{p:.4f}" if p else "N/A",
             f"{c:.4f}" if c else "N/A",
         )
@@ -266,6 +337,8 @@ class EvaluationService:
                 context_recall=c,
                 risk_faithfulness=rf,
                 answer_faithfulness_segment=evaluated_segments,
+                faithfulness_summary=f_summary,   # ← baru
+                faithfulness_qa=f_qa,             # ← baru
             ),
             input=input_payload,
         )
@@ -287,6 +360,9 @@ class EvaluationService:
         existing_risk_faithfulness, 
         existing_segments,
         context_chunks: Optional[list[str]] = None,
+        faithfulness_text: Optional[str] = None,   # ← FIX #5 (Prioritas 2): basis fallback
+        existing_faithfulness_summary: Optional[float] = None,   # ← FIX #7 (Prioritas 4)
+        existing_faithfulness_qa: Optional[float] = None,        # ← FIX #7 (Prioritas 4)
     ) -> EvaluationResponse:
         """
         Re-evaluasi EFISIEN: hanya hitung context_precision + context_recall.
@@ -302,11 +378,25 @@ class EvaluationService:
 
         context_precision_score = context_recall_score = None
 
+        # FIX #5 (Prioritas 2): fallback berjenjang, sama seperti di _run_full_eval
+        reeval_basis_text = None
+        reeval_basis_label = None
         if answer_qa.strip() not in ("-", "", "None"):
+            reeval_basis_text = answer_qa
+            reeval_basis_label = "qa"
+        elif faithfulness_text and faithfulness_text.strip() not in ("-", "", "None", "none"):
+            reeval_basis_text = faithfulness_text
+            reeval_basis_label = "summary"
+
+        if reeval_basis_text:
+            logger.info(
+                "[EvalService][reeval] Basis precision/recall: %s",
+                reeval_basis_label,
+            )
             result = await ragas_service.evaluate_rag_custom(
                 question=question,
                 context=context,
-                answer=answer_qa,
+                answer=reeval_basis_text,
                 metric_types=["context_precision", "context_recall"],
                 ground_truth=ground_truth,
                 context_chunks=context_chunks,
@@ -315,15 +405,21 @@ class EvaluationService:
             context_precision_score = scores.get("context_precision")
             context_recall_score    = scores.get("context_recall")
         else:
-            logger.warning("[EvalService][reeval] answer_qa kosong — precision/recall dilewati.")
+            logger.warning(
+                "[EvalService][reeval] Semua segmen (qa & summary) kosong — precision/recall dilewati."
+            )
 
         p  = _safe_round(context_precision_score)
         c  = _safe_round(context_recall_score)
-        f  = _safe_round(existing_faithfulness)
+        f  = None
         r  = _safe_round(existing_answer_relevancy)
         rf = _safe_round(existing_risk_faithfulness)
 
-        merged_segments = list(set(existing_segments + ["qa"]))
+        # FIX #7 (Prioritas 4): sekadar diteruskan dari existing, tidak dihitung ulang
+        f_summary = _safe_round(existing_faithfulness_summary)
+        f_qa      = _safe_round(existing_faithfulness_qa)
+
+        merged_segments = list(set(existing_segments + ([reeval_basis_label] if reeval_basis_label else [])))
 
         logger.info(
             "[EvalService:%s][reeval] prec=%.4f | rec=%.4f | "
@@ -341,6 +437,8 @@ class EvaluationService:
                 context_recall=c,
                 risk_faithfulness=rf,
                 answer_faithfulness_segment=merged_segments,
+                faithfulness_summary=f_summary,   # ← baru
+                faithfulness_qa=f_qa,             # ← baru
             ),
             input=input_payload,
         )

@@ -1,4 +1,4 @@
-# app/services/history/rag_history_service.py
+# app/services/history/history_service.py
 
 import logging
 
@@ -49,10 +49,18 @@ class HistoryService:
 
                 risk_faithfulness=metrics.get("risk_faithfulness"),
 
+                # FIX #7 (Prioritas 4)
+                faithfulness_summary=metrics.get("faithfulness_summary"),
+                faithfulness_qa=metrics.get("faithfulness_qa"),
+
                 answer_qa=input_payload.get("answer_qa"),
 
+                # FIX : audit trail — teks persis yang dinilai LLM judge
+                faithfulness_text=input_payload.get("faithfulness_text"),
+                answer_risk_text=input_payload.get("answer_risk"),
+
                 evaluated_segments=metrics.get(
-                    "evaluated_segments", []
+                    "answer_faithfulness_segment", []
                 ),
                 status=ragas_result.get("status", "error"),
             )

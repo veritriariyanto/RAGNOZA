@@ -55,6 +55,8 @@ async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
             existing_overall=request.existing_overall,
             existing_segments=request.existing_segments or [],
             context_chunks=request.context_chunks or [], 
+            existing_faithfulness_summary=request.existing_faithfulness_summary,   # ← FIX #7
+            existing_faithfulness_qa=request.existing_faithfulness_qa,
         )
         return result
 

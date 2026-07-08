@@ -18,6 +18,12 @@ class RAGIntegrationResponse(BaseModel):
     final_material: Optional[MaterialResponse] = None
     fallback_message: Optional[str] = None
     has_context: bool
+    # FIX: evaluasi RAGAS sekarang synchronous (ditunggu sampai selesai sebelum
+    # response dikirim), bukan lagi background task murni — hasil dibawa langsung
+    # di sini agar frontend tidak perlu polling/refresh terpisah.
+    ragas_status: Optional[str] = None       # "success" | "error" | "skipped" | None (jika auto_evaluate=False)
+    ragas_metrics: Optional[dict] = None      # EvaluationMetrics.model_dump() jika sukses
+    ragas_error: Optional[str] = None
 
 
 class TextIntegrationRequest(BaseModel):

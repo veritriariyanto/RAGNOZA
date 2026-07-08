@@ -2,7 +2,7 @@
 #
 # FIX #3: tambah endpoint /ragas-reeval
 #   - Dipanggil ketika user input ground_truth di Streamlit
-#   - Ambil existing metrics dari DB via RAGHistoryService
+#   - Ambil existing metrics dari DB via ProcessQueryService
 #   - Kirim ke evaluator dengan is_reeval=True
 #   - Evaluator hanya hitung precision+recall, merge dengan existing
 #
@@ -13,7 +13,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
-
+ 
 from app.core.postgres import get_db
 from app.schemas.evaluation.evaluation_schemas import (   # ← fix: folder baru
     EvaluationInput,
@@ -114,6 +114,9 @@ async def evaluate_ragas_auto_2metrics(
         material=material,
         ground_truth=payload.ground_truth,
         source_label=payload.source_label or "frontend_eval",
+        context_chunks=payload.context_chunks,   # FIX: sebelumnya tidak pernah diteruskan
+                                                   # → context_precision/recall selalu pakai
+                                                   # fallback paragraph-split, bukan chunk retrieval asli
     )
 
     # =============================================================================
@@ -246,6 +249,9 @@ async def evaluate_ragas_reeval(
         "existing_answer_relevancy":   existing_metrics.get("answer_relevancy"),
         "existing_risk_faithfulness":  existing_metrics.get("risk_faithfulness"),
         "existing_segments":           existing_metrics.get("evaluated_segments", []),
+        # FIX #7 (Prioritas 4)
+        "existing_faithfulness_summary": existing_metrics.get("faithfulness_summary"),
+        "existing_faithfulness_qa":      existing_metrics.get("faithfulness_qa"),
     }
 
     result = await call_evaluator(evaluator_payload, source_label="reeval_ground_truth")  # ← reuse

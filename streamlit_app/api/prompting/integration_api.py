@@ -44,7 +44,10 @@ def process_audio_integrated(
             f"{BASE_URL}/prompting/integration/process-integrated",
             params=params,
             files={"file": (filename, audio_bytes, "audio/wav")},
-            timeout=120,
+            # FIX: evaluasi RAGAS sekarang synchronous dan bisa makan waktu
+            # 1-3 menit (tergantung antrian rate-limit Groq). Timeout lama (120s)
+            # menyebabkan request gagal duluan meski backend sebenarnya sukses.
+            timeout=300,
         )
 
         if response.status_code == 200:
@@ -89,6 +92,9 @@ def _error_response(msg: str) -> dict:
         "session_id": None,
         "raw_context": "",
         "error": msg,
+        "ragas_status": None,
+        "ragas_metrics": None,
+        "ragas_error": None,
     }
 
 
@@ -118,7 +124,7 @@ def process_text_integrated(
         response = requests.post(
             f"{BASE_URL}/prompting/integration/process-text-integrated",
             json=payload,
-            timeout=120,
+            timeout=300,
         )
 
         if response.status_code == 200:
@@ -126,6 +132,7 @@ def process_text_integrated(
             rag_data = data.get("data", {})
             full_context = rag_data.get("rag", {}).get("full_context", "")
 
+            eval_info = data.get("evaluation", {}) or {}
             return {
                 "status": "success",
                 "transcription": rag_data.get("transcription", {}),
@@ -136,6 +143,10 @@ def process_text_integrated(
                 "session_id": rag_data.get("session_id"),
                 "raw_context": full_context,
                 "error": None,
+                # FIX: bawa hasil evaluasi RAGAS (sudah selesai sebelum response ini kembali)
+                "ragas_status": eval_info.get("status"),
+                "ragas_metrics": eval_info.get("metrics"),
+                "ragas_error": eval_info.get("error"),
             }
         else:
             try:

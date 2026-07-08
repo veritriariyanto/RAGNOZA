@@ -1,6 +1,7 @@
 # app/services/prompting/prompt/generate_content_service.py
 
 import logging
+import groq
 from app.core.llm_provider import llm
 from app.schemas.prompting.generate_content import MaterialRequest, MaterialResponse
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -165,6 +166,18 @@ def build_output_instructions(intent: str) -> str:
 # Service
 # ---------------------------------------------------------------------------
 
+def _is_infra_error(exc: Exception) -> bool:
+    """
+    Bedakan kegagalan infra Groq (timeout, rate-limit, 5xx, connection error)
+    dari kegagalan non-infra (validasi Pydantic gagal, JSON parsing error, dll).
+    """
+    if isinstance(exc, (groq.APIConnectionError, groq.APITimeoutError)):
+        return True
+    if isinstance(exc, groq.APIStatusError):
+        status = getattr(exc, "status_code", None)
+        if status == 429 or (status is not None and status >= 500):
+            return True
+    return False
 
 def _is_insufficient_context(context_text: str) -> bool:
     """

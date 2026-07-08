@@ -10,6 +10,7 @@ from app.routes.prompting.prompting_routes import prompting_router
 from app.routes.knowlagebase.knowlagebase_routes import knowlagebase_router
 from app.routes.history.history_router import router as history_router
 from app.routes.evaluation.evaluation_router import router as evaluation_router
+from app.routes.evaluation.evaluation_dataset_router import router as evaluation_dataset_router
 
 # =========================================
 # SWAGGER TAG DEFINITIONS
@@ -86,6 +87,7 @@ app.include_router(knowlagebase_router, prefix="/api/v1/knowledgebase")
 app.include_router(prompting_router, prefix="/api/v1/prompting")
 app.include_router(history_router, prefix="/api/v1/history")
 app.include_router(evaluation_router, prefix="/api/v1/evaluation")
+app.include_router(evaluation_dataset_router, prefix="/api/v1/evaluation-dataset", tags=["evaluation"])
 
 # =========================================
 # ROOT

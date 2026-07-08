@@ -40,6 +40,10 @@ class ProcessQueryService:
                 "risk_faithfulness": evaluation.risk_faithfulness,
 
                 "evaluated_segments": evaluation.evaluated_segments or [],
+
+                # FIX #7 (Prioritas 4)
+                "faithfulness_summary": evaluation.faithfulness_summary,
+                "faithfulness_qa": evaluation.faithfulness_qa,
                 }
             }
 

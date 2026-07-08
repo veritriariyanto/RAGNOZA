@@ -39,12 +39,23 @@ def _serialize_evaluation(item: RAGASEvaluation) -> dict:
 
         "risk_faithfulness": item.risk_faithfulness,
 
+        # FIX: field ini SUDAH ada di model & sudah tersimpan ke DB sejak Fase 0,
+        # tapi sebelumnya tidak pernah ikut diserialisasi ke response — akibatnya
+        # UI (evaluation_ui.py) selalu menampilkan "N/A" untuk Faithfulness
+        # (Summary) dan (QA), meskipun datanya sudah benar di database.
+        "faithfulness_summary": item.faithfulness_summary,
+        "faithfulness_qa": item.faithfulness_qa,
+
+        # Audit trail — teks persis yang dievaluasi LLM judge
+        "faithfulness_text": item.faithfulness_text,
+        "answer_risk_text": item.answer_risk_text,
+
         # Bagian teks segmen yang dievaluasi (di-parse dari string JSON ke list/dict)
         "evaluated_segments": (
-            json.loads(item.evaluated_segments)
-            if item.evaluated_segments
-            else []
-        ),
+        json.loads(item.evaluated_segments) 
+        if isinstance(item.evaluated_segments, str) 
+        else (item.evaluated_segments or [])
+    ),
 
         "status": item.status,
         "created_at": item.created_at,
@@ -71,10 +82,16 @@ def _serialize_process(item: RAGProcess) -> dict:
             "context_recall": latest_eval.context_recall,
 
             "risk_faithfulness": latest_eval.risk_faithfulness,
+
+            # FIX: sebelumnya hilang — root cause UI selalu menampilkan
+            # "N/A" untuk Faithfulness (Summary) dan (QA).
+            "faithfulness_summary": latest_eval.faithfulness_summary,
+            "faithfulness_qa": latest_eval.faithfulness_qa,
+
             "evaluated_segments": (
-                json.loads(latest_eval.evaluated_segments)
-                if latest_eval.evaluated_segments
-                else []
+                json.loads(latest_eval.evaluated_segments) 
+                if isinstance(latest_eval.evaluated_segments, str) 
+                else (latest_eval.evaluated_segments or [])
             ),
 }
 

@@ -30,6 +30,9 @@ class EvaluatorSettings(BaseSettings):
     # ← TAMBAH: Konfigurasi Throttling
     GROQ_TPM_LIMIT: int = 4500
     GROQ_MIN_GAP_SEC: float = 1.2
+    GROQ_TPD_LIMIT: int = 90000  # buffer di bawah TPD riil — sesuaikan per dashboard Groq Anda
+    GROQ_RPD_LIMIT: int = 1000  # buffer di bawah RPD riil — sesuaikan per dashboard Groq
+
 
     # Konfigurasi Pydantic untuk membaca file .env
     model_config = SettingsConfigDict(

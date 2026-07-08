@@ -106,14 +106,20 @@ async def trigger_auto_evaluation(
     # 5. PENCATATAN LOG HASIL EVALUASI:
     if result.get("status") == "success":
         metrics = result.get("metrics") or {}
+        # FIX post-Fase0: metrics["faithfulness"] gabungan sudah tidak diisi lagi
+        # (selalu None dari full eval) — log lama menampilkannya sebagai 0.0000
+        # yang menyesatkan (terlihat seperti gagal total). Gunakan skor per-segmen.
         logger.info(
-            "[AutoEval:%s] ✅ Selesai | faith=%.4f | relevancy=%.4f | "
-            "precision=%s | recall=%s | overall=%s",
+            "[AutoEval:%s] ✅ Selesai | faith_summary=%s | faith_qa=%s | relevancy=%.4f | "
+            "risk_faith=%s | precision=%s | recall=%s | segments=%s",
             source_label,
-            metrics.get("faithfulness") or 0.0,
+            f"{metrics['faithfulness_summary']:.4f}" if metrics.get("faithfulness_summary") is not None else "N/A",
+            f"{metrics['faithfulness_qa']:.4f}" if metrics.get("faithfulness_qa") is not None else "N/A",
             metrics.get("answer_relevancy") or 0.0,
+            f"{metrics['risk_faithfulness']:.4f}" if metrics.get("risk_faithfulness") is not None else "N/A",
             f"{metrics['context_precision']:.4f}" if metrics.get("context_precision") else "N/A",
             f"{metrics['context_recall']:.4f}"    if metrics.get("context_recall")    else "N/A",
+            metrics.get("answer_faithfulness_segment") or [],
         )
     else:
         logger.warning(

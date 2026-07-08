@@ -138,19 +138,23 @@ def extract_segments_for_ragas(material: MaterialResponse) -> dict:
 
     # ── KLASTER 3: RISK REVIEW ───────────────────────────────────────────────
     risk = material.risk_review
-    # SESUDAH
     risk_status   = risk.status        if (risk and not _is_placeholder_value(risk.status))      else None
     risk_analysis = risk.analysis      if (risk and not _is_placeholder_value(risk.analysis))    else None
     risks_list    = ' | '.join(str(r) for r in risk.risks) if (risk and risk.risks) else None
     recommendation = risk.recommendation if (risk and not _is_placeholder_value(risk.recommendation)) else None
 
-    if all(v is None for v in [risk_status, risk_analysis, risks_list, recommendation]):
+    # FIX #6 (Prioritas 3): mitigation_steps ditambahkan agar ikut dicek Faithfulness —
+    # field ini rawan halusinasi karena harus berbasis aturan hukum yang ada di dokumen.
+    mitigation_steps_list = ' | '.join(str(m) for m in risk.mitigation_steps) if (risk and risk.mitigation_steps) else None
+
+    if all(v is None for v in [risk_status, risk_analysis, risks_list, mitigation_steps_list, recommendation]):
         segment_risk = "-"   # ← sekarang kasus informatif akan masuk sini
     else:
         segment_risk = (
             f"Status Kepatuhan: {risk_status or '-'}\n"
             f"Analisis: {risk_analysis or '-'}\n"
             f"Risiko: {risks_list or '-'}\n"
+            f"Mitigasi: {mitigation_steps_list or '-'}\n"
             f"Rekomendasi: {recommendation or '-'}"
         )
 

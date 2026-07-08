@@ -46,6 +46,13 @@ class EvaluationRequest(BaseModel):
         default_factory=list,
         description="Segmen yang sudah dievaluasi di auto eval, misal: ['summary','qa','risk']",
     )
+    # FIX #7 (Prioritas 4)
+    existing_faithfulness_summary: Optional[float] = Field(
+        None, description="Skor faithfulness segmen Summary dari auto eval sebelumnya"
+    )
+    existing_faithfulness_qa: Optional[float] = Field(
+        None, description="Skor faithfulness segmen QA dari auto eval sebelumnya"
+    )
 
 
 class EvaluationMetrics(BaseModel):
@@ -56,6 +63,18 @@ class EvaluationMetrics(BaseModel):
     risk_faithfulness: Optional[float] = None
     answer_faithfulness_segment: List[str] = Field(default_factory=list)
 
+    # FIX #7 (Prioritas 4): skor per-segmen, agar "faithfulness" gabungan tidak menyembunyikan
+    # segmen mana yang sebenarnya bermasalah. Field "faithfulness" di atas dipertahankan
+    # di schema untuk backward compatibility, TAPI SEJAK FIX #Fase0-1 SUDAH TIDAK DIISI
+    # (selalu None dari full eval) — bukan lagi rata-rata summary+qa. Sumber kebenaran
+    # sekarang adalah faithfulness_summary dan faithfulness_qa di bawah ini.
+    faithfulness_summary: Optional[float] = Field(
+        None, description="Faithfulness khusus segmen Summary saja (0–1)"
+    )
+    faithfulness_qa: Optional[float] = Field(
+        None, description="Faithfulness khusus segmen QA saja (0–1)"
+    )
+
 
 class EvaluationInput(BaseModel):
     question: str
@@ -63,7 +82,10 @@ class EvaluationInput(BaseModel):
     answer: str
     ground_truth: Optional[str] = None
     answer_qa: Optional[str] = None      # ← tambah ini
-    source_label: Optional[str] = None 
+    source_label: Optional[str] = None
+    # FIX #Fase0-2 (M13): teks segmen faithfulness & risk agar tersimpan ke DB
+    faithfulness_text: Optional[str] = None
+    answer_risk: Optional[str] = None
 
 
 class EvaluationResponse(BaseModel):

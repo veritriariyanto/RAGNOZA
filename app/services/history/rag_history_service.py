@@ -1,5 +1,11 @@
 # app/services/history/rag_history_service.py
 
+# ⚠️ DEPRECATED — TIDAK DIPAKAI JALUR MANAPUN YANG AKTIF (per audit Fase 0 RAGAS, Juli 2026).
+# Jalur history yang aktif sekarang: SessionService (app/services/history/session_service.py)
+# yang menulis ke model RAGProcess, bukan LegalMaterialHistory di sini.
+# Kandidat untuk dihapus penuh (bersama app/database/migration/history.py) setelah
+# dikonfirmasi tidak ada dependency tersembunyi (test suite, script manual, dsb).
+
 import logging
 from datetime import datetime
 from sqlalchemy.orm import Session

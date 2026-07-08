@@ -137,14 +137,12 @@ async def process_audio_rag(
                 "history_id": getattr(result, "history_id", None),
                 "session_id": getattr(result, "session_id", None),
             },
-            # Info untuk user bahwa evaluasi berjalan di background
+            # FIX: evaluasi sekarang synchronous — hasil sudah tersedia saat response ini dikirim
             "evaluation": {
-                "status": "running_in_background",
+                "status": getattr(result, "ragas_status", None) or ("skipped" if not auto_evaluate else "error"),
                 "enabled": auto_evaluate,
-                "note": (
-                    "Evaluasi RAGAS berjalan otomatis di background. "
-                    "Lihat log server untuk hasil metrik."
-                ),
+                "metrics": getattr(result, "ragas_metrics", None),
+                "error": getattr(result, "ragas_error", None),
             },
         }
 
