@@ -5,6 +5,8 @@ Dashboard Knowledge Base:
  - Tab 2 : Upload PDF  — cleaning preview (before/after) + chunking preview (parent/child)
 """
 
+import re
+
 import streamlit as st
 
 from api.knowledge.knowledge_api import (
@@ -290,6 +292,18 @@ def _render_before_after(raw_snippet: str, clean_snippet: str):
             '</div>',
             unsafe_allow_html=True,
         )
+
+
+def _extract_pasal_from_query(query: str):
+    """
+    Deteksi otomatis nomor pasal dari teks query bebas (mis. 'Tolong bedah
+    Pasal 5' -> '5'), supaya tab similarity test merepresentasikan perilaku
+    pipeline integrasi (yang otomatis ekstrak pasal_number lewat
+    repair_legal_text) alih-alih murni semantic search yang bisa kalah saing
+    dari pasal lain untuk query panjang/multi-topik.
+    """
+    match = re.search(r"pasal\s+(\d+)", query, re.IGNORECASE)
+    return match.group(1) if match else None
 
 
 def _esc(text: str) -> str:
@@ -869,7 +883,13 @@ def _tab_similarity_test():
                 "Filter Bagian", ["Semua", "Konsiderans", "Batang Tubuh", "Penjelasan"], key="kb_sim_sec"
             )
         with col_pasal:
-            pasal_type = st.text_input("Filter Pasal (Angka saja)", placeholder="Contoh: 5", key="kb_sim_pasal")
+            pasal_type = st.text_input(
+                "Filter Pasal (Angka saja)",
+                placeholder="Auto-terdeteksi dari query jika kosong",
+                key="kb_sim_pasal",
+                help="Kosongkan agar nomor pasal dideteksi otomatis dari teks query (mis. 'Pasal 5'), "
+                     "sama seperti perilaku pipeline integrasi. Isi manual untuk override.",
+            )
         st.markdown("---")
         score_threshold = st.slider(
             "Score Threshold (Minimum Similarity)",
@@ -884,12 +904,23 @@ def _tab_similarity_test():
             st.warning("⚠️ Masukkan query pencarian terlebih dahulu!")
             return
 
+        # Kalau "Filter Pasal" tidak diisi manual, deteksi otomatis dari teks query —
+        # tanpa ini, hasil similarity test bisa berbeda dari pipeline integrasi (yang
+        # otomatis mengekstrak nomor pasal lewat repair_legal_text), karena tanpa
+        # filter pasal, exact-match boost & retry di QdrantService tidak pernah aktif.
+        effective_pasal = pasal_type.strip() if pasal_type.strip() else _extract_pasal_from_query(query)
+        if not pasal_type.strip() and effective_pasal:
+            st.caption(
+                f"🔎 Pasal terdeteksi otomatis dari query: **Pasal {effective_pasal}** "
+                f"— isi 'Filter Pasal' di atas untuk override manual."
+            )
+
         with st.spinner("Mencari chunk paling relevan di Qdrant..."):
             res = search_similarity(
                 base_name=selected_kb,
                 query=query,
                 section_type=section_type if section_type != "Semua" else None,
-                pasal_type=pasal_type if pasal_type.strip() else None,
+                pasal_type=effective_pasal,
                 limit=int(limit),
                 score_threshold=score_threshold,
             )
@@ -900,10 +931,24 @@ def _tab_similarity_test():
 
         data = res.get("data", {})
         results = data.get("results", [])
+        pasal_not_found = data.get("pasal_not_found", False)
 
         if not results:
             st.warning("⚠️ Tidak ada hasil yang ditemukan. Coba turunkan **Score Threshold** di Filter Tambahan (mis. ke 0.05).")
             return
+
+        # Tampilkan kalau backend melakukan retry tanpa filter pasal — supaya
+        # user tahu hasil di bawah ini BUKAN exact match pasal yang di-filter
+        # (baik dari input manual maupun auto-detect), melainkan hasil koreksi
+        # dari pencarian semantik murni karena filter pasal aslinya skornya
+        # terlalu rendah / tidak ditemukan sama sekali.
+        if effective_pasal and pasal_not_found:
+            st.warning(
+                f"⚠️ Filter **Pasal {effective_pasal}** tidak menghasilkan kecocokan yang cukup "
+                f"relevan (skor terlalu rendah atau pasal tidak ditemukan). Hasil di bawah ini "
+                f"adalah pencarian semantik **tanpa filter pasal** — periksa apakah pasal yang "
+                f"benar-benar cocok sudah muncul di sini."
+            )
 
         st.caption(f"Ditemukan **{len(results)}** hasil retrieval untuk query: `{query}`")
         st.markdown("---")

@@ -16,6 +16,7 @@ Payload standar tiap titik:
 
 from __future__ import annotations
 
+import math
 import uuid
 import asyncio
 import logging
@@ -659,9 +660,26 @@ class QdrantService:
 
         scores = reranker.predict(pairs)
         for r, score in zip(results, scores):
-            r["rerank_score"] = round(float(score), 4)
+            # Cross-encoder mMARCO mengembalikan raw logit (tidak terjamin 0-1),
+            # bukan probabilitas — di-sigmoid dulu agar rerank_score bisa dipakai
+            # sebagai nilai kepercayaan 0-1 yang bermakna oleh caller (mis. gate
+            # kepercayaan di rag_integration_service.py).
+            r["rerank_score"] = round(1.0 / (1.0 + math.exp(-float(score))), 4)
 
-        results.sort(key=lambda x: x["rerank_score"], reverse=True)
+        # PERBAIKAN: urutkan exact pasal/ayat match (dari _hybrid_rerank) di atas
+        # dulu, baru berdasarkan rerank_score. Tanpa ini, hasil yang exact match
+        # dengan pasal/ayat yang disebut user bisa tersingkir dari `[:limit]` di
+        # search_knowledgebase() hanya karena rerank_score-nya (dinilai dari teks
+        # parent, bukan child yang exact match) kebetulan lebih rendah dari
+        # kandidat lain — inkonsisten dengan proteksi exact match yang sudah ada
+        # di relative_threshold (search()) maupun boost skor (_hybrid_rerank()).
+        results.sort(
+            key=lambda x: (
+                x.get("is_exact_pasal_match", False) or x.get("is_exact_ayat_match", False),
+                x["rerank_score"],
+            ),
+            reverse=True,
+        )
         return results
 
     async def search_knowledgebase(

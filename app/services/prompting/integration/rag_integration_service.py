@@ -35,6 +35,15 @@ class RAGIntegrationService:
     # Maka KONTEKS harus ≤ 1200 chars agar total aman.
     MAX_CONTEXT_CHARS = 1200
 
+    # Gate kepercayaan: rerank_score (cross-encoder, sudah di-sigmoid ke 0-1 di
+    # QdrantService._rerank_with_cross_encoder) tertinggi di bawah ambang ini
+    # dianggap tidak cukup meyakinkan untuk dijadikan dasar generate material —
+    # KECUALI hasil tersebut exact match pasal/ayat yang disebut user (exact
+    # match sudah tervalidasi lewat metadata, bukan cuma similarity semantik,
+    # jadi selalu dipercaya). Nilai awal 0.3 — belum dikalibrasi dengan data
+    # produksi, sesuaikan berdasarkan observasi log "Confidence gate" di bawah.
+    MIN_RERANK_CONFIDENCE = 0.3
+
     def __init__(
         self,
         stt_service: STTService,
@@ -57,7 +66,7 @@ class RAGIntegrationService:
         pasal_number,
         ayat_number,
         log_prefix: str,
-    ) -> tuple[dict, list, bool, Optional[str]]:
+    ) -> tuple[dict, list, bool, Optional[str], Optional[str]]:
         """
         Semantic search ke Qdrant (Child-Parent) lalu ekstraksi & filter konteks.
 
@@ -67,7 +76,7 @@ class RAGIntegrationService:
         pasal/ayat menghasilkan 0 hasil → flag pasal_not_found dikembalikan.
 
         Return:
-            (kb_results, contexts, pasal_not_found, pasal_filter)
+            (kb_results, contexts, pasal_not_found, pasal_filter, low_confidence_message)
         """
         pasal_filter = str(pasal_number) if pasal_number is not None else None
         ayat_filter = str(ayat_number) if ayat_number is not None else None
@@ -95,6 +104,8 @@ class RAGIntegrationService:
         # Deduplikasi: hindari parent content yang sama muncul berkali-kali
         seen_parents = set()
         contexts: list = []
+        context_confidences: list = []
+        has_exact_match = False
 
         for res in kb_results.get("results", []):
             # Cek apakah hasil ini exact match dengan pasal user
@@ -145,6 +156,9 @@ class RAGIntegrationService:
 
             if content:
                 contexts.append(content)
+                context_confidences.append(res.get("rerank_score"))
+                if is_exact:
+                    has_exact_match = True
             else:
                 logger.warning(
                     "[%s] Hasil Qdrant diabaikan — semua field terlalu pendek. "
@@ -153,7 +167,33 @@ class RAGIntegrationService:
                     child_content[:50], parent_content[:50],
                 )
 
-        return kb_results, contexts, pasal_not_found, pasal_filter
+        # ── Gate kepercayaan berbasis rerank_score ─────────────────────────
+        # Konteks yang lolos filter di atas tapi skor rerank tertingginya masih
+        # di bawah ambang dianggap tidak cukup meyakinkan secara topikal untuk
+        # dijadikan dasar kesimpulan hukum — dikosongkan supaya jalur "tidak ada
+        # context" (fallback_message) yang menangani, bukan digenerate dengan
+        # percaya diri. Exact match pasal/ayat (tervalidasi via metadata, bukan
+        # cuma similarity semantik) selalu bypass gate ini.
+        low_confidence_message = None
+        known_confidences = [c for c in context_confidences if c is not None]
+        if contexts and not has_exact_match and known_confidences:
+            max_confidence = max(known_confidences)
+            if max_confidence < self.MIN_RERANK_CONFIDENCE:
+                logger.info(
+                    "[%s] Confidence gate: rerank_score tertinggi %.4f < ambang %.2f "
+                    "— context dianggap tidak cukup meyakinkan, dikosongkan.",
+                    log_prefix, max_confidence, self.MIN_RERANK_CONFIDENCE,
+                )
+                low_confidence_message = (
+                    "Sistem menemukan pasal yang berpotensi terkait, namun tingkat "
+                    "keyakinan (relevansi semantik) terhadap pertanyaan Anda masih "
+                    "terlalu rendah untuk dijadikan dasar kesimpulan hukum yang "
+                    "meyakinkan. Silakan perjelas pertanyaan Anda atau sebutkan "
+                    "nomor pasal secara spesifik."
+                )
+                contexts = []
+
+        return kb_results, contexts, pasal_not_found, pasal_filter, low_confidence_message
 
     # ── Helper bersama: Batasi Konteks per Budget Karakter + Fallback Message ──
     def _build_combined_context(
@@ -162,6 +202,7 @@ class RAGIntegrationService:
         pasal_not_found: bool,
         pasal_filter: Optional[str],
         log_prefix: str,
+        low_confidence_message: Optional[str] = None,
     ) -> tuple[str, Optional[str]]:
         """
         Batasi panjang konteks per BATAS PASAL, bukan potong string mentah.
@@ -214,9 +255,12 @@ class RAGIntegrationService:
 
         fallback_message = None
         if not contexts:
-            # Bedakan pesan fallback berdasarkan apakah pasal disebut tapi error,
-            # atau benar-benar tidak ada konteks sama sekali
-            if pasal_not_found:
+            # Bedakan pesan fallback berdasarkan apakah gagal karena gate
+            # kepercayaan, pasal disebut tapi tidak ketemu, atau benar-benar
+            # tidak ada konteks sama sekali
+            if low_confidence_message:
+                fallback_message = low_confidence_message
+            elif pasal_not_found:
                 fallback_message = (
                     "Pasal yang Anda sebutkan tidak ditemukan di Knowledge Base, "
                     "dan tidak ada pasal lain yang cukup relevan dengan topik "
@@ -275,7 +319,7 @@ class RAGIntegrationService:
             ayat_number = refinement.get("ayat_number")
 
             # ── Tahap 3-4: Semantic Search + Ekstraksi & Filter Konteks ───────
-            kb_results, contexts, pasal_not_found, pasal_filter = await self._search_and_extract_context(
+            kb_results, contexts, pasal_not_found, pasal_filter, low_confidence_message = await self._search_and_extract_context(
                 knowledge_base=knowledge_base,
                 search_query=search_query,
                 pasal_number=pasal_number,
@@ -288,6 +332,7 @@ class RAGIntegrationService:
                 pasal_not_found=pasal_not_found,
                 pasal_filter=pasal_filter,
                 log_prefix="RAGIntegration",
+                low_confidence_message=low_confidence_message,
             )
 
             # ── Tahap 5: Generate Material ────────────────────────────────────
@@ -410,7 +455,7 @@ class RAGIntegrationService:
             ayat_number = refinement.get("ayat_number")
 
             # ── Tahap 2-3: Semantic Search + Ekstraksi & Filter Konteks ───────
-            kb_results, contexts, pasal_not_found, pasal_filter = await self._search_and_extract_context(
+            kb_results, contexts, pasal_not_found, pasal_filter, low_confidence_message = await self._search_and_extract_context(
                 knowledge_base=knowledge_base,
                 search_query=search_query,
                 pasal_number=pasal_number,
@@ -423,6 +468,7 @@ class RAGIntegrationService:
                 pasal_not_found=pasal_not_found,
                 pasal_filter=pasal_filter,
                 log_prefix="TextPipeline",
+                low_confidence_message=low_confidence_message,
             )
 
             # ── Tahap 4: Generate Material ────────────────────────────────────
