@@ -4,6 +4,51 @@ import asyncio
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
 
+# Pola "kalimat ajaib" — sama seperti di streamlit_app/components/knowledgebase_tab.py,
+# menandakan user sendiri ragu dengan nomor pasal yang ia sebutkan. Kalau muncul,
+# pasal_number/ayat_number TIDAK dipaksakan jadi filter meski regex/LLM berhasil
+# mengekstrak angkanya — supaya tidak salah menyaring hasil pencarian.
+_DOUBT_PATTERN = re.compile(
+    r"\b(ragu|kurang\s*yakin|tidak\s*yakin|ga\s*yakin|nggak\s*yakin|gak\s*yakin|"
+    r"mungkin\s*salah|entah\s*pasal|lupa\s*pasal|tidak\s*ingat\s*pasal)\b",
+    re.IGNORECASE,
+)
+
+# PERBAIKAN: pola lama (`(?:pasal|ps\.?)\s*(\d+)`) HANYA menangkap angka yang
+# didahului kata "pasal"/"ps" setiap kemunculan — jadi "Pasal 5 dan Pasal 10"
+# terdeteksi 2 angka (ambigu), tapi ucapan natural "Pasal 5 dan 10" atau
+# "Pasal 5, 8, dan 10" (kata "pasal" tidak diulang tiap angka) cuma menangkap
+# "5" saja, dianggap tunggal, TIDAK ambigu. Solusinya: cari kemunculan pertama
+# "pasal N", lalu lanjutkan konsumsi angka berikutnya yang dipisah koma/kata
+# sambung (boleh gabungan keduanya, mis. ", dan ") tanpa perlu kata "pasal" lagi.
+_PASAL_ANCHOR_PATTERN = re.compile(r"(?:pasal|ps\.?)\s*(\d+)", re.IGNORECASE)
+_PASAL_CONNECTOR_PATTERN = re.compile(
+    r"^\s*(?:,\s*(?:dan|atau|serta|&|/)?|(?:dan|atau|serta|&|/))\s*",
+    re.IGNORECASE,
+)
+_NUMBER_PATTERN = re.compile(r"^\d+")
+
+
+def _all_pasal_numbers(text: str) -> list[str]:
+    """Ambil SEMUA nomor pasal yang disebut di teks, termasuk daftar singkat
+    tanpa mengulang kata 'pasal' tiap angka (mis. 'Pasal 5, 8, dan 10')."""
+    numbers: list[str] = []
+    for anchor in _PASAL_ANCHOR_PATTERN.finditer(text):
+        numbers.append(anchor.group(1))
+        pos = anchor.end()
+        while True:
+            conn = _PASAL_CONNECTOR_PATTERN.match(text[pos:])
+            if not conn or conn.end() == 0:
+                break
+            rest = text[pos + conn.end():]
+            num = _NUMBER_PATTERN.match(rest)
+            if not num:
+                break
+            numbers.append(num.group(0))
+            pos += conn.end() + num.end()
+    return numbers
+
+
 class TextRefinerService:
     def __init__(self):
         self.engine = llm
@@ -12,14 +57,28 @@ class TextRefinerService:
     # ── Regex extraction helpers ─────────────────────────────────────────────
 
     @staticmethod
+    def _has_doubt_phrase(text: str) -> bool:
+        """Deteksi kalimat yang menandakan user ragu dengan pasal yang ia sebutkan."""
+        return bool(_DOUBT_PATTERN.search(text))
+
+    @staticmethod
+    def _is_ambiguous_pasal(text: str) -> bool:
+        """True kalau teks menyebut lebih dari satu nomor pasal yang berbeda."""
+        return len(set(_all_pasal_numbers(text))) > 1
+
+    @staticmethod
     def _extract_pasal_number(text: str) -> int | None:
         """
-        Ekstrak nomor pasal pertama yang disebut dalam teks.
-        Cocok: 'Pasal 15', 'pasal 15 ayat (2)', 'ps 15'
+        Ekstrak nomor pasal yang disebut dalam teks — HANYA kalau tepat 1 nomor
+        pasal berbeda yang terdeteksi. Cocok: 'Pasal 15', 'pasal 15 ayat (2)',
+        'ps 15', maupun daftar singkat seperti 'Pasal 5 dan 10'.
+        Kalau 0 atau >1 nomor pasal berbeda terdeteksi (ambigu), kembalikan None
+        supaya tidak diam-diam memaksakan filter ke salah satu yang mungkin salah.
         """
-        m = re.search(r"(?:pasal|ps\.?)\s*(\d+)", text, re.IGNORECASE)
-        if m:
-            return int(m.group(1))
+        numbers = _all_pasal_numbers(text)
+        unique = set(numbers)
+        if len(unique) == 1:
+            return int(numbers[0])
         return None
 
     @staticmethod
@@ -108,6 +167,24 @@ class TextRefinerService:
         
         return False
 
+    def _apply_doubt_bypass(self, raw_text: str, pasal_number, ayat_number):
+        """
+        Kalau raw_text mengandung kalimat ragu, atau menyebut >1 nomor pasal
+        berbeda (ambigu), paksa pasal_number & ayat_number jadi None supaya
+        tidak salah memfilter pencarian. Berlaku terlepas dari sumber
+        ekstraksi (regex atau LLM) — sama seperti perilaku di similarity test
+        tab (streamlit_app/components/knowledgebase_tab.py).
+        """
+        if self._has_doubt_phrase(raw_text):
+            print("[Info] TextRefinerService: Kalimat keraguan terdeteksi — "
+                  "pasal_number/ayat_number di-bypass.")
+            return None, None
+        if self._is_ambiguous_pasal(raw_text):
+            print("[Info] TextRefinerService: >1 nomor pasal berbeda terdeteksi "
+                  "(ambigu) — pasal_number/ayat_number di-bypass.")
+            return None, None
+        return pasal_number, ayat_number
+
     async def repair_legal_text(self, raw_text: str) -> dict:
         if not raw_text or not raw_text.strip():
             return {
@@ -126,6 +203,7 @@ class TextRefinerService:
             pasal_number = self._extract_pasal_number(cleaned)
             ayat_number = self._extract_ayat_number(cleaned)
             huruf = self._extract_huruf(cleaned)
+            pasal_number, ayat_number = self._apply_doubt_bypass(raw_text, pasal_number, ayat_number)
             # search_query = cleaned tanpa noise (tanda tanya, kata tanya, dll)
             search_query = self._clean_query(cleaned)
             print(
@@ -146,6 +224,7 @@ class TextRefinerService:
         # Fallback regex jika LLM gagal
         pasal_fallback = self._extract_pasal_number(raw_text)
         ayat_fallback = self._extract_ayat_number(raw_text)
+        pasal_fallback, ayat_fallback = self._apply_doubt_bypass(raw_text, pasal_fallback, ayat_fallback)
         huruf_fallback = self._extract_huruf(raw_text)
         search_fallback = self._clean_query(raw_text.strip())
 
@@ -207,6 +286,12 @@ class TextRefinerService:
                     response["pasal_number"] = self._extract_pasal_number(response["repaired_text"])
                 if response["ayat_number"] is None:
                     response["ayat_number"] = self._extract_ayat_number(response["repaired_text"])
+                # Override kalau user ragu/ambigu — berlaku juga untuk pasal_number
+                # yang LLM sendiri berhasil isi (bukan cuma hasil fallback regex),
+                # karena LLM tidak diinstruksikan menangani kalimat keraguan user.
+                response["pasal_number"], response["ayat_number"] = self._apply_doubt_bypass(
+                    raw_text, response["pasal_number"], response["ayat_number"]
+                )
                 # Ekstrak huruf dari repaired_text sebagai fallback
                 response.setdefault("huruf", self._extract_huruf(response["repaired_text"]))
                 response["is_passthrough"] = False

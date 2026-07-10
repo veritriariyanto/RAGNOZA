@@ -167,6 +167,27 @@ class RAGIntegrationService:
                     child_content[:50], parent_content[:50],
                 )
 
+        # ── Persempit ke 1 konteks paling meyakinkan (kecuali exact match) ──
+        # Tanpa exact match, `contexts` bisa berisi >1 chunk yang lolos filter
+        # tapi confidence-nya jomplang jauh (mis. 1 pasal yang benar-benar
+        # relevan + 1 pasal "nebeng" karena kebetulan mirip kosakata/topik).
+        # Yang DIKIRIM KE LLM dipersempit ke 1 paling meyakinkan saja — supaya
+        # analisis hukum tidak tercampur pasal lemah yang cuma kebetulan mirip.
+        # `kb_results` (dipakai untuk source_details di response) TETAP
+        # menyimpan seluruh hasil mentah yang diambil, tidak ikut dipersempit.
+        if not has_exact_match and len(contexts) > 1 and any(c is not None for c in context_confidences):
+            best_idx = max(
+                range(len(contexts)),
+                key=lambda i: context_confidences[i] if context_confidences[i] is not None else -1,
+            )
+            logger.info(
+                "[%s] Persempit %d konteks ke 1 paling meyakinkan (confidence=%.4f) "
+                "— sisanya tidak dikirim ke LLM meski tetap tercatat di source_details.",
+                log_prefix, len(contexts), context_confidences[best_idx] or 0.0,
+            )
+            contexts = [contexts[best_idx]]
+            context_confidences = [context_confidences[best_idx]]
+
         # ── Gate kepercayaan berbasis rerank_score ─────────────────────────
         # Konteks yang lolos filter di atas tapi skor rerank tertingginya masih
         # di bawah ambang dianggap tidak cukup meyakinkan secara topikal untuk

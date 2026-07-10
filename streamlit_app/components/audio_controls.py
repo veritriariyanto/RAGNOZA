@@ -325,6 +325,12 @@ def render_audio_controls():
             label_visibility="collapsed",
             help="Masukkan teks pertanyaan atau deskripsi kasus hukum untuk dianalisis.",
         )
+        st.caption(
+            "💡 Tip: kalau ragu dengan nomor pasal yang Anda sebutkan, sertakan kata "
+            "seperti *'ragu'*, *'kurang yakin'*, *'tidak yakin'*, atau *'lupa pasal'*, "
+            "atau sebutkan lebih dari satu pasal sekaligus (mis. *'Pasal 5 dan 10'*) — "
+            "sistem akan otomatis melewati filter pasal dan fokus ke similarity semantik."
+        )
 
         # Update session state jika teks berubah
         if text_content != saved_text:
@@ -480,6 +486,12 @@ def _handle_transcription_success(transcription: str, knowledge_base: str):
         value=transcription,
         height=150,
         key="transcription_preview",
+    )
+    st.caption(
+        "💡 Tip: kalau ragu dengan nomor pasal yang disebut di transkripsi, tambahkan "
+        "kata seperti *'ragu'*/*'kurang yakin'*, atau sebutkan lebih dari satu pasal "
+        "sekaligus — sistem akan otomatis melewati filter pasal dan fokus ke similarity "
+        "semantik."
     )
 
     # Update session state with edited text

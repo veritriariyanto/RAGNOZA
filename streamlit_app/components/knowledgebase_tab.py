@@ -301,9 +301,33 @@ def _extract_pasal_from_query(query: str):
     pipeline integrasi (yang otomatis ekstrak pasal_number lewat
     repair_legal_text) alih-alih murni semantic search yang bisa kalah saing
     dari pasal lain untuk query panjang/multi-topik.
+
+    Return (pasal_number, all_matches):
+      - Tepat 1 nomor pasal terdeteksi -> pasal_number diisi, dipakai sebagai filter.
+      - 0 atau >1 nomor pasal terdeteksi -> pasal_number None (ragu/ambigu — mis.
+        query menyebut beberapa pasal sekaligus). TIDAK dipaksakan jadi filter
+        supaya tidak diam-diam salah pilih salah satunya; tetap fokus ke
+        similarity semantik murni. all_matches tetap dikembalikan untuk
+        keperluan pesan info di UI.
     """
-    match = re.search(r"pasal\s+(\d+)", query, re.IGNORECASE)
-    return match.group(1) if match else None
+    matches = re.findall(r"pasal\s+(\d+)", query, re.IGNORECASE)
+    pasal_number = matches[0] if len(matches) == 1 else None
+    return pasal_number, matches
+
+
+# Pola "kalimat ajaib" — kalau muncul di query, anggap user sendiri ragu dengan
+# nomor pasal yang ia sebutkan, jadi filter pasal otomatis TIDAK dipaksakan
+# meski cuma 1 nomor pasal yang terdeteksi.
+_DOUBT_PATTERN = re.compile(
+    r"\b(ragu|kurang\s*yakin|tidak\s*yakin|ga\s*yakin|nggak\s*yakin|gak\s*yakin|"
+    r"mungkin\s*salah|entah\s*pasal|lupa\s*pasal|tidak\s*ingat\s*pasal)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_doubt_phrase(query: str) -> bool:
+    """Deteksi kalimat ajaib yang menandakan user ragu dengan pasal yang ia sebutkan."""
+    return bool(_DOUBT_PATTERN.search(query))
 
 
 def _esc(text: str) -> str:
@@ -874,6 +898,13 @@ def _tab_similarity_test():
         limit = st.number_input("Limit Hasil", min_value=1, max_value=20, value=5, step=1, key="kb_sim_limit")
 
     query = st.text_input("Query Pencarian (Pertanyaan / Topik)", placeholder="Contoh: Apa kewenangan kepolisian?", key="kb_sim_query")
+    st.caption(
+        "💡 Tip: kalau ragu dengan nomor pasal yang Anda sebutkan, sertakan kata "
+        "seperti *'ragu'*, *'kurang yakin'*, *'tidak yakin'*, atau *'lupa pasal'* "
+        "di query — filter pasal otomatis akan dilewati, hasil murni berdasarkan "
+        "similarity semantik. Atau centang **'Saya ragu dengan nomor pasal ini'** "
+        "di Filter Tambahan di bawah."
+    )
 
     # Filter Opsional (Expander)
     with st.expander("Filter Tambahan (Opsional)"):
@@ -897,6 +928,14 @@ def _tab_similarity_test():
             key="kb_sim_threshold",
             help="Turunkan nilai ini jika tidak ada hasil. Model MiniLM-L6 umumnya menghasilkan skor 0.1–0.5 untuk teks Bahasa Indonesia."
         )
+        st.markdown("---")
+        doubt_pasal = st.checkbox(
+            "🤔 Saya ragu dengan nomor pasal ini",
+            key="kb_sim_doubt_pasal",
+            help="Centang untuk melewati filter pasal sama sekali (baik dari input manual "
+                 "maupun auto-detect) — hasil murni berdasarkan similarity semantik. Berguna "
+                 "kalau Anda tidak yakin nomor pasal yang disebutkan di query itu benar.",
+        )
 
     # Tombol Cari
     if st.button("🔍 Jalankan Pencarian", use_container_width=True, key="kb_sim_search_btn"):
@@ -904,16 +943,48 @@ def _tab_similarity_test():
             st.warning("⚠️ Masukkan query pencarian terlebih dahulu!")
             return
 
-        # Kalau "Filter Pasal" tidak diisi manual, deteksi otomatis dari teks query —
-        # tanpa ini, hasil similarity test bisa berbeda dari pipeline integrasi (yang
-        # otomatis mengekstrak nomor pasal lewat repair_legal_text), karena tanpa
-        # filter pasal, exact-match boost & retry di QdrantService tidak pernah aktif.
-        effective_pasal = pasal_type.strip() if pasal_type.strip() else _extract_pasal_from_query(query)
-        if not pasal_type.strip() and effective_pasal:
+        # Prioritas penentuan filter pasal:
+        #   1. Checkbox "Saya ragu dengan nomor pasal ini" dicentang -> bypass total,
+        #      apa pun isi field manual atau hasil auto-detect (aksi eksplisit user).
+        #   2. "Filter Pasal" diisi manual -> dipakai apa adanya (override eksplisit).
+        #   3. Kalimat ajaib ("ragu", "kurang yakin", dst) terdeteksi di teks query ->
+        #      bypass juga, sinyal lebih implisit jadi hanya berlaku kalau field
+        #      manual kosong (tidak menimpa override eksplisit di langkah 2).
+        #   4. Auto-detect regex dari teks query (tepat 1 nomor -> filter; 0/>1 -> ragu).
+        if doubt_pasal:
+            effective_pasal = None
             st.caption(
-                f"🔎 Pasal terdeteksi otomatis dari query: **Pasal {effective_pasal}** "
-                f"— isi 'Filter Pasal' di atas untuk override manual."
+                "🤔 Anda menandai ragu dengan nomor pasal — filter pasal dilewati, "
+                "hasil murni berdasarkan similarity semantik."
             )
+        elif pasal_type.strip():
+            effective_pasal = pasal_type.strip()
+        elif _has_doubt_phrase(query):
+            effective_pasal = None
+            st.caption(
+                "🤔 Terdeteksi kalimat keraguan di query — filter pasal otomatis "
+                "dilewati, hasil murni berdasarkan similarity semantik."
+            )
+        else:
+            detected_pasal, detected_all = _extract_pasal_from_query(query)
+            effective_pasal = detected_pasal
+            if detected_pasal:
+                st.caption(
+                    f"🔎 Pasal terdeteksi otomatis dari query: **Pasal {detected_pasal}** "
+                    f"— isi 'Filter Pasal' di atas untuk override manual."
+                )
+            elif len(detected_all) > 1:
+                # Ragu/ambigu — query menyebut lebih dari satu nomor pasal. Jangan
+                # paksakan filter ke salah satunya (bisa diam-diam salah pilih),
+                # tetap fokus ke similarity semantik murni tanpa filter pasal.
+                unique_pasal = sorted(set(detected_all), key=int)
+                st.caption(
+                    f"🤔 Terdeteksi beberapa nomor pasal di query (Pasal "
+                    f"{', '.join(unique_pasal)}) — filter otomatis **tidak** "
+                    f"diterapkan karena ambigu, hasil murni berdasarkan similarity "
+                    f"semantik. Isi 'Filter Pasal' di atas kalau ingin fokus ke "
+                    f"satu pasal tertentu."
+                )
 
         with st.spinner("Mencari chunk paling relevan di Qdrant..."):
             res = search_similarity(

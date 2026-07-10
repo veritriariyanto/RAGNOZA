@@ -393,17 +393,20 @@ class QdrantService:
             child_ayat = child.get("ayat")
             
             # Boost jika pasal match dengan yang disebut user
+            # PERBAIKAN: clamp ke 1.0 — tanpa ini, score cosine similarity (yang
+            # normalnya maks 1.0) bisa melebihi 1.0 kalau skor mentah sudah tinggi
+            # sebelum di-boost, terlihat seperti "salah hitung" di UI similarity test.
             if pasal_user is not None and child_pasal == pasal_user:
-                r["score"] = round(r["score"] + 0.5, 4)
+                r["score"] = round(min(r["score"] + 0.5, 1.0), 4)
                 r["is_exact_pasal_match"] = True
                 logger.debug(
                     "[HYBRID] Boost pasal=%d → score=%.4f",
                     child_pasal, r["score"],
                 )
-            
+
             # Boost jika ayat match dengan yang disebut user (dan pasal juga match)
             if ayat_user is not None and child_ayat == ayat_user and child_pasal == pasal_user:
-                r["score"] = round(r["score"] + 0.3, 4)
+                r["score"] = round(min(r["score"] + 0.3, 1.0), 4)
                 r["is_exact_ayat_match"] = True
                 logger.debug(
                     "[HYBRID] Boost ayat=%d pasal=%d → score=%.4f",
