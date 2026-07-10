@@ -235,7 +235,7 @@ class TextRefinerService:
             "2. Hapus total karakter pengganggu cetak atau noise seperti 'SK No XXXXX', '--- PAGE X ---'.\n"
             "3. Pertahankan struktur kalimat asli pasal. JANGAN mengubah esensi, makna, nomor pasal, atau nomor ayat.\n"
             "4. Ekstrak 'search_query': 1 kalimat singkat, padat, & spesifik yang MENCANTUMKAN NOMOR PASAL, AYAT, dan HURUF jika disebutkan dalam teks. "
-            "Contoh: jika teks menyebut 'Pasal 15 ayat (2) huruf f', search_query harus mengandung 'Pasal 15 ayat 2 huruf f'.\n"
+            "Contoh: jika teks menyebut 'Pasal 15 ayat (2) huruf f', search_query harus mengandung 'Pasal 15 ayat (2) huruf f'.\n"
             "5. Ekstrak 'pasal_number': nomor pasal yang disebut dalam teks (integer), atau null jika tidak ada.\n"
             "6. Ekstrak 'ayat_number': nomor ayat yang disebut (integer), atau null jika tidak ada.\n\n"
             "PENTING: Input yang kamu terima SELALU berupa fragmen teks dokumen hukum, bukan pertanyaan. "
@@ -271,12 +271,9 @@ class TextRefinerService:
                     print(f"[Warning] TextRefinerService: repaired_text terdeteksi terlalu panjang (kemungkinan hallusinasi). Fallback ke teks asli.")
                     response["repaired_text"] = raw_text.strip()
 
-                # Bersihkan search_query hasil LLM (yang sudah mencantumkan pasal/ayat/huruf
-                # sesuai instruksi prompt) dari noise. Fallback ke repaired_text hanya jika
-                # LLM tidak mengisi search_query sama sekali.
-                llm_search_query = response.get("search_query") or ""
-                source_for_query = llm_search_query.strip() or response["repaired_text"]
-                response["search_query"] = self._clean_query(source_for_query)
+                # Bersihkan search_query dengan langsung mengambil dari repaired_text
+                # agar format tanda kurung dst tetap terjaga identik.
+                response["search_query"] = self._clean_query(response["repaired_text"])
 
                 response.setdefault("pasal_number", None)
                 response.setdefault("ayat_number", None)

@@ -406,7 +406,7 @@ class RAGIntegrationService:
             ragas_result = None
             if auto_evaluate and combined_context and final_material:
                 ragas_result = await trigger_auto_evaluation(
-                    question=search_query,
+                    question=repaired_text,
                     context=combined_context,
                     material=final_material,
                     ground_truth=None,
@@ -549,7 +549,7 @@ class RAGIntegrationService:
 
             if auto_evaluate and combined_context and final_material and not is_system_error_result:
                 ragas_result = await trigger_auto_evaluation(
-                    question=search_query,
+                    question=repaired_text,
                     context=combined_context,
                     material=final_material,
                     ground_truth=ground_truth,     # ← diubah dari None hardcoded menjadi parameter
