@@ -27,9 +27,9 @@ from app.database.models.evaluation_dataset import (
 )
 from app.services.evaluation.evaluation_hook import trigger_auto_evaluation
 from app.services.prompting.integration.rag_integration_service import RAGIntegrationService
+from app.services.prompting.prompt.generate_content_service import SYSTEM_ERROR_FALLBACK_MESSAGE
 
 logger = logging.getLogger(__name__)
-
 
 async def run_dataset_evaluation(
     db: Session,
@@ -126,11 +126,10 @@ async def run_single_item(
     # 1. Eksekusi pipeline + eval "live" (reuse penuh, tidak ada logic baru)
     rag_result = await rag_service.process_text_to_material(
         raw_text=item.question,
-        knowledge_base=item.knowledge_base,   # ← BARU: tidak lagi default "uud_1945"
+        knowledge_base=item.knowledge_base,
         auto_evaluate=True,
         ground_truth=item.ground_truth,
-        is_dataset_eval=True,   # ← tambahan baru
-
+        is_dataset_eval=True,
     )
 
     process_id = rag_result.history_id
@@ -142,17 +141,17 @@ async def run_single_item(
             f"(kemungkinan tidak ada context relevan ditemukan di KB)"
         )
 
-    # GUARD BARU: cegah error infra (rate limit/timeout Groq) tercatat sebagai
-    # jawaban valid yang lalu dievaluasi RAGAS. ERROR_SISTEM ≠ kegagalan retrieval —
-    # ini murni kegagalan teknis generate, harus dianggap item gagal, bukan dinilai.
-    # KONTEKS_TIDAK_CUKUP TIDAK di-exclude di sini karena itu sinyal retrieval yang
-    # valid untuk tetap dievaluasi (precision/recall rendah = temuan RAG yang jujur).
-    if final_material.risk_review.status == "ERROR_SISTEM":
+    # ▼▼▼ BLOK PENGGANTI ADA DI SINI ▼▼▼
+    is_system_error = bool(
+        final_material.ringkasan
+        and final_material.ringkasan[0].poin == SYSTEM_ERROR_FALLBACK_MESSAGE
+    )
+    if is_system_error:
         raise RuntimeError(
-            f"Generate gagal (ERROR_SISTEM) untuk item_id={item.id} — "
-            f"dilewati dari evaluasi RAGAS, bukan kegagalan retrieval. "
-            f"Detail: {final_material.risk_review.analysis[:200]}"
+            f"Generate gagal (SYSTEM_ERROR) untuk item_id={item.id} — "
+            f"dilewati dari evaluasi RAGAS, bukan kegagalan retrieval."
         )
+    # ▲▲▲ BLOK PENGGANTI SAMPAI SINI ▲▲▲
 
     # 2. Eval kedua: context dikunci manual dari kurasi soal (reproducible benchmark)
     reference_chunks = [

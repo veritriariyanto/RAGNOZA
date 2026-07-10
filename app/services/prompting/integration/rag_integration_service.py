@@ -1,13 +1,4 @@
-"""
-rag_integration_service.py  (updated)
-
-Perubahan dari versi lama:
-- Evaluasi RAGAS dipindah ke BackgroundTask → tidak blocking response user
-- Menggunakan EvaluationService (bukan RagasService mentah) → hasil lebih konsisten
-- Menggunakan auto_evaluation_hook → ground truth otomatis dari context
-- Hasil evaluasi di-log dengan format terstruktur (tidak hanya print)
-- BackgroundTasks diteruskan dari router agar FastAPI bisa manage lifecycle-nya
-"""
+#app/services/prompting/integration/rag_integration_service.py
 
 import logging
 from typing import Optional
@@ -17,7 +8,10 @@ from fastapi import BackgroundTasks
 from app.services.prompting.audio.stt_service import STTService
 from app.services.prompting.prompt.repair_text import TextRefinerService
 from app.services.knowlagebase.qdrant_service import QdrantService
-from app.services.prompting.prompt.generate_content_service import MaterialGeneratorService
+from app.services.prompting.prompt.generate_content_service import (
+    MaterialGeneratorService,
+    SYSTEM_ERROR_FALLBACK_MESSAGE,   # ← tambahan
+)
 from app.schemas.prompting.generate_content import MaterialRequest
 from app.schemas.prompting.integration import RAGIntegrationResponse
 
@@ -99,7 +93,7 @@ class RAGIntegrationService:
                 query=search_query,
                 pasal_type=pasal_filter,
                 ayat_type=ayat_filter,
-                limit=3,
+                limit=2,  # PERBAIKAN: turunkan dari 3 ke 2 agar token tidak overflow
             )
 
             # ── Cek apakah pasal yang disebut user tidak ditemukan di KB ──
@@ -119,16 +113,53 @@ class RAGIntegrationService:
                 logger.debug("[RAGIntegration] Qdrant sample parent keys: %s", list(
                     first.get("parent", {}).keys()))
 
-            # ── Tahap 4: Ekstraksi Konteks ─────────────────────────────────────────
+            # ── Tahap 4: Ekstraksi & Filter Konteks ──────────────────────────────
+            # Deduplikasi: hindari parent content yang sama muncul berkali-kali
+            seen_parents = set()
             contexts = []
+            
+            # Filter: eksklusi pasal internal (tugas/wewenang lembaga) yang tidak
+            # relevan untuk analisis kepatuhan warga sipil. Sesuaikan untuk setiap UU.
+            PASAL_INTERNAL = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30}
+            # Catatan: Pasal 20 mengatur komposisi keanggotaan Polri, bukan sanksi disiplin.
+            # Pasal 16-17 mengatur wewenang pidana Polri (penangkapan, penyitaan).
+
             for res in kb_results.get("results", []):
+                # Cek apakah hasil ini exact match dengan pasal user
+                is_exact = res.get("is_exact_pasal_match", False) or \
+                           res.get("is_exact_ayat_match", False)
+                
+                # Ambil nomor pasal — fallback ke pasal_rujukan (chunk Penjelasan)
+                # lalu ke parent jika child tidak punya metadata pasal sama sekali
+                child_pasal = res.get("child", {}).get("pasal")
+                if child_pasal is None:
+                    child_pasal = res.get("child", {}).get("pasal_rujukan")
+                if child_pasal is None:
+                    child_pasal = res.get("parent", {}).get("pasal")
+                if child_pasal is None:
+                    child_pasal = res.get("parent", {}).get("pasal_rujukan")
+                
+                # Skip pasal internal (kecuali itu exact match dengan yang disebut user)
+                if child_pasal in PASAL_INTERNAL and not is_exact:
+                    logger.debug(
+                        "[RAGIntegration] Skip pasal internal %d (skor=%.3f)",
+                        child_pasal, res.get("score", 0),
+                    )
+                    continue
+
+                # Deduplikasi: skip jika parent_id sudah pernah diproses
+                parent_id = res.get("child", {}).get("parent_id", "")
+                if parent_id and parent_id in seen_parents:
+                    logger.debug(
+                        "[RAGIntegration] Skip duplikat parent_id=%s",
+                        parent_id,
+                    )
+                    continue
+                if parent_id:
+                    seen_parents.add(parent_id)
+
                 # Prioritas pengambilan konten — dari yang paling lengkap
-                # 1. parent.content (full pasal/section)
-                # 2. child.content (chunk dengan prefix lengkap)
-                # 3. child.raw_text (teks mentah tanpa prefix)
-
                 content = None
-
                 parent_content = res.get("parent", {}).get("content", "")
                 child_content = res.get("child", {}).get("content", "")
                 child_raw = res.get("child", {}).get("raw_text", "")
@@ -143,7 +174,6 @@ class RAGIntegrationService:
                 if content:
                     contexts.append(content)
                 else:
-                    # Log supaya kita tahu data mana yang kosong
                     logger.warning(
                         "[RAGIntegration] Hasil Qdrant diabaikan — semua field terlalu pendek. "
                         "score=%.3f | child_content=%r | parent_content=%r",
@@ -152,16 +182,18 @@ class RAGIntegrationService:
                         parent_content[:50],
                     )
 
-            combined_context = "\n\n".join(contexts)
+            # ── Batasi panjang konteks per BATAS PASAL, bukan potong string mentah ──
+            # Groq free tier: max 6000 TPM. Total request = system_prompt (~2500 chars)
+            # + format_instructions (~4000 chars) + FAKTA (~250 chars) + KONTEKS.
+            # Maka KONTEKS harus ≤ 1200 chars agar total aman. Pasal yang tidak muat
+            # DI-SKIP UTUH (bukan dipotong setengah kalimat) — pasal pertama (paling
+            # relevan, karena `contexts` sudah terurut sesuai skor) selalu disertakan
+            # penuh meski sendirian sudah melebihi budget.
+            MAX_CONTEXT_CHARS = 1200
 
-            # ── Sisipkan CATATAN SISTEM jika pasal tidak ditemukan ────────────
-            # Ini memberi sinyal eksplisit ke LLM bahwa nomor pasal yang disebut
-            # user tidak ada di KB, sehingga LLM tidak bisa menyimpulkan
-            # "patuh"/aman hanya karena pasal yang disebut tidak ditemukan.
-            # CATATAN: material_payload sudah menambahkan label "KONTEKS HUKUM:\n"
-            # di depan combined_context, jadi tidak perlu diulang di sini.
-            if pasal_not_found and combined_context.strip():
-                combined_context = (
+            catatan_prefix = ""
+            if pasal_not_found and contexts:
+                catatan_prefix = (
                     f"CATATAN SISTEM: Nomor pasal yang disebutkan pengguna "
                     f"(Pasal {pasal_filter}) TIDAK DITEMUKAN di knowledge base. "
                     f"Konteks hukum berikut bersumber dari pasal-pasal LAIN yang "
@@ -174,12 +206,28 @@ class RAGIntegrationService:
                     f"tidak boleh dijadikan dasar kesimpulan pelanggaran warga "
                     f"sipil. Jika tidak ada pasal yang tepat, akui keterbatasan "
                     f"konteks secara jujur.\n\n"
-                    f"{combined_context}"
                 )
 
+            budget = MAX_CONTEXT_CHARS - len(catatan_prefix)
+            selected_contexts: list = []
+            used_chars = 0
+            for ctx in contexts:
+                added_len = len(ctx) + (2 if selected_contexts else 0)  # pemisah "\n\n"
+                if selected_contexts and used_chars + added_len > budget:
+                    logger.warning(
+                        "[RAGIntegration] %d dari %d pasal di-skip (utuh, bukan dipotong) "
+                        "karena melebihi budget konteks (%d chars).",
+                        len(contexts) - len(selected_contexts), len(contexts), MAX_CONTEXT_CHARS,
+                    )
+                    break
+                selected_contexts.append(ctx)
+                used_chars += added_len
+
+            combined_context = catatan_prefix + "\n\n".join(selected_contexts)
+
             logger.info(
-                "[RAGIntegration] Context terkumpul: %d chunk, total %d chars",
-                len(contexts), len(combined_context)
+                "[RAGIntegration] Context terkumpul: %d/%d chunk, total %d chars",
+                len(selected_contexts), len(contexts), len(combined_context)
             )
 
             # Debug sementara
@@ -338,7 +386,7 @@ class RAGIntegrationService:
                 query=search_query,
                 pasal_type=pasal_filter,
                 ayat_type=ayat_filter,
-                limit=3,
+                limit=2,  # PERBAIKAN: turunkan dari 3 ke 2 agar token tidak overflow
             )
 
             # ── Cek apakah pasal yang disebut user tidak ditemukan di KB ──
@@ -350,9 +398,49 @@ class RAGIntegrationService:
                     pasal_filter, knowledge_base,
                 )
 
-            # ── Tahap 3: Ekstraksi Konteks ────────────────────────────────────
+            # ── Tahap 3: Ekstraksi & Filter Konteks ────────────────────────────
+            seen_parents = set()
             contexts = []
+            
+            # Filter: eksklusi pasal internal (sama seperti di audio pipeline)
+            PASAL_INTERNAL = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30}
+            # Catatan: Pasal 20 mengatur komposisi keanggotaan Polri, bukan sanksi disiplin.
+            # Pasal 16-17 mengatur wewenang pidana Polri (penangkapan, penyitaan).
+
             for res in kb_results.get("results", []):
+                # Cek apakah hasil ini exact match dengan pasal user
+                is_exact = res.get("is_exact_pasal_match", False) or \
+                           res.get("is_exact_ayat_match", False)
+                
+                # Ambil nomor pasal — fallback ke pasal_rujukan (chunk Penjelasan)
+                # lalu ke parent jika child tidak punya metadata pasal sama sekali
+                child_pasal = res.get("child", {}).get("pasal")
+                if child_pasal is None:
+                    child_pasal = res.get("child", {}).get("pasal_rujukan")
+                if child_pasal is None:
+                    child_pasal = res.get("parent", {}).get("pasal")
+                if child_pasal is None:
+                    child_pasal = res.get("parent", {}).get("pasal_rujukan")
+                
+                # Skip pasal internal (kecuali exact match)
+                if child_pasal in PASAL_INTERNAL and not is_exact:
+                    logger.debug(
+                        "[TextPipeline] Skip pasal internal %d (skor=%.3f)",
+                        child_pasal, res.get("score", 0),
+                    )
+                    continue
+
+                # Deduplikasi parent_id
+                parent_id = res.get("child", {}).get("parent_id", "")
+                if parent_id and parent_id in seen_parents:
+                    logger.debug(
+                        "[TextPipeline] Skip duplikat parent_id=%s",
+                        parent_id,
+                    )
+                    continue
+                if parent_id:
+                    seen_parents.add(parent_id)
+
                 content = None
                 parent_content = res.get("parent", {}).get("content", "")
                 child_content = res.get("child", {}).get("content", "")
@@ -376,13 +464,15 @@ class RAGIntegrationService:
                         parent_content[:50],
                     )
 
-            combined_context = "\n\n".join(contexts)
+            # ── Batasi panjang konteks per BATAS PASAL, bukan potong string mentah ──
+            # Pasal yang tidak muat DI-SKIP UTUH (bukan dipotong setengah kalimat) —
+            # pasal pertama (paling relevan) selalu disertakan penuh meski sendirian
+            # sudah melebihi budget.
+            MAX_CONTEXT_CHARS = 1200
 
-            # ── Sisipkan CATATAN SISTEM jika pasal tidak ditemukan ────────────
-            # CATATAN: material_payload sudah menambahkan label "KONTEKS HUKUM:\n"
-            # di depan combined_context, jadi tidak perlu diulang di sini.
-            if pasal_not_found and combined_context.strip():
-                combined_context = (
+            catatan_prefix = ""
+            if pasal_not_found and contexts:
+                catatan_prefix = (
                     f"CATATAN SISTEM: Nomor pasal yang disebutkan pengguna "
                     f"(Pasal {pasal_filter}) TIDAK DITEMUKAN di knowledge base. "
                     f"Konteks hukum berikut bersumber dari pasal-pasal LAIN yang "
@@ -395,12 +485,28 @@ class RAGIntegrationService:
                     f"tidak boleh dijadikan dasar kesimpulan pelanggaran warga "
                     f"sipil. Jika tidak ada pasal yang tepat, akui keterbatasan "
                     f"konteks secara jujur.\n\n"
-                    f"{combined_context}"
                 )
 
+            budget = MAX_CONTEXT_CHARS - len(catatan_prefix)
+            selected_contexts: list = []
+            used_chars = 0
+            for ctx in contexts:
+                added_len = len(ctx) + (2 if selected_contexts else 0)  # pemisah "\n\n"
+                if selected_contexts and used_chars + added_len > budget:
+                    logger.warning(
+                        "[TextPipeline] %d dari %d pasal di-skip (utuh, bukan dipotong) "
+                        "karena melebihi budget konteks (%d chars).",
+                        len(contexts) - len(selected_contexts), len(contexts), MAX_CONTEXT_CHARS,
+                    )
+                    break
+                selected_contexts.append(ctx)
+                used_chars += added_len
+
+            combined_context = catatan_prefix + "\n\n".join(selected_contexts)
+
             logger.info(
-                "[TextPipeline] Context terkumpul: %d chunk, total %d chars",
-                len(contexts), len(combined_context)
+                "[TextPipeline] Context terkumpul: %d/%d chunk, total %d chars",
+                len(selected_contexts), len(contexts), len(combined_context)
             )
 
             # ── Tahap 4: Generate Material ────────────────────────────────────
@@ -458,7 +564,25 @@ class RAGIntegrationService:
 
             # ── Tahap 6 (DIPINDAH KE SINI — FIX BUG KRITIS): Evaluasi RAGAS 
             ragas_result = None
-            if auto_evaluate and combined_context and final_material:
+
+            # FIX (dataset_eval_live cemar fallback): saat is_dataset_eval=True,
+            # generate_legal_material bisa gagal total (semua attempt LLM gagal)
+            # dan mengembalikan MaterialResponse fallback berisi
+            # SYSTEM_ERROR_FALLBACK_MESSAGE di ringkasan[0].poin. Tanpa guard ini,
+            # trigger_auto_evaluation tetap terpanggil untuk source_label
+            # "dataset_eval_live" SEBELUM dataset_runner_service.py sempat
+            # mendeteksi & skip item ini — mencemari agregat skor dataset eval
+            # dengan skor atas teks error, bukan jawaban hukum riil.
+            # Scope sengaja dibatasi ke is_dataset_eval=True saja agar jalur
+            # produksi (text_pipeline/rag_pipeline) tidak berubah perilakunya.
+            is_system_error_result = bool(
+                is_dataset_eval
+                and final_material
+                and final_material.ringkasan
+                and final_material.ringkasan[0].poin == SYSTEM_ERROR_FALLBACK_MESSAGE
+            )
+
+            if auto_evaluate and combined_context and final_material and not is_system_error_result:
                 ragas_result = await trigger_auto_evaluation(
                     question=search_query,
                     context=combined_context,
@@ -467,6 +591,12 @@ class RAGIntegrationService:
                     source_label="dataset_eval_live" if is_dataset_eval else "text_pipeline",                    
                     history_id=history_id,
                     context_chunks=contexts,
+                )
+            elif is_system_error_result:
+                logger.warning(
+                    "[TextPipeline] SYSTEM_ERROR terdeteksi pada is_dataset_eval=True — "
+                    "trigger_auto_evaluation (dataset_eval_live) dilewati agar tidak "
+                    "mencemari skor RAGAS."
                 )
 
             # ── Return Response ────────────────────────────────────────────────

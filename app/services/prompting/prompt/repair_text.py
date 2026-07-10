@@ -45,30 +45,33 @@ class TextRefinerService:
         return None
 
     @staticmethod
-    def _build_search_query(text: str) -> str:
+    def _clean_query(text: str, max_chars: int = 300) -> str:
         """
-        Bangun search_query yang bersih dan spesifik untuk semantic search.
-        Strategi:
-        1. Ambil fragment yang mengandung pasal/ayat — itu yang paling relevan untuk search.
-        2. Jika ada pasal+ayat: "Pasal {N} ayat {M} [tentang ...kata sekitar...]"
-        3. Jika hanya pasal: "Pasal {N} [tentang ...kata sekitar...]"
-        4. Fallback: 150 karakter pertama yang bersih.
+        Bersihkan teks untuk dijadikan search_query.
+        - Hapus tanda tanya di akhir kalimat
+        - Hapus kata tanya di awal kalimat (apa, bagaimana, dll)
+        - Normalisasi whitespace
+        - Potong ke max_chars karakter
         """
-        lower = text.lower()
-
-        # Coba ekstrak kalimat/frasa yang mengandung "pasal"
-        pasal_match = re.search(r"[^.]*pasal\s*\d+[^.]*\.?", text, re.IGNORECASE)
-        if pasal_match:
-            candidate = pasal_match.group(0).strip()
-            # Bersihkan noise question words di awal
-            question_words = r"^(apa|apakah|bagaimana|siapa|kapan|mengapa|kenapa|dimana|berapa|jelaskan|sebutkan|tolong|mohon|cari|temukan|bandingkan|analisis|ringkas)\s+"
-            candidate = re.sub(question_words, "", candidate, flags=re.IGNORECASE).strip()
-            if len(candidate) > 10:
-                return candidate[:300]
-
-        # Fallback: ambil 150 karakter pertama bersih
-        cleaned = re.sub(r"\s+", " ", text).strip()
-        return cleaned[:200]
+        cleaned = text.strip()
+        
+        # Hapus tanda tanya di akhir
+        cleaned = re.sub(r"\?+$", "", cleaned)
+        
+        # Hapus kata tanya di awal kalimat
+        cleaned = re.sub(
+            r"^(apa|apakah|bagaimana|siapa|kapan|mengapa|kenapa|dimana|di mana|berapa|jelaskan|sebutkan|tolong|mohon|cari|temukan|bandingkan|analisis|ringkas)\s+",
+            "", cleaned, flags=re.IGNORECASE
+        ).strip()
+        
+        # Normalisasi whitespace
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        
+        # Potong jika terlalu panjang
+        if len(cleaned) > max_chars:
+            cleaned = cleaned[:max_chars].rsplit(" ", 1)[0]
+        
+        return cleaned
 
     def _is_question_input(self, text: str) -> bool:
         """Deteksi apakah input adalah pertanyaan/query, bukan fragmen dokumen hukum."""
@@ -80,10 +83,11 @@ class TextRefinerService:
         
         # Cek kata tanya di awal kalimat
         question_starters = (
-            "apa", "apakah", "bagaimana", "siapa", "kapan", 
+            "apa", "apakah", "bagaimana", "siapa", "kapan",
             "mengapa", "kenapa", "dimana", "di mana", "berapa",
             "jelaskan", "sebutkan", "tolong", "mohon", "cari",
-            "temukan", "bandingkan", "analisis", "ringkas"
+            "temukan", "bandingkan", "analisis", "analisa", "ringkas",
+            "saya ingin", "saya mau", "coba", "bisa", "boleh", "minta",
         )
         lower = cleaned.lower()
         if any(lower.startswith(starter) for starter in question_starters):
@@ -111,35 +115,39 @@ class TextRefinerService:
                 "search_query": "",
                 "pasal_number": None,
                 "ayat_number": None,
+                "huruf": None,
                 "is_passthrough": False,
             }
 
         # Guard: jika input adalah pertanyaan/query, skip LLM repair
         if self._is_question_input(raw_text):
             cleaned = raw_text.strip()
-            # PERBAIKAN: Ekstrak pasal/ayat/huruf via regex agar search_query tetap
-            # relevan meski tanpa LLM repair.
+            # Ekstrak pasal/ayat/huruf via regex agar tetap relevan meski tanpa LLM
             pasal_number = self._extract_pasal_number(cleaned)
             ayat_number = self._extract_ayat_number(cleaned)
-            search_query = self._build_search_query(cleaned)
+            huruf = self._extract_huruf(cleaned)
+            # search_query = cleaned tanpa noise (tanda tanya, kata tanya, dll)
+            search_query = self._clean_query(cleaned)
             print(
                 f"[Info] TextRefinerService: Input terdeteksi sebagai pertanyaan/query, "
                 f"di-passthrough tanpa repair. "
-                f"search_query='{search_query[:80]}...' pasal={pasal_number} ayat={ayat_number}"
+                f"search_query='{search_query[:80]}...' pasal={pasal_number} ayat={ayat_number} huruf={huruf}"
             )
             return {
                 "repaired_text": cleaned,
                 "search_query": search_query,
                 "pasal_number": pasal_number,
                 "ayat_number": ayat_number,
+                "huruf": huruf,
                 "is_passthrough": True,
             }
 
         # ── Non-passthrough: jalankan LLM repair ─────────────────────────────
-        # PERBAIKAN: Gunakan regex sebagai fallback untuk pasal/ayat jika LLM gagal
+        # Fallback regex jika LLM gagal
         pasal_fallback = self._extract_pasal_number(raw_text)
         ayat_fallback = self._extract_ayat_number(raw_text)
-        search_fallback = self._build_search_query(raw_text)
+        huruf_fallback = self._extract_huruf(raw_text)
+        search_fallback = self._clean_query(raw_text.strip())
 
         system_prompt = (
             "Anda adalah editor naskah hukum dan analis teks spesialis peraturan perundang-undangan Indonesia. "
@@ -184,8 +192,23 @@ class TextRefinerService:
                     print(f"[Warning] TextRefinerService: repaired_text terdeteksi terlalu panjang (kemungkinan hallusinasi). Fallback ke teks asli.")
                     response["repaired_text"] = raw_text.strip()
 
+                # Bersihkan search_query hasil LLM (yang sudah mencantumkan pasal/ayat/huruf
+                # sesuai instruksi prompt) dari noise. Fallback ke repaired_text hanya jika
+                # LLM tidak mengisi search_query sama sekali.
+                llm_search_query = response.get("search_query") or ""
+                source_for_query = llm_search_query.strip() or response["repaired_text"]
+                response["search_query"] = self._clean_query(source_for_query)
+
                 response.setdefault("pasal_number", None)
                 response.setdefault("ayat_number", None)
+                # Fallback regex kalau LLM gagal/lupa mengisi pasal_number/ayat_number,
+                # padahal nomornya eksplisit ada di teks (mis. "Pasal 39 tentang ...").
+                if response["pasal_number"] is None:
+                    response["pasal_number"] = self._extract_pasal_number(response["repaired_text"])
+                if response["ayat_number"] is None:
+                    response["ayat_number"] = self._extract_ayat_number(response["repaired_text"])
+                # Ekstrak huruf dari repaired_text sebagai fallback
+                response.setdefault("huruf", self._extract_huruf(response["repaired_text"]))
                 response["is_passthrough"] = False
 
                 return response
@@ -208,6 +231,7 @@ class TextRefinerService:
             "search_query": search_fallback,
             "pasal_number": pasal_fallback,
             "ayat_number": ayat_fallback,
+            "huruf": huruf_fallback,
             "is_passthrough": False,
         }
 

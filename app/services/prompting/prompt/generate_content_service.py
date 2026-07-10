@@ -4,190 +4,133 @@ import logging
 import groq
 from app.core.llm_provider import llm
 from app.schemas.prompting.generate_content import MaterialRequest, MaterialResponse
+# pyrefly: ignore [missing-import]
 from langchain_core.messages import SystemMessage, HumanMessage
+# pyrefly: ignore [missing-import]
 from langchain_core.output_parsers import JsonOutputParser
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Intent Classification
-# ---------------------------------------------------------------------------
-
-INTENT_KEYWORDS: dict[str, list[str]] = {
-    "konsultasi": [
-        # Pernyataan tindakan diri sendiri
-        "saya melakukan", "saya ingin", "saya telah", "saya sudah",
-        "saya mendirikan", "saya membuat", "saya menjalankan",
-        "saya berencana", "saya sedang",
-        "kami melakukan", "kami berencana", "kami ingin",
-        "kami mendirikan", "kami membuat",
-        # Frasa risiko hukum personal
-        "tindakan saya", "perbuatan saya", "kegiatan saya",
-        "apakah saya bisa dituntut", "apakah saya bisa dipidana",
-        "apakah saya melanggar", "apakah tindakan saya",
-        "apakah perbuatan saya", "apakah kegiatan saya",
-        "bisakah saya dituntut", "dapatkah saya dipidana",
-        "apakah saya dapat dibubarkan", "apakah saya dapat ditindak",
-        # Frasa implisit konsultasi
-        "tanpa izin", "tanpa mengurus izin", "tidak berizin",
-        "belum memiliki izin", "belum mengurus",
-    ],
-    "informatif": [
-        "apakah", "apa itu", "apa yang dimaksud",
-        "bagaimana", "bagaimana cara", "bagaimana ketentuan",
-        "bolehkah", "bisakah", "dapatkah",
-        "jelaskan", "definisi", "pengertian",
-        "siapa yang", "kapan", "berapa lama",
-    ],
-}
-
-
-def classify_intent(raw_text: str, repaired_text: str = "") -> str:
-    """
-    Mengklasifikasikan intent dari kombinasi raw_text dan repaired_text.
-
-    Strategi:
-    - Prioritaskan raw_text karena masih mengandung frasa orisinal pengguna
-      (belum diparafrase oleh repair step).
-    - Fallback ke repaired_text jika raw_text kosong.
-    - Konsultasi dicek lebih dahulu karena lebih spesifik dan berisiko tinggi.
-
-    Returns:
-        'konsultasi' | 'informatif'
-    """
-    # Gabungkan raw + repaired agar tidak ada sinyal yang terlewat
-    combined = f"{raw_text} {repaired_text}".strip().lower()
-
-    for keyword in INTENT_KEYWORDS["konsultasi"]:
-        if keyword in combined:
-            logger.debug(f"classify_intent: keyword konsultasi ditemukan → '{keyword}'")
-            return "konsultasi"
-
-    return "informatif"
-
+# Ditambahkan: konstanta pesan fallback, agar konsumen (mis. dataset_runner_service.py)
+# bisa mendeteksi jalur "kegagalan sistem" tanpa menambah field baru ke schema.
+SYSTEM_ERROR_FALLBACK_MESSAGE = "Terjadi kegagalan sistem saat memproses permintaan. Silakan coba lagi."
 
 # ---------------------------------------------------------------------------
-# Conditional Output Instructions
+# Output Instructions (UNIFIED — tidak lagi bergantung pada intent)
 # ---------------------------------------------------------------------------
 
-def build_output_instructions(intent: str) -> str:
+def build_output_instructions() -> str:
     """
-    Membangun instruksi output kondisional berdasarkan intent query.
+    Instruksi output tunggal, berlaku untuk SEMUA jenis query —
+    baik user menyebut pasal yang benar, salah, atau tidak menyebut pasal sama sekali.
     """
-    instructions = (
-        "Instruksi Output (ikuti sesuai urutan dan tipe query):\n\n"
-        "1. SUMMARY\n"
-        "   - Awali dengan 1 kalimat yang langsung menjawab pertanyaan/skenario pengguna.\n"
-        "   - Lanjutkan dengan ringkasan konteks hukum pendukung secara presisi.\n"
-        "   - Sertakan poin-poin penting dan kesimpulan singkat.\n\n"
-        "2. CLAUSE SEARCH\n"
-        "   - Petakan pasal/ayat yang PALING RELEVAN dengan pertanyaan pengguna.\n"
-        "   - Teks excerpt WAJIB menyalin verbatim dari konteks — dilarang mengubah "
-        "atau mencampurkan isi antar ayat.\n"
-        "   - VALIDASI PASAL: Jika pengguna menyebut nomor pasal tertentu dalam query:\n"
-        "     a) Verifikasi apakah pasal tersebut ADA dalam konteks yang diberikan.\n"
-        "     b) Jika TIDAK ADA: nyatakan di field 'relevance' bahwa pasal tersebut "
-        "tidak ditemukan, lalu cari dan tampilkan pasal LAIN yang paling relevan "
-        "dengan TINDAKAN yang dideskripsikan pengguna.\n"
-        "     c) Jika pasal ADA namun pengguna menyebut ayat/huruf yang keliru: "
-        "koreksi dan tunjukkan pasal/ayat yang tepat beserta alasannya.\n"
-        "     d) DILARANG mengarang isi pasal yang tidak ada di konteks.\n"
-        "   - CLAUSE HONESTY: Jika tidak ada pasal yang secara spesifik mengatur hal "
-        "yang ditanyakan, pilih pasal terdekat dan nyatakan secara eksplisit di field "
-        "'relevance' bahwa ini merupakan ketentuan umum/terdekat yang tersedia, "
-        "bukan pasal yang secara langsung mengatur.\n"
-        "   - PASAL SALAH ≠ BEBAS RISIKO: Ketidakhadiran nomor pasal yang disebutkan "
-        "pengguna dalam konteks BUKAN berarti tindakan pengguna aman atau patuh. "
-        "Evaluasi TINDAKAN yang dideskripsikan tetap wajib dilakukan berdasarkan "
-        "pasal lain yang relevan dari konteks. Risk Review TIDAK BOLEH bernilai "
-        "'Patuh' atau score tinggi semata karena pasal yang disebutkan tidak ditemukan.\n\n"
-        "3. LEGAL Q&A\n"
-        "   - Jawab HANYA pertanyaan yang secara eksplisit diajukan pengguna.\n"
-        "   - DILARANG mengarang pertanyaan turunan yang tidak diminta.\n"
-        "   - Jumlah Q&A maksimal 1–2 pasang, berbasis konteks.\n\n"
+    return (
+        "Instruksi Output (ikuti urutan berikut, WAJIB lengkap untuk semua field):\n\n"
+
+        "1. DASAR HUKUM (dasar_hukum)\n"
+        "   - Identifikasi Nama Peraturan, Pasal, dan Ayat yang PALING RELEVAN dengan "
+        "pertanyaan/skenario pengguna, berdasarkan konteks yang diberikan.\n"
+        "   - VALIDASI PASAL:\n"
+        "     a) Jika user menyebut nomor pasal tertentu, verifikasi keberadaannya di konteks.\n"
+        "     b) Jika TIDAK ADA di konteks: tetap tampilkan pasal yang PALING RELEVAN dari "
+        "konteks (bukan pasal yang disebut user), dan jelaskan koreksinya secara singkat di "
+        "field 'catatan_validasi' (mis. 'Pasal yang Anda sebutkan tidak ditemukan dalam "
+        "konteks; pasal berikut yang relevan dengan skenario Anda').\n"
+        "     c) Jika pasal ADA namun ayat/huruf yang disebut user keliru, koreksi juga di "
+        "'catatan_validasi'.\n"
+        "     d) Jika user TIDAK menyebut pasal sama sekali, biarkan 'catatan_validasi' = '-'.\n"
+        "     e) DILARANG mengarang nama peraturan/pasal/ayat yang tidak ada di konteks.\n"
+        "   - Boleh mengisi lebih dari satu entri 'dasar_hukum' jika ada beberapa pasal yang "
+        "sama-sama relevan (misal pasal utama + pasal pendukung).\n\n"
+
+        "2. INTI SARI RINGKASAN (ringkasan)\n"
+        "   - Pecah isi pasal/ayat yang kaku menjadi beberapa poin (bullet points) yang mudah "
+        "dipahami orang awam.\n"
+        "   - CAKUPAN WAJIB LENGKAP: buat SATU POIN untuk SETIAP ayat/huruf yang ada pada "
+        "pasal utama yang teridentifikasi di 'dasar_hukum' (jika pasal itu punya 3 ayat, "
+        "'ringkasan' WAJIB berisi 3 poin, satu per ayat) — DILARANG melewatkan ayat manapun "
+        "hanya karena dianggap kurang relevan dengan pertanyaan user. Tugas 'ringkasan' "
+        "adalah menjelaskan SELURUH ISI pasal tersebut, bukan hanya bagian yang menjawab "
+        "pertanyaan.\n"
+        "   - WAJIB tetap mempertahankan istilah/kata kunci hukum ASLI dari teks (jangan "
+        "diterjemahkan bebas sampai kehilangan makna teknis-nya).\n"
+        "   - Setiap poin harus benar-benar didukung oleh konteks, bukan interpretasi bebas.\n\n"
+
+        "3. KONTEKS TAMBAHAN (konteks_tambahan)\n"
+        "   - Jika di dalam konteks ada pasal/ayat LAIN (bukan pasal utama) yang berfungsi "
+        "sebagai penghubung atau memperjelas pertanyaan user, sebutkan secara singkat di sini.\n"
+        "   - Jika tidak ada pasal penghubung yang relevan, isi dengan '-'.\n\n"
+
+        "4. ANALISA RISIKO — CONTOH PENYIMPANGAN (analisa_risiko)\n"
+        "   - CAKUPAN WAJIB LENGKAP: buat SATU contoh SKENARIO NARATIF untuk SETIAP ayat "
+        "pada pasal utama yang teridentifikasi di 'dasar_hukum' (jika pasal itu punya 3 "
+        "ayat, usahakan ada 3 contoh, satu per ayat) — bukan menilai tindakan spesifik "
+        "user, melainkan ilustrasi edukatif umum. Ayat yang memang tidak punya dasar valid "
+        "(lihat CLAUSE RELEVANCE GATE) boleh dilewati SATU ayat itu saja — TIDAK BERARTI "
+        "seluruh 'analisa_risiko' harus dikosongkan.\n"
+        "   - Untuk tiap contoh, jelaskan secara singkat MENGAPA skenario tersebut menyimpang, "
+        "dikaitkan langsung ke ayat/huruf spesifik.\n"
+        "   - TIDAK PERLU skor risiko numerik atau status kepatuhan — cukup naratif.\n"
+        "   - WAJIB KONKRET, DILARANG VAGUE: skenario HARUS menyebutkan secara eksplisit ISI/"
+        "ANGKA/UNSUR/PROSEDUR yang sebenarnya disyaratkan ayat tersebut, DI DALAM kalimat "
+        "skenario itu sendiri — DILARANG hanya menulis 'tidak sesuai ayat (X)' atau "
+        "'menyimpang dari ketentuan ayat (X)' tanpa menjelaskan APA isi ketentuannya. Skenario "
+        "harus bisa dipahami sendiri (self-contained) TANPA perlu membuka teks pasal aslinya.\n"
+        "     PERHATIAN — JANGAN DITIRU MENTAH-MENTAH: contoh di bawah ini HANYA ilustrasi "
+        "FORMAT/GAYA penulisan (kebetulan tentang Pasal 39 Komisi Kepolisian Nasional). Kalau "
+        "pasal yang sedang dianalisis SEKARANG berbeda, DILARANG KERAS menyalin/mengulang "
+        "kalimat contoh ini — WAJIB buat skenario BARU yang isinya diambil dari ayat yang "
+        "benar-benar ada di konteks saat ini.\n"
+        "     Contoh BENAR (pola penulisan, bukan jawaban final): 'Komisi Kepolisian Nasional "
+        "dibentuk hanya dengan 5 orang anggota tanpa Wakil Ketua, padahal ayat (1) "
+        "mensyaratkan susunan lengkap: seorang Ketua, seorang Wakil Ketua, seorang "
+        "Sekretaris, dan 6 anggota (total 9 orang).'\n"
+        "     Contoh SALAH (terlalu vague, JANGAN ditiru): 'Komisi dibentuk dengan susunan "
+        "yang tidak sesuai ayat (1).'\n"
+        "   - DASAR PENYIMPANGAN: setiap contoh WAJIB berupa kondisi di mana ketentuan LITERAL "
+        "ayat tersebut TIDAK terpenuhi/tidak sesuai. DILARANG mengarang kewajiban atau konsep "
+        "yang sama sekali tidak disebut di teks pasal (mis. 'informasi rahasia', 'wewenang "
+        "mengambil keputusan') hanya karena terdengar masuk akal.\n"
+        "   - PIHAK YANG MENYIMPANG menyesuaikan dengan siapa yang sebenarnya diatur ayat "
+        "tersebut: bisa lembaga/institusi itu sendiri (jika ayat mengatur susunan, komposisi, "
+        "pembiayaan, atau tata kerja internal), pejabat yang disebut eksplisit, ATAU warga "
+        "sipil/pihak luar (jika ayat memang mengatur kewajiban/larangan bagi mereka). JANGAN "
+        "memaksa penyimpangan itu ke warga sipil kalau ayat yang sebenarnya mengatur "
+        "lembaga/institusi.\n"
+        "   - CLAUSE RELEVANCE GATE: pastikan pasal yang dipakai memang secara LANGSUNG "
+        "mengatur ketentuan terkait skenario tersebut — jangan paksakan hanya karena ada "
+        "kemiripan kata kunci (mis. sama-sama soal 'izin' atau 'keamanan').\n"
+        "   - Jika TIDAK ADA SATU PUN ayat yang punya dasar cukup relevan untuk membuat "
+        "contoh penyimpangan yang valid dan berdasar, baru kembalikan list kosong ([]) — "
+        "JANGAN memaksakan contoh yang tidak berdasar.\n\n"
+
+        "5. Q&A (qa)\n"
+        "   - CAKUPAN WAJIB LENGKAP: buat MINIMAL satu pasang tanya-jawab untuk SETIAP ayat "
+        "pada pasal utama yang teridentifikasi di 'dasar_hukum' (jika pasal itu punya 3 ayat, "
+        "minimal ada 3 pasang Q&A, satu per ayat) — supaya seluruh ayat tercakup, bukan hanya "
+        "bagian yang paling relevan dengan pertanyaan user. Boleh menambah pasangan lain di "
+        "luar itu jika relevan berdasarkan konteks (tidak dibatasi jumlahnya, tapi jangan "
+        "mengada-ada).\n"
+        "   - Prioritaskan pertanyaan yang secara wajar akan muncul dari pembaca awam terkait "
+        "pasal ini, dan/atau yang menjawab pertanyaan eksplisit dari user.\n"
+        "   - Jawaban harus berbasis konteks, bukan asumsi di luar itu.\n\n"
+
+        "6. KETENTUAN UMUM\n"
+        "   - Untuk semua field yang tidak memiliki data cukup: gunakan [] atau '-'.\n"
+        "   - DILARANG mengarang informasi di luar konteks yang diberikan.\n"
+        "   - Kejujuran lebih penting daripada kelengkapan artifisial: lebih baik mengembalikan "
+        "list kosong / '-' daripada memaksakan korelasi yang tidak sah secara hukum.\n"
     )
-
-    if intent == "konsultasi":
-        instructions += (
-            "4. RISK REVIEW\n"
-            "   - Query bersifat KONSULTASI TINDAKAN — wajib diisi lengkap.\n"
-            "   - Isi dengan:\n"
-            "     • status: ringkasan status risiko (misal: 'BERISIKO TINGGI')\n"
-            "     • score: skor risiko numerik 0–100\n"
-            "     • analysis: analisis risiko hukum atas tindakan yang dideskripsikan "
-            "pengguna, berbasis konteks yang diberikan\n"
-            "     • risks: daftar risiko konkret yang dapat dialami pengguna\n"
-            "     • mitigation_steps: langkah-langkah mitigasi yang dapat diambil\n"
-            "     • recommendation: rekomendasi konkret dan actionable\n"
-            "   - DILARANG mengosongkan Risk Review untuk query konsultasi.\n\n"
-        )
-    else:
-        instructions += (
-            "4. RISK REVIEW\n"
-            "   - Query bersifat INFORMATIF — kosongkan Risk Review sepenuhnya.\n"
-            "   - Isi: status='-', score=0, analysis='-', risks=[], "
-            "mitigation_steps=[], recommendation='-'.\n"
-            "   - DILARANG memberikan skor risiko atas pertanyaan edukatif.\n\n"
-        )
-
-    instructions += (
-        "5. KETENTUAN UMUM\n"
-        "   - Untuk semua blok yang tidak memiliki data cukup: gunakan [] atau '-'.\n"
-        "   - DILARANG mengarang informasi di luar konteks yang diberikan.\n\n"
-
-        "6. CLAUSE RELEVANCE GATE\n"
-        "   Sebelum mengaitkan pasal manapun dengan Risk Review atau Clause Search, "
-        "ajukan pertanyaan: 'Apakah pasal ini secara LANGSUNG mengatur kewajiban/"
-        "larangan yang relevan dengan TINDAKAN yang dideskripsikan pengguna?'\n"
-        "   Jika TIDAK — meskipun pasal itu mengandung kata kunci yang mirip "
-        "(misal sama-sama soal 'keamanan', 'izin', 'pidana') — DILARANG "
-        "menjadikannya dasar kesimpulan pelanggaran atau skor risiko tinggi.\n"
-        "   Pasal yang HANYA mengatur tugas/wewenang internal lembaga (Polri, "
-        "Pemerintah, dll) TIDAK BOLEH dijadikan dasar untuk menyimpulkan bahwa "
-        "TINDAKAN WARGA SIPIL melanggar hukum, kecuali pasal tersebut secara "
-        "eksplisit menyebut kewajiban/larangan bagi pihak di luar lembaga tersebut.\n"
-        "   Jika TIDAK ADA pasal yang relevan secara substansi dalam konteks: "
-        "nyatakan secara jujur bahwa konteks yang tersedia tidak memuat ketentuan "
-        "yang secara langsung mengatur hal ini. Risk Review boleh menyatakan "
-        "'BELUM DAPAT DIPASTIKAN' (bukan dipaksa 'berisiko tinggi' ATAU 'patuh') "
-        "dengan skor netral (~50) serta rekomendasi untuk konsultasi lebih lanjut "
-        "atau menelusuri regulasi turunan (PP/Perkap) yang mungkin lebih spesifik.\n\n"
-
-        "7. OUTPUT HONESTY\n"
-        "   Kejujuran lebih penting daripada 'kelengkapan' artifisial. Lebih baik "
-        "mengakui keterbatasan konteks daripada memaksakan korelasi yang tidak "
-        "sah secara hukum. Output yang salah justru merugikan pengguna.\n"
-    )
-
-    return instructions
 
 
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------
 
-def _is_infra_error(exc: Exception) -> bool:
-    """
-    Bedakan kegagalan infra Groq (timeout, rate-limit, 5xx, connection error)
-    dari kegagalan non-infra (validasi Pydantic gagal, JSON parsing error, dll).
-    """
-    if isinstance(exc, (groq.APIConnectionError, groq.APITimeoutError)):
-        return True
-    if isinstance(exc, groq.APIStatusError):
-        status = getattr(exc, "status_code", None)
-        if status == 429 or (status is not None and status >= 500):
-            return True
-    return False
-
 def _is_insufficient_context(context_text: str) -> bool:
-    """
-    Deteksi apakah konteks yang di-retrieve terlalu tipis untuk dianalisis.
-    Threshold: < 300 karakter atau < 2 pasal teridentifikasi.
-    """
     if not context_text or len(context_text.strip()) < 300:
         return True
-    pasal_count = context_text.lower().count("pasal")
-    if pasal_count < 2:
+    if context_text.lower().count("pasal") < 2:
         return True
     return False
 
@@ -199,164 +142,74 @@ class MaterialGeneratorService:
 
     async def generate_legal_material(self, data: MaterialRequest) -> MaterialResponse:
         """
-        Menghasilkan output JSON untuk blok UI legal task agents:
-        Summary, Clause Search, Legal Q&A, Risk Review.
-
-        Alur:
-        1. Klasifikasikan intent dari raw_transcribe + user_scenario (repaired).
-        2. Bangun instruksi output kondisional berdasarkan intent.
-        3. Invoke LLM dengan system + human prompt.
-        4. Parse dan validasi respons ke MaterialResponse.
-
-        FIX: classify_intent kini menerima raw_transcribe agar frasa orisinal
-        pengguna (sebelum diparafrase repair step) tidak hilang dari deteksi intent.
+        Menghasilkan output JSON unifikasi (tanpa intent classification):
+        Dasar Hukum, Ringkasan, Konteks Tambahan, Analisa Risiko (naratif), Q&A.
         """
 
-        # --- 1. Klasifikasi intent ---
-        # PERBAIKAN KRITIS: gunakan raw_transcribe sebagai sumber utama intent,
-        # repaired text sebagai fallback tambahan.
-        raw_text = getattr(data, "raw_transcribe", "") or ""
-        intent = classify_intent(
-            raw_text=raw_text,
-            repaired_text=data.user_scenario,
-        )
-        logger.info(
-            f"MaterialGeneratorService: intent='{intent}' | "
-            f"raw_snippet='{raw_text[:80]}...'"
-        )
-
-        # --- 2. System Prompt ---
         system_prompt = (
             "Anda adalah Legal Task Agent untuk dokumen hukum Indonesia yang bertugas "
-            "menganalisis skenario secara objektif dan berbasis fakta.\n\n"
+            "menyusun materi edukatif hukum secara objektif dan berbasis fakta.\n\n"
 
             "CRITICAL RULES (WAJIB DIPATUHI):\n\n"
 
             "1. STRICTLY CONTEXT-BOUND\n"
-            "   Analisis HANYA boleh bersumber dari 'Konteks teks Dokumen Hukum' "
-            "yang diberikan. Jangan berasumsi, menyimpulkan nama Undang-Undang "
-            "(seperti KUHP/UU ITE), atau mengarang nomor pasal/ayat jika tidak "
+            "   Analisis HANYA boleh bersumber dari 'Konteks teks Dokumen Hukum' yang "
+            "diberikan. Jangan mengarang nama peraturan, nomor pasal, atau ayat jika tidak "
             "tertulis eksplisit di dalam konteks.\n\n"
 
-            "2. ACCURATE CLAUSE MAPPING\n"
-            "   Pastikan teks kutipan (excerpt) benar-benar cocok dengan pasal/ayat "
-            "aslinya. Jangan mencampuradukkan isi ayat satu dengan ayat lainnya.\n\n"
+            "2. PASAL VALIDATION\n"
+            "   a) Jika user menyebut nomor pasal tertentu, verifikasi keberadaannya di konteks.\n"
+            "   b) Jika tidak ditemukan, tetap tampilkan pasal PALING RELEVAN dari konteks dan "
+            "jelaskan koreksinya di 'catatan_validasi'.\n"
+            "   c) Jika pasal ada tapi ayat/huruf keliru, koreksi dengan penjelasan.\n"
+            "   d) Jika user tidak menyebut pasal sama sekali, cukup identifikasi pasal paling "
+            "relevan tanpa perlu catatan koreksi.\n\n"
 
-            "3. PASAL VALIDATION\n"
-            "   Jika pengguna menyebut nomor pasal tertentu:\n"
-            "   a) Verifikasi keberadaannya di dalam konteks.\n"
-            "   b) Jika tidak ditemukan: informasikan dan rekomendasikan pasal yang tepat.\n"
-            "   c) Jika pasal ada tapi ayat/huruf keliru: koreksi dengan penjelasan.\n"
-            "   d) DILARANG mengarang isi pasal yang tidak ada di konteks.\n\n"
+            "3. CLAUSE RELEVANCE GATE\n"
+            "   Setiap contoh di Analisa Risiko WAJIB berupa penyimpangan/ketidaksesuaian "
+            "terhadap ketentuan LITERAL pasal yang teridentifikasi (kondisi di mana yang "
+            "disyaratkan pasal itu TIDAK terpenuhi) — bukan sekadar kemiripan kata kunci, dan "
+            "DILARANG mengarang kewajiban/konsep yang tidak disebut di teks pasal. Skenario "
+            "WAJIB menyebutkan secara eksplisit ISI/ANGKA/UNSUR/PROSEDUR yang disyaratkan "
+            "ayat tersebut — DILARANG hanya menulis 'tidak sesuai ayat (X)' tanpa menjelaskan "
+            "apa isinya. Pihak yang menyimpang menyesuaikan dengan siapa yang sebenarnya "
+            "diatur pasal tersebut: bisa lembaga/institusi itu sendiri (jika pasal mengatur "
+            "susunan, komposisi, pembiayaan, atau tata kerja internal), pejabat yang disebut "
+            "eksplisit, atau warga sipil/pihak luar (jika pasal memang mengatur kewajiban/"
+            "larangan bagi mereka).\n\n"
 
-            "4. INTENT-AWARE OUTPUT\n"
-            "   Ikuti instruksi output sesuai Tipe Query yang diberikan.\n"
-            "   - Tipe 'konsultasi': Risk Review WAJIB diisi lengkap dengan analisis "
-            "risiko, skor, mitigasi, dan rekomendasi.\n"
-            "   - Tipe 'informatif': Risk Review WAJIB dikosongkan — pengguna hanya "
-            "bertanya, bukan mengaku melakukan tindakan.\n\n"
-
-            "5. COMPLETENESS ENFORCEMENT\n"
-            "   Untuk tipe 'konsultasi', DILARANG mengembalikan Risk Review kosong "
-            "atau bernilai default '-'. Ini adalah pelanggaran instruksi.\n\n"
-
-            "6. PASAL SALAH ≠ TINDAKAN AMAN\n"
-            "   Jika pengguna menyebut nomor pasal yang TIDAK ADA dalam konteks:\n"
-            "   a) Nyatakan pasal tersebut tidak ditemukan di konteks yang diberikan.\n"
-            "   b) JANGAN simpulkan bahwa tindakan pengguna 'patuh' atau 'tidak berisiko' "
-            "hanya karena pasal yang disebutkan tidak ada.\n"
-            "   c) TETAP evaluasi tindakan yang dideskripsikan pengguna berdasarkan pasal "
-            "LAIN yang relevan dari konteks yang tersedia.\n"
-            "   d) Risk Review WAJIB mencerminkan risiko atas TINDAKAN, bukan atas "
-            "ketepatan nomor pasal yang disebutkan.\n"
-            "   CATATAN PENYEIMBANG: Poin (c) BUKAN berarti memaksakan korelasi ke pasal "
-            "yang tidak relevan secara substansi. Jika pasal pengganti yang ditemukan "
-            "TIDAK benar-benar mengatur tindakan yang ditanyakan — meskipun mengandung "
-            "kata kunci yang mirip — jangan dipaksakan. Nyatakan ketidakpastian dengan "
-            "jujur (lihat Rule 7 dan 8).\n\n"
-
-            "7. CLAUSE RELEVANCE GATE\n"
-            "   Sebelum mengaitkan pasal manapun dengan Risk Review atau Clause Search, "
-            "ajukan pertanyaan: 'Apakah pasal ini secara LANGSUNG mengatur kewajiban/"
-            "larangan yang relevan dengan TINDAKAN yang dideskripsikan pengguna?'\n"
-            "   Jika TIDAK — meskipun pasal itu mengandung kata kunci yang mirip "
-            "(misal sama-sama soal 'keamanan', 'izin', 'pidana') — DILARANG "
-            "menjadikannya dasar kesimpulan pelanggaran atau skor risiko tinggi.\n"
-            "   Pasal yang HANYA mengatur tugas/wewenang internal lembaga (Polri, "
-            "Pemerintah, dll) TIDAK BOLEH dijadikan dasar untuk menyimpulkan bahwa "
-            "TINDAKAN WARGA SIPIL melanggar hukum, kecuali pasal tersebut secara "
-            "eksplisit menyebut kewajiban/larangan bagi pihak di luar lembaga tersebut.\n"
-            "   Jika TIDAK ADA pasal yang relevan secara substansi dalam konteks: "
-            "nyatakan secara jujur bahwa konteks yang tersedia tidak memuat ketentuan "
-            "yang secara langsung mengatur hal ini. Risk Review boleh menyatakan "
-            "'BELUM DAPAT DIPASTIKAN' dengan skor netral (~50) serta rekomendasi "
-            "untuk konsultasi lebih lanjut atau menelusuri regulasi turunan "
-            "(PP/Perkap) yang mungkin lebih spesifik.\n\n"
-
-            "8. OUTPUT HONESTY\n"
-            "   Kejujuran lebih penting daripada 'kelengkapan' artifisial. Lebih baik "
-            "mengakui keterbatasan konteks daripada memaksakan korelasi yang tidak "
-            "sah secara hukum. Output yang salah justru merugikan pengguna.\n\n"
+            "4. OUTPUT HONESTY\n"
+            "   Kejujuran lebih penting daripada kelengkapan artifisial. Jika dasar hukum tidak "
+            "cukup relevan untuk suatu field, kembalikan '-' atau [] — jangan memaksakan "
+            "korelasi yang tidak sah secara hukum.\n\n"
 
             "Gunakan gaya bahasa formal, tegas, lugas, dan patuhi PUEBI. "
-            "Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan, "
-            "dan wajib mengikuti schema yang diberikan."
+            "Output HARUS valid JSON tanpa markdown, tanpa penjelasan tambahan, dan wajib "
+            "mengikuti schema yang diberikan."
         )
 
-        # --- 3. Human Prompt ---
         human_prompt = (
             f"Konteks teks Dokumen Hukum (Referensi):\n{data.context_text}\n\n"
             f"Pertanyaan/Skenario Pengguna:\n{data.user_scenario}\n\n"
-            f"Tipe Query: {intent}\n\n"
-            + build_output_instructions(intent)
+            + build_output_instructions()
             + f"\n{self.json_parser.get_format_instructions()}"
         )
 
-        # ── Retry logic: coba 2 kali jika gagal ─────────────────────────────
         max_attempts = 2
         last_error = None
 
         for attempt in range(1, max_attempts + 1):
             try:
                 chain = self.engine | self.json_parser
-
                 response = await chain.ainvoke([
                     SystemMessage(content=system_prompt),
                     HumanMessage(content=human_prompt),
                 ])
 
-                # --- Validasi respons LLM ---
                 if response is None:
-                    raise ValueError(
-                        "LLM mengembalikan respons kosong/tidak valid. "
-                        "Kemungkinan model tidak dapat menghasilkan JSON yang sesuai schema."
-                    )
+                    raise ValueError("LLM mengembalikan respons kosong/tidak valid.")
 
-                validated = MaterialResponse.model_validate(response)
-
-                if intent == "konsultasi":
-                    rr = validated.risk_review
-                    # Jika score=100 dan status=Patuh tapi summary menyebut "tidak ada" pasal
-                    summary_text = ((validated.summary.overview or "") + 
-                                    (validated.summary.conclusion or "")).lower()
-                    false_safe_signals = [
-                        "tidak ada dalam konteks",
-                        "pasal tersebut tidak ada",
-                        "tidak ditemukan dalam konteks",
-                    ]
-                    is_false_safe = (
-                        rr.score >= 90 and
-                        any(sig in summary_text for sig in false_safe_signals)
-                    )
-                    if is_false_safe:
-                        logger.warning(
-                            "MaterialGeneratorService: Terdeteksi FALSE SAFE — LLM menyimpulkan "
-                            "'Patuh' karena pasal yang disebutkan tidak ada, bukan karena "
-                            "tindakan dinilai aman. Kemungkinan perlu re-evaluate. "
-                            f"raw_snippet='{raw_text[:80]}'"
-                        )
-
-                return validated
+                return MaterialResponse.model_validate(response)
 
             except Exception as e:
                 last_error = e
@@ -364,83 +217,30 @@ class MaterialGeneratorService:
                     f"MaterialGeneratorService: Attempt {attempt}/{max_attempts} gagal. "
                     f"Error: {str(e)}"
                 )
-                # Lanjut ke attempt berikutnya
 
-        # ── Semua attempt gagal ─────────────────────────────────────────────
         logger.error(
             f"MaterialGeneratorService: Semua {max_attempts} attempt gagal. "
             f"Error terakhir: {str(last_error)}"
         )
-        # ── Cek apakah konteks terlalu tipis ────────────────────────────────
+
         is_thin_context = _is_insufficient_context(data.context_text)
 
         if is_thin_context:
-            fallback_summary = {
-                "title": "Konteks Tidak Mencukupi",
-                "overview": (
-                    "Konteks dokumen hukum yang tersedia terlalu sedikit untuk "
-                    "menghasilkan analisis yang akurat."
-                ),
-                "key_points": [
-                    "Dokumen hukum yang diunggah mungkin belum mencakup pasal yang relevan.",
-                    "Coba tambahkan lebih banyak dokumen atau perluas cakupan knowledge base.",
-                    "Pastikan query Anda sesuai dengan isi dokumen yang tersedia.",
-                ],
-                "conclusion": (
-                    "Analisis tidak dapat dilakukan karena konteks hukum yang ditemukan "
-                    "tidak mencukupi. Silakan tambahkan dokumen pendukung."
-                ),
-            }
-            fallback_risk = {
-                "status": "KONTEKS_TIDAK_CUKUP",
-                "score": 0,
-                "analysis": (
-                    "Sistem tidak dapat mengevaluasi risiko karena konteks dokumen hukum "
-                    "yang tersedia terlalu sedikit atau tidak relevan dengan pertanyaan Anda. "
-                    "Tambahkan lebih banyak dokumen hukum ke knowledge base untuk hasil yang lebih akurat."
-                ),
-                "risks": [
-                    "Analisis risiko tidak dapat dilakukan tanpa konteks hukum yang memadai."
-                ],
-                "mitigation_steps": [
-                    "Tambahkan dokumen hukum yang relevan ke knowledge base.",
-                    "Pastikan knowledge base mencakup UU atau peraturan yang Anda tanyakan.",
-                    "Coba reformulasi pertanyaan agar lebih sesuai dengan dokumen yang tersedia.",
-                ],
-                "recommendation": (
-                    "Lengkapi knowledge base dengan dokumen hukum yang relevan, "
-                    "kemudian ulangi pertanyaan Anda."
-                ),
-            }
-        else:
-            fallback_summary = {
-                "title": "Summary",
-                "overview": "Terjadi kegagalan sistem saat menyusun ringkasan hukum.",
-                "key_points": ["Proses generate gagal dijalankan"],
-                "conclusion": "Data tidak dapat diproses saat ini.",
-            }
-            fallback_risk = {
-                "status": "ERROR_SISTEM",
-                "score": 0,
-                "analysis": (
-                    f"Gagal memproses analisis hukum karena kendala teknis. "
-                    f"Detail: {str(last_error)}"
-                ),
-                "risks": ["Tidak dapat mengevaluasi risiko karena kegagalan sistem"],
-                "mitigation_steps": [
-                    "Coba ulang proses setelah sistem kembali stabil"
-                ],
-                "recommendation": "Ulangi permintaan setelah perbaikan sistem.",
-            }
+            return MaterialResponse(
+                dasar_hukum=[],
+                ringkasan=[{"poin": "Konteks dokumen hukum yang tersedia terlalu sedikit untuk dianalisis."}],
+                konteks_tambahan="-",
+                analisa_risiko=[],
+                qa=[],
+            )
 
         return MaterialResponse(
-            summary=fallback_summary,
-            clause_search=[],
-            legal_qa=[],
-            risk_review=fallback_risk,
-            referensi_uu=[],
+            dasar_hukum=[],
+            ringkasan=[{"poin": SYSTEM_ERROR_FALLBACK_MESSAGE}],
+            konteks_tambahan="-",
+            analisa_risiko=[],
+            qa=[],
         )
 
 
-# Singleton instance aman digunakan oleh router
 material_service = MaterialGeneratorService()

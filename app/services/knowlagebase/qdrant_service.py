@@ -370,6 +370,49 @@ class QdrantService:
 
     # ── Search ────────────────────────────────────────────
 
+    @staticmethod
+    def _hybrid_rerank(
+        results: list,
+        pasal_user: Optional[int] = None,
+        ayat_user: Optional[int] = None,
+    ) -> list:
+        """
+        Hybrid reranking: boost hasil yang exact match dengan pasal/ayat yang disebut user.
+        Jika user menyebut pasal yang salah, semantic score akan tetap rendah → tidak di-boost.
+        """
+        if pasal_user is None and ayat_user is None:
+            return results  # tidak ada reranking jika tidak ada filter
+
+        for r in results:
+            child = r.get("child", {})
+            # Chunk Penjelasan menyimpan nomor pasal di 'pasal_rujukan', bukan 'pasal'
+            child_pasal = child.get("pasal")
+            if child_pasal is None:
+                child_pasal = child.get("pasal_rujukan")
+            child_ayat = child.get("ayat")
+            
+            # Boost jika pasal match dengan yang disebut user
+            if pasal_user is not None and child_pasal == pasal_user:
+                r["score"] = round(r["score"] + 0.5, 4)
+                r["is_exact_pasal_match"] = True
+                logger.debug(
+                    "[HYBRID] Boost pasal=%d → score=%.4f",
+                    child_pasal, r["score"],
+                )
+            
+            # Boost jika ayat match dengan yang disebut user (dan pasal juga match)
+            if ayat_user is not None and child_ayat == ayat_user and child_pasal == pasal_user:
+                r["score"] = round(r["score"] + 0.3, 4)
+                r["is_exact_ayat_match"] = True
+                logger.debug(
+                    "[HYBRID] Boost ayat=%d pasal=%d → score=%.4f",
+                    child_ayat, child_pasal, r["score"],
+                )
+
+        # Sort ulang berdasarkan score yang sudah di-boost
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results
+
     async def search(
         self,
         base_name: str,
@@ -377,8 +420,10 @@ class QdrantService:
         section: Optional[str] = None,
         pasal: Optional[int] = None,
         ayat: Optional[int] = None,
+        huruf: Optional[str] = None,
         limit: int = 5,
         score_threshold: float = 0.15,
+        relative_threshold: float = 0.7,
     ) -> Dict:
         """
         Cari child chunks yang relevan, lalu fetch parent-nya untuk konteks.
@@ -389,8 +434,14 @@ class QdrantService:
             section       : filter section ("Konsiderans"/"Batang Tubuh"/"Penjelasan")
             pasal         : filter nomor pasal
             ayat          : filter nomor ayat
-            limit         : jumlah hasil
-            score_threshold: batas minimal similarity score
+            huruf         : filter huruf (a/b/c/dll)
+            limit         : jumlah hasil akhir
+            score_threshold   : batas minimal similarity score (absolut, difilter di Qdrant)
+            relative_threshold: hasil dengan skor < relative_threshold * skor tertinggi
+                                 pada batch pencarian dibuang (kecuali exact match pasal/ayat
+                                 user), agar hasil yang jauh lebih lemah dari kandidat terbaik
+                                 tidak ikut lolos hanya karena skor absolutnya masih di atas
+                                 score_threshold.
 
         Return:
             {total_results, results: [{score, child, parent}]}
@@ -410,26 +461,32 @@ class QdrantService:
                 )
             )
         if pasal is not None:
+            # Skema baru pakai key "pasal", skema lama (legacy upsert_chunks) pakai
+            # "pasal_number" — cek keduanya (OR) supaya filter tetap kena di data lama.
             conditions.append(
-                qmodels.FieldCondition(
-                    key="pasal",
-                    match=qmodels.MatchValue(value=pasal),
-                )
+                qmodels.Filter(should=[
+                    qmodels.FieldCondition(key="pasal", match=qmodels.MatchValue(value=pasal)),
+                    qmodels.FieldCondition(key="pasal_number", match=qmodels.MatchValue(value=pasal)),
+                ])
             )
         if ayat is not None:
             conditions.append(
-                qmodels.FieldCondition(
-                    key="ayat",
-                    match=qmodels.MatchValue(value=ayat),
-                )
+                qmodels.Filter(should=[
+                    qmodels.FieldCondition(key="ayat", match=qmodels.MatchValue(value=ayat)),
+                    qmodels.FieldCondition(key="ayat_number", match=qmodels.MatchValue(value=ayat)),
+                ])
             )
         q_filter = qmodels.Filter(must=conditions) if conditions else None
+
+        # Ambil kandidat lebih banyak dari `limit` akhir agar relative threshold
+        # punya cukup kandidat untuk dibandingkan sebelum dipotong ke `limit`.
+        fetch_limit = max(limit * 3, 10)
 
         # Search di koleksi child
         search_resp = await client.query_points(
             collection_name=child_col,
             query=query_vector,
-            limit=limit,
+            limit=fetch_limit,
             query_filter=q_filter,
             with_payload=True,
             score_threshold=score_threshold,
@@ -437,19 +494,41 @@ class QdrantService:
 
         pasal_not_found = False
 
-        # ── Retry if filter caused empty results ────────────────────────────
-        # Jika pasal/ayat filter dipasang tapi hasil kosong, coba tanpa filter
-        # agar user tetap mendapat konteks relevan secara semantik.
-        if not search_resp.points and (pasal is not None or ayat is not None):
+        # ── Retry conditions ─────────────────────────────────────────────────
+        # Retry tanpa filter jika:
+        #   A) Hasil kosong (pasal/ayat disebut user tidak ada di DB)
+        #   B) Hasil ada TAPI skor semantic rendah (< 0.3) — pasal/ayat ditemukan
+        #      secara eksak tapi kontennya tidak relevan secara topik.
+        #   C) Tidak ada filter pasal/ayat → skip (semantic search murni)
+        should_retry = False
+        retry_reason = None
+
+        if search_resp.points and (pasal is not None or ayat is not None):
+            # Hitung skor semantic tertinggi dari hasil filter
+            max_semantic_score = max(hit.score for hit in search_resp.points)
+            if max_semantic_score < 0.3:
+                should_retry = True
+                retry_reason = (
+                    f"skor semantic rendah (max={max_semantic_score:.4f}) "
+                    f"dengan filter pasal={pasal} ayat={ayat}. "
+                    "Pasal ditemukan secara eksak tapi konten tidak relevan secara topik."
+                )
+        elif not search_resp.points and (pasal is not None or ayat is not None):
+            should_retry = True
+            retry_reason = (
+                f"hasil kosong dengan filter pasal={pasal} ayat={ayat}. "
+                "Pasal yang disebut user tidak ditemukan di DB."
+            )
+
+        if should_retry:
             logger.info(
-                "[QDRANT] Hasil kosong dengan filter pasal=%s ayat=%s. "
-                "Retry tanpa filter untuk fallback semantik.",
-                pasal, ayat,
+                "[QDRANT] %s Retry tanpa filter untuk fallback semantik.",
+                retry_reason,
             )
             search_resp = await client.query_points(
                 collection_name=child_col,
                 query=query_vector,
-                limit=limit,
+                limit=fetch_limit,
                 query_filter=None,  # tanpa filter apapun
                 with_payload=True,
                 score_threshold=score_threshold,
@@ -459,7 +538,41 @@ class QdrantService:
         if not search_resp.points:
             return {"total_results": 0, "results": [], "pasal_not_found": pasal_not_found}
 
-        # Fetch parent chunks — support kedua format payload (lama & baru)
+        # ── Relative threshold: buang kandidat yang jauh lebih lemah dari skor
+        #    tertinggi di batch ini, kecuali exact match dengan pasal/ayat user ──
+        def _hit_pasal(payload: dict) -> Optional[int]:
+            """
+            Nomor pasal chunk ini — fallback ke pasal_rujukan (chunk Penjelasan)
+            lalu ke pasal_number (skema lama legacy upsert_chunks).
+            """
+            for key in ("pasal", "pasal_rujukan", "pasal_number"):
+                if payload.get(key) is not None:
+                    return payload.get(key)
+            return None
+
+        def _hit_ayat(payload: dict) -> Optional[int]:
+            """Nomor ayat chunk ini — fallback ke ayat_number (skema lama)."""
+            return payload.get("ayat") if payload.get("ayat") is not None else payload.get("ayat_number")
+
+        def _is_exact_match(hit) -> bool:
+            if pasal is None:
+                return False
+            hit_pasal = _hit_pasal(hit.payload)
+            if hit_pasal != pasal:
+                return False
+            return ayat is None or _hit_ayat(hit.payload) == ayat
+
+        max_score = max(hit.score for hit in search_resp.points)
+        score_cutoff = max_score * relative_threshold
+        points = [
+            hit for hit in search_resp.points
+            if hit.score >= score_cutoff or _is_exact_match(hit)
+        ][:limit]
+
+        if not points:
+            return {"total_results": 0, "results": [], "pasal_not_found": pasal_not_found}
+
+        # ── Fetch parent chunks ────────────────────────────────────────────
         def _get_parent_id(payload: dict) -> str:
             """Ambil parent_id dari payload, support field lama & baru."""
             return (
@@ -470,7 +583,7 @@ class QdrantService:
 
         parent_chunk_ids = list({
             _get_parent_id(hit.payload)
-            for hit in search_resp.points
+            for hit in points
             if _get_parent_id(hit.payload)
         })
 
@@ -493,7 +606,7 @@ class QdrantService:
                     parent_map[pid] = scroll_resp[0].payload
 
         results = []
-        for hit in search_resp.points:
+        for hit in points:
             parent_id = _get_parent_id(hit.payload)
             parent_payload = parent_map.get(parent_id, {})
             # Support field "content" dan "text" (format lama)
@@ -505,21 +618,51 @@ class QdrantService:
                     "chunk_id":  hit.payload.get("chunk_id"),
                     "section":   hit.payload.get("section"),
                     "content":   child_content,
-                    "pasal":     hit.payload.get("pasal"),
-                    "ayat":      hit.payload.get("ayat"),
+                    "pasal":     _hit_pasal(hit.payload),
+                    "ayat":      _hit_ayat(hit.payload),
                     "poin":      hit.payload.get("poin"),
                     "parent_id": parent_id,
+                    "pasal_rujukan": hit.payload.get("pasal_rujukan"),
                 },
                 "parent": {
                     "chunk_id": parent_payload.get("chunk_id"),
                     "title":    parent_payload.get("title"),
                     "content":  parent_content,
                     "section":  parent_payload.get("section"),
-                    "pasal":    parent_payload.get("pasal"),
+                    "pasal":    _hit_pasal(parent_payload),
+                    "pasal_rujukan": parent_payload.get("pasal_rujukan"),
                 },
             })
 
+        # ── Hybrid rerank: boost hasil yang exact match dengan pasal/ayat user ──
+        results = self._hybrid_rerank(results, pasal, ayat)
+
         return {"total_results": len(results), "results": results, "pasal_not_found": pasal_not_found}
+
+    @staticmethod
+    def _rerank_with_cross_encoder(query: str, results: list) -> list:
+        """
+        Re-rank kandidat hasil retrieval pakai cross-encoder lokal (query &
+        dokumen diproses bersama), jauh lebih akurat menilai relevansi topikal
+        dibanding cosine similarity bi-encoder murni (yang bisa tertipu
+        kemiripan kata kunci). Dipanggil lewat asyncio.to_thread karena
+        inference model ini CPU-bound/blocking.
+        """
+        from app.core.reranker import reranker
+
+        pairs = []
+        for r in results:
+            parent_content = r.get("parent", {}).get("content", "") or ""
+            child_content = r.get("child", {}).get("content", "") or ""
+            doc_text = parent_content.strip() if len(parent_content.strip()) > 30 else child_content.strip()
+            pairs.append((query, doc_text))
+
+        scores = reranker.predict(pairs)
+        for r, score in zip(results, scores):
+            r["rerank_score"] = round(float(score), 4)
+
+        results.sort(key=lambda x: x["rerank_score"], reverse=True)
+        return results
 
     async def search_knowledgebase(
         self,
@@ -530,10 +673,13 @@ class QdrantService:
         ayat_type: Optional[str] = None,
         limit: int = 5,
         score_threshold: float = 0.15,
+        use_reranker: bool = True,
     ) -> Dict:
         """
         Backward-compatible wrapper untuk pencarian RAG.
-        Meng-embed query secara otomatis dan memanggil search().
+        Meng-embed query secara otomatis, memanggil search(), lalu (opsional)
+        me-rerank kandidat hasilnya pakai cross-encoder lokal sebelum dipotong
+        ke `limit` akhir.
         """
         import re
         from app.core.embeddings import embeddings
@@ -562,16 +708,31 @@ class QdrantService:
             except Exception:
                 pass
 
+        # Jika reranker aktif, ambil kandidat lebih banyak dari `limit` akhir
+        # supaya cross-encoder punya cukup pilihan untuk dinilai ulang.
+        candidate_pool = max(limit * 4, 8) if use_reranker else limit
+
         results_dict = await self.search(
             base_name=base_name,
             query_vector=query_vector,
             section=section,
             pasal=pasal_filter,
             ayat=ayat_filter,
-            limit=limit,
+            limit=candidate_pool,
             score_threshold=score_threshold,
         )
+
+        if use_reranker and results_dict.get("results"):
+            reranked = await asyncio.to_thread(
+                self._rerank_with_cross_encoder, query, results_dict["results"]
+            )
+            results_dict["results"] = reranked[:limit]
+            results_dict["total_results"] = len(results_dict["results"])
+
         results_dict["query"] = query
+        # Sertakan pasal/ayat yang di-parse untuk downstream (integration service)
+        results_dict["pasal_filter_used"] = pasal_filter
+        results_dict["ayat_filter_used"] = ayat_filter
         return results_dict
 
     async def get_kb_info(self, base_name: str) -> Dict:
@@ -677,20 +838,24 @@ class QdrantService:
         for c in chunks:
             if c.embedding is None:
                 continue
+            
+            payload = {
+                "chunk_id": c.chunk_id,
+                "content": c.content,
+                "is_parent": c.metadata.is_parent,
+                "level_number": c.metadata.level_number,
+                "document_id": c.metadata.document_id,
+                "source_filename": c.metadata.source_filename,
+                "pasal_number": c.metadata.pasal_number,
+            }
+            if not c.metadata.is_parent:
+                payload["ayat_number"] = c.metadata.ayat_number
+                payload["parent_chunk_id"] = c.metadata.parent_chunk_id
+
             point = _m.PointStruct(
                 id=str(uuid.uuid4()),
                 vector=c.embedding,
-                payload={
-                    "chunk_id": c.chunk_id,
-                    "content": c.content,
-                    "is_parent": c.metadata.is_parent,
-                    "level_number": c.metadata.level_number,
-                    "document_id": c.metadata.document_id,
-                    "source_filename": c.metadata.source_filename,
-                    "pasal_number": c.metadata.pasal_number,
-                    "ayat_number": c.metadata.ayat_number,
-                    "parent_chunk_id": c.metadata.parent_chunk_id,
-                },
+                payload=payload,
             )
             # Jika c.metadata.is_parent True, masukkan ke parent collection
             if c.metadata.is_parent:

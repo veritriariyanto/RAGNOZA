@@ -274,6 +274,24 @@ def trigger_run(
 
     return EvaluationRunResponse.model_validate(run)
 
+@router.get("/{dataset_id}/runs", response_model=list[EvaluationRunResponse])
+def list_runs(dataset_id: int, db: Session = Depends(get_db)):
+    """
+    Daftar semua run (riwayat) untuk satu dataset, terbaru lebih dulu.
+    Dibutuhkan agar UI bisa menampilkan pilihan run tanpa user harus
+    mengetahui/mencatat run_id secara manual.
+    """
+    dataset = db.query(EvaluationDataset).filter(EvaluationDataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(404, "Dataset tidak ditemukan")
+
+    runs = (
+        db.query(EvaluationRun)
+        .filter(EvaluationRun.dataset_id == dataset_id)
+        .order_by(EvaluationRun.triggered_at.desc())
+        .all()
+    )
+    return [EvaluationRunResponse.model_validate(r) for r in runs]
 
 @router.get("/runs/{run_id}", response_model=EvaluationRunReportResponse)
 def get_run_report(run_id: int, db: Session = Depends(get_db)):
