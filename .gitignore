@@ -6,4 +6,5 @@ __pycache__/
 logs/
 evaluator/.venv/
 evaluator/venv_evaluator/
+.claude
 
