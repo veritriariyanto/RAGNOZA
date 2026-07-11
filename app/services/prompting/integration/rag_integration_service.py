@@ -12,7 +12,13 @@ from app.services.prompting.prompt.generate_content_service import (
     MaterialGeneratorService,
     SYSTEM_ERROR_FALLBACK_MESSAGE,   # ← tambahan
 )
-from app.schemas.prompting.generate_content import MaterialRequest
+from app.schemas.prompting.generate_content import (
+    MaterialRequest,
+    MaterialResponse,
+    RingkasanPoint,
+    ContohPelanggaran,
+    QAPair,
+)
 from app.schemas.prompting.integration import RAGIntegrationResponse
 
 from sqlalchemy.orm import Session
@@ -373,6 +379,28 @@ class RAGIntegrationService:
                 final_material = await self.material_service.generate_legal_material(
                     material_payload
                 )
+            else:
+                final_material = MaterialResponse(
+                    dasar_hukum=[],
+                    ringkasan=[
+                        RingkasanPoint(
+                            poin="Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database."
+                        )
+                    ],
+                    konteks_tambahan="Tidak bisa melampirkan pasal karena tidak ditemukan di database.",
+                    analisa_risiko=[
+                        ContohPelanggaran(
+                            skenario="Tidak bisa generate risiko karena tidak ditemukan referensi di database.",
+                            penjelasan="Silakan tambahkan dokumen hukum yang relevan ke dalam knowledge base."
+                        )
+                    ],
+                    qa=[
+                        QAPair(
+                            pertanyaan="Mengapa tanya jawab tidak tersedia?",
+                            jawaban="Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database."
+                        )
+                    ]
+                )
 
             # ── Tahap 6: Simpan History (SELALU dijalankan, baik ada context maupun tidak) ──
             session_title = (
@@ -508,6 +536,28 @@ class RAGIntegrationService:
                 )
                 final_material = await self.material_service.generate_legal_material(
                     material_payload
+                )
+            else:
+                final_material = MaterialResponse(
+                    dasar_hukum=[],
+                    ringkasan=[
+                        RingkasanPoint(
+                            poin="Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database."
+                        )
+                    ],
+                    konteks_tambahan="Tidak bisa melampirkan pasal karena tidak ditemukan di database.",
+                    analisa_risiko=[
+                        ContohPelanggaran(
+                            skenario="Tidak bisa generate risiko karena tidak ditemukan referensi di database.",
+                            penjelasan="Silakan tambahkan dokumen hukum yang relevan ke dalam knowledge base."
+                        )
+                    ],
+                    qa=[
+                        QAPair(
+                            pertanyaan="Mengapa tanya jawab tidak tersedia?",
+                            jawaban="Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database."
+                        )
+                    ]
                 )
 
             # ── Tahap 5: Simpan History (SELALU dijalankan, baik ada context maupun tidak) ──

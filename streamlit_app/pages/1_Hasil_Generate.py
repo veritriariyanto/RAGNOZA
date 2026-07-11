@@ -71,9 +71,14 @@ if session_id:
 
         st.divider()
 
-        # Cek apakah material berisi info no_context
+        # Cek apakah material berisi info no_context atau retrieved_context kosong
         material_info = material.get("_info") if isinstance(material, dict) else None
-        is_no_context = material_info == "no_context" or data.get("data_status") == "no_context"
+        is_no_context = (
+            material_info == "no_context" 
+            or data.get("data_status") == "no_context"
+            or not data.get("retrieved_context")
+            or len(data.get("retrieved_context").strip()) == 0
+        )
         no_context_message = material.get("message") if isinstance(material, dict) else None
         if not no_context_message:
             no_context_message = data.get("data_message") or (
@@ -115,7 +120,7 @@ if session_id:
         with tab1:
             st.write("### 📝 Ringkasan Analisis Pasal")
             if is_no_context:
-                st.markdown(no_context_html, unsafe_allow_html=True)
+                st.warning("⚠️ Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database.")
             else:
                 if "dasar_hukum" in material or "ringkasan" in material:
                     # Render new structure
@@ -179,7 +184,7 @@ if session_id:
         with tab2:
             st.write("### ⚠️ Potensi Penyimpangan Terhadap Pasal")
             if is_no_context:
-                st.markdown(no_context_html, unsafe_allow_html=True)
+                st.warning("⚠️ Tidak bisa generate risiko karena tidak ditemukan referensi di database.")
             else:
                 if "analisa_risiko" in material:
                     st.caption(
@@ -259,7 +264,7 @@ if session_id:
         with tab3:
             st.write("### ❓ Tanya Jawab Seputar Pasal")
             if is_no_context:
-                st.markdown(no_context_html, unsafe_allow_html=True)
+                st.warning("⚠️ Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database.")
             else:
                 if "qa" in material:
                     st.caption("Pertanyaan yang mungkin muncul dari pembaca terkait pasal ini, beserta jawabannya.")
@@ -302,7 +307,7 @@ if session_id:
         with tab4:
             st.write("### 📂 Sumber Pasal yang Digunakan")
             if is_no_context:
-                st.markdown(no_context_html, unsafe_allow_html=True)
+                st.warning("⚠️ Tidak bisa melampirkan pasal karena tidak ditemukan di database.")
             else:
                 retrieved_preview = data.get(
                     "retrieved_context_preview") or data.get("retrieved_context")
