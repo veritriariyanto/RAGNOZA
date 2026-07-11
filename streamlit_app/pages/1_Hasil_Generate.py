@@ -120,7 +120,7 @@ if session_id:
         with tab1:
             st.write("### 📝 Ringkasan Analisis Pasal")
             if is_no_context:
-                st.warning("⚠️ Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database.")
+                st.warning("⚠️ Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil.")
             else:
                 if "dasar_hukum" in material or "ringkasan" in material:
                     # Render new structure
@@ -184,7 +184,7 @@ if session_id:
         with tab2:
             st.write("### ⚠️ Potensi Penyimpangan Terhadap Pasal")
             if is_no_context:
-                st.warning("⚠️ Tidak bisa generate risiko karena tidak ditemukan referensi di database.")
+                st.warning("⚠️ Tidak bisa generate risiko karena tidak ditemukan referensi di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil.")
             else:
                 if "analisa_risiko" in material:
                     st.caption(
@@ -264,7 +264,7 @@ if session_id:
         with tab3:
             st.write("### ❓ Tanya Jawab Seputar Pasal")
             if is_no_context:
-                st.warning("⚠️ Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database.")
+                st.warning("⚠️ Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil.")
             else:
                 if "qa" in material:
                     st.caption("Pertanyaan yang mungkin muncul dari pembaca terkait pasal ini, beserta jawabannya.")
@@ -307,7 +307,7 @@ if session_id:
         with tab4:
             st.write("### 📂 Sumber Pasal yang Digunakan")
             if is_no_context:
-                st.warning("⚠️ Tidak bisa melampirkan pasal karena tidak ditemukan di database.")
+                st.warning("⚠️ Tidak bisa melampirkan pasal karena tidak ditemukan di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil.")
             else:
                 retrieved_preview = data.get(
                     "retrieved_context_preview") or data.get("retrieved_context")

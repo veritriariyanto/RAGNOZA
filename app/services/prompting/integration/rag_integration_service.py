@@ -384,20 +384,20 @@ class RAGIntegrationService:
                     dasar_hukum=[],
                     ringkasan=[
                         RingkasanPoint(
-                            poin="Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database."
+                            poin="Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil."
                         )
                     ],
-                    konteks_tambahan="Tidak bisa melampirkan pasal karena tidak ditemukan di database.",
+                    konteks_tambahan="Tidak bisa melampirkan pasal karena tidak ditemukan di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil.",
                     analisa_risiko=[
                         ContohPelanggaran(
-                            skenario="Tidak bisa generate risiko karena tidak ditemukan referensi di database.",
+                            skenario="Tidak bisa generate risiko karena tidak ditemukan referensi di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil.",
                             penjelasan="Silakan tambahkan dokumen hukum yang relevan ke dalam knowledge base."
                         )
                     ],
                     qa=[
                         QAPair(
                             pertanyaan="Mengapa tanya jawab tidak tersedia?",
-                            jawaban="Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database."
+                            jawaban="Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil."
                         )
                     ]
                 )
@@ -542,20 +542,20 @@ class RAGIntegrationService:
                     dasar_hukum=[],
                     ringkasan=[
                         RingkasanPoint(
-                            poin="Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database."
+                            poin="Tidak bisa generate ringkasan karena pembahasan tentang ini tidak ditemukan di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil."
                         )
                     ],
-                    konteks_tambahan="Tidak bisa melampirkan pasal karena tidak ditemukan di database.",
+                    konteks_tambahan="Tidak bisa melampirkan pasal karena tidak ditemukan di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil.",
                     analisa_risiko=[
                         ContohPelanggaran(
-                            skenario="Tidak bisa generate risiko karena tidak ditemukan referensi di database.",
+                            skenario="Tidak bisa generate risiko karena tidak ditemukan referensi di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil.",
                             penjelasan="Silakan tambahkan dokumen hukum yang relevan ke dalam knowledge base."
                         )
                     ],
                     qa=[
                         QAPair(
                             pertanyaan="Mengapa tanya jawab tidak tersedia?",
-                            jawaban="Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database."
+                            jawaban="Tidak bisa generate tanya jawab karena tidak ditemukan referensi di database. Silakan pilih database knowledgebase yang sesuai, dan berikan prompt dengan menyebutkan pasal atau pertanyaan yang menyerupai bunyi ayatnya agar proses generate berhasil."
                         )
                     ]
                 )
