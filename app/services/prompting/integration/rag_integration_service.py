@@ -19,7 +19,7 @@ from app.schemas.prompting.generate_content import (
     ContohPelanggaran,
     QAPair,
 )
-from app.schemas.prompting.integration import RAGIntegrationResponse
+from app.schemas.prompting.integration import RAGIntegrationResponse, TEXT_INPUT_MAX_CHARS
 
 from sqlalchemy.orm import Session
 from app.services.evaluation.formatter import material_to_text
@@ -36,9 +36,13 @@ class RAGIntegrationService:
     # Pasal 16-17 mengatur wewenang pidana Polri (penangkapan, penyitaan).
     PASAL_INTERNAL = {16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30}
 
-    # Groq free tier: max 6000 TPM. Total request = system_prompt (~2500 chars)
-    # + format_instructions (~4000 chars) + FAKTA (~250 chars) + KONTEKS.
-    # Maka KONTEKS harus ≤ 1200 chars agar total aman.
+    # Groq free tier: max 6000 TPM. Total request (generate_legal_material) =
+    # system_prompt (2303 chars, terukur) + build_output_instructions() (6557
+    # chars) + format_instructions skema JSON (3154 chars) + KONTEKS + FAKTA
+    # (user_scenario, dibatasi TEXT_INPUT_MAX_CHARS=1000 chars di
+    # app/schemas/prompting/integration.py). Fixed overhead ≈ 12014 chars
+    # (~3000 token) sebelum KONTEKS/FAKTA/output dihitung — maka KONTEKS
+    # harus ≤ 1200 chars agar total (termasuk token output) tetap aman.
     MAX_CONTEXT_CHARS = 1200
 
     # Gate kepercayaan: rerank_score (cross-encoder, sudah di-sigmoid ke 0-1 di
@@ -63,6 +67,25 @@ class RAGIntegrationService:
         self.text_service = text_service
         self.vector_service = vector_service
         self.material_service = material_service
+
+    # ── Helper bersama: Batasi Panjang Teks sebelum Generate ────────────────
+    @staticmethod
+    def _cap_repaired_text(repaired_text: str, log_prefix: str) -> str:
+        """
+        Guard di titik tunggal sebelum masuk generate_legal_material —
+        melindungi jalur audio (STT bisa hasilkan transkripsi panjang dari
+        rekaman ≤5MB) yang tidak melewati batas max_chars di text_area
+        Streamlit. Jalur teks manual sudah dibatasi di UI + Pydantic
+        (TextIntegrationRequest.max_length), ini lapis pertahanan kedua.
+        """
+        if len(repaired_text) > TEXT_INPUT_MAX_CHARS:
+            logger.warning(
+                "[%s] repaired_text (%d chars) melebihi TEXT_INPUT_MAX_CHARS "
+                "(%d) — dipotong sebelum dikirim ke generate_legal_material.",
+                log_prefix, len(repaired_text), TEXT_INPUT_MAX_CHARS,
+            )
+            return repaired_text[:TEXT_INPUT_MAX_CHARS]
+        return repaired_text
 
     # ── Helper bersama: Search Qdrant + Ekstraksi & Filter Konteks ─────────
     async def _search_and_extract_context(
@@ -340,7 +363,9 @@ class RAGIntegrationService:
 
             # ── Tahap 2: Repair Text & Generate Search Query ──────────────────
             refinement = await self.text_service.repair_legal_text(raw_transcribe)
-            repaired_text = refinement["repaired_text"]
+            repaired_text = self._cap_repaired_text(
+                refinement["repaired_text"], log_prefix="RAGIntegration"
+            )
             search_query = refinement["search_query"]
             pasal_number = refinement.get("pasal_number")
             ayat_number = refinement.get("ayat_number")
@@ -368,11 +393,14 @@ class RAGIntegrationService:
             rag_session_id = session_id
 
             if contexts:
+                # PERBAIKAN: sebelumnya repaired_text disisipkan dua kali ke prompt
+                # generate_legal_material — sekali lewat "FAKTA/TRANSKRIPSI" di
+                # context_text, sekali lagi lewat user_scenario (isinya identik).
+                # Duplikasi ini membuang token budget tanpa menambah informasi bagi
+                # LLM. context_text sekarang hanya berisi KONTEKS HUKUM; teks
+                # user tetap disampaikan lewat user_scenario.
                 material_payload = MaterialRequest(
-                    context_text=(
-                        f"KONTEKS HUKUM:\n{combined_context}"
-                        f"\n\nFAKTA/TRANSKRIPSI:\n{repaired_text}"
-                    ),
+                    context_text=f"KONTEKS HUKUM:\n{combined_context}",
                     user_scenario=repaired_text,
                     raw_transcribe=raw_transcribe,
                 )
@@ -498,7 +526,9 @@ class RAGIntegrationService:
         try:
             # ── Tahap 1: Repair Text & Generate Search Query ──────────────────
             refinement = await self.text_service.repair_legal_text(raw_text)
-            repaired_text = refinement["repaired_text"]
+            repaired_text = self._cap_repaired_text(
+                refinement["repaired_text"], log_prefix="TextPipeline"
+            )
             search_query = refinement["search_query"]
             pasal_number = refinement.get("pasal_number")
             ayat_number = refinement.get("ayat_number")
@@ -526,11 +556,10 @@ class RAGIntegrationService:
             rag_session_id = session_id
 
             if contexts:
+                # Sama seperti process_audio_to_material: hindari duplikasi
+                # repaired_text (context_text vs user_scenario).
                 material_payload = MaterialRequest(
-                    context_text=(
-                        f"KONTEKS HUKUM:\n{combined_context}"
-                        f"\n\nFAKTA/TRANSKRIPSI:\n{repaired_text}"
-                    ),
+                    context_text=f"KONTEKS HUKUM:\n{combined_context}",
                     user_scenario=repaired_text,
                     raw_transcribe=raw_text,
                 )

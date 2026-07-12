@@ -28,6 +28,12 @@ _KEY_RECORD_BYTES = "_audio_record_bytes"
 _KEY_TRANSCRIPTION = "_audio_transcription"
 _KEY_TEXT_INPUT = "_text_input_content"
 
+# Batas panjang input teks — harus sinkron dengan TextIntegrationRequest.text
+# (app/schemas/prompting/integration.py) di backend. Angka ini disesuaikan
+# dengan token budget generate_legal_material (lihat rag_integration_service.py),
+# bukan angka sembarang.
+TEXT_INPUT_MAX_CHARS = 1000
+
 
 # =============================================================================
 # CSS
@@ -263,15 +269,28 @@ def render_audio_controls():
     with tab_record:
         st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
         st.caption(
-            "Klik **Start** untuk mulai merekam, **Stop** untuk menyelesaikan.")
+            "Klik **Start** untuk mulai merekam, **Stop** untuk menyelesaikan. "
+            "Maksimal 5 MB (± 2-3 menit rekaman)."
+        )
 
         audio_data = mic_recorder(
             start_prompt="🔴  Start Rekam", stop_prompt="⏹️  Stop Rekam",
             just_once=True, use_container_width=True, key="mic_recorder",
         )
         if audio_data and audio_data.get("bytes"):
-            st.session_state[_KEY_RECORD_BYTES] = audio_data["bytes"]
-            st.session_state.pop(_KEY_TRANSCRIPTION, None)
+            # Client-side size check (5 MB max, matches backend stt_service.MAX_FILE_SIZE)
+            # — sama seperti tab upload, supaya rekaman kepanjangan ditolak SEBELUM
+            # dikirim ke server, bukan sesudahnya (menghindari 413 yang buang waktu user).
+            _rec_bytes = audio_data["bytes"]
+            _rec_size_mb = len(_rec_bytes) / (1024 * 1024)
+            if _rec_size_mb > 5:
+                st.error(
+                    f"⚠️ Rekaman terlalu besar ({_rec_size_mb:.1f} MB). Maksimal 5 MB. "
+                    "Rekam ulang dengan durasi lebih pendek."
+                )
+            else:
+                st.session_state[_KEY_RECORD_BYTES] = _rec_bytes
+                st.session_state.pop(_KEY_TRANSCRIPTION, None)
 
         record_bytes = st.session_state.get(_KEY_RECORD_BYTES)
         if record_bytes:
@@ -320,11 +339,13 @@ def render_audio_controls():
             "Teks Pertanyaan",
             value=saved_text,
             height=200,
+            max_chars=TEXT_INPUT_MAX_CHARS,
             placeholder="Contoh: Bagaimana ketentuan pasal 33 UUD 1945 tentang perekonomian nasional?",
             key="text_input_area",
             label_visibility="collapsed",
-            help="Masukkan teks pertanyaan atau deskripsi kasus hukum untuk dianalisis.",
+            help=f"Masukkan teks pertanyaan atau deskripsi kasus hukum untuk dianalisis. Maksimal {TEXT_INPUT_MAX_CHARS} karakter.",
         )
+        st.caption(f"{len(text_content)}/{TEXT_INPUT_MAX_CHARS} karakter")
         st.caption(
             "💡 Tip: kalau ragu dengan nomor pasal yang Anda sebutkan, sertakan kata "
             "seperti *'ragu'*, *'kurang yakin'*, *'tidak yakin'*, atau *'lupa pasal'*, "
@@ -480,13 +501,24 @@ def _handle_transcription_success(transcription: str, knowledge_base: str):
     st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
     st.success("✅ Transkripsi berhasil!")
 
+    # Truncate ke batas yang sama dengan input teks manual — text_area menolak
+    # value awal yang lebih panjang dari max_chars.
+    if len(transcription) > TEXT_INPUT_MAX_CHARS:
+        st.warning(
+            f"⚠️ Transkripsi ({len(transcription)} karakter) melebihi batas "
+            f"{TEXT_INPUT_MAX_CHARS} karakter dan telah dipotong. Edit di bawah bila perlu."
+        )
+        transcription = transcription[:TEXT_INPUT_MAX_CHARS]
+
     # Editable text area — user can review/edit before running pipeline
     edited_text = st.text_area(
         "Hasil Transkripsi (bisa diedit sebelum diproses):",
         value=transcription,
         height=150,
+        max_chars=TEXT_INPUT_MAX_CHARS,
         key="transcription_preview",
     )
+    st.caption(f"{len(edited_text)}/{TEXT_INPUT_MAX_CHARS} karakter")
     st.caption(
         "💡 Tip: kalau ragu dengan nomor pasal yang disebut di transkripsi, tambahkan "
         "kata seperti *'ragu'*/*'kurang yakin'*, atau sebutkan lebih dari satu pasal "

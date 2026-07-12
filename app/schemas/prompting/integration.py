@@ -26,9 +26,19 @@ class RAGIntegrationResponse(BaseModel):
     ragas_error: Optional[str] = None
 
 
+# Sinkron dengan TEXT_INPUT_MAX_CHARS di streamlit_app/components/audio_controls.py.
+# Batas dipilih berdasarkan token budget generate_legal_material (system_prompt +
+# build_output_instructions + format_instructions ≈ 3000 token fixed dari 6000 TPM
+# Groq free tier) — lihat rag_integration_service.py.
+TEXT_INPUT_MAX_CHARS = 1000
+
+
 class TextIntegrationRequest(BaseModel):
     """Request body for text-based pipeline (transcription already done)."""
-    text: str = Field(..., description="Raw transcription text to process")
+    text: str = Field(
+        ..., min_length=1, max_length=TEXT_INPUT_MAX_CHARS,
+        description="Raw transcription text to process",
+    )
     knowledge_base: str = Field(
         "uud_1945", description="Qdrant collection name")
     style: str = Field(
