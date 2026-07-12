@@ -98,7 +98,10 @@ def _serialize_process(item: RAGProcess) -> dict:
     return {
         "id": item.id,
         "session_id": item.session_id,
-        "session_title": session.session_title if session else None,
+        # Prioritaskan judul per-item (RAGProcess.title). Fallback ke
+        # session_title untuk baris lama yang tersimpan sebelum migrasi
+        # d4336dff1d77 (title belum ada, masih NULL).
+        "session_title": item.title or (session.session_title if session else None),
         "knowledge_base": session.knowledge_base if session else None,
         "provider": session.provider if session else None,
         "raw_transcribe": item.raw_transcribe,

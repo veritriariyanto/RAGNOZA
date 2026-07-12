@@ -69,6 +69,7 @@ class SessionService:
 
                 process = RAGProcess(
                     session_id=session.id,
+                    title=session_title,
                     raw_transcribe=raw_transcribe,
                     repaired_text=repaired_text,
                     search_query=search_query,
@@ -112,8 +113,15 @@ class SessionService:
         session_title: str,
     ) -> bool:
         """
-        Mengubah judul sesi percakapan RAG berdasarkan history_id terkait.
+        Mengubah judul satu item riwayat (RAGProcess) berdasarkan history_id.
         Digunakan saat user mengganti judul chat di panel UI sidebar Streamlit.
+
+        PERBAIKAN: sebelumnya judul disimpan di RAGSession.session_title —
+        karena satu session bisa punya banyak RAGProcess (generate berulang
+        dalam sesi browser yang sama, lihat rag_session_id di
+        streamlit_app/utils/session.py), mengedit judul satu item di sidebar
+        ikut mengubah SEMUA item lain yang berbagi session_id yang sama.
+        Judul sekarang disimpan per-RAGProcess supaya tiap item independen.
         """
         try:
             process = (
@@ -129,21 +137,13 @@ class SessionService:
                 )
                 return False
 
-            session = db.query(RAGSession).filter(RAGSession.id == process.session_id).first()
-            if not session:
-                logger.warning(
-                    "[RAGHistory] update_title: session untuk process_id=%d tidak ditemukan",
-                    history_id,
-                )
-                return False
-
-            session.session_title = session_title.strip()
+            process.title = session_title.strip()
 
             db.commit()
 
             logger.info(
-                "[RAGHistory] Title updated — session_id=%d | title=%s",
-                session.id,
+                "[RAGHistory] Title updated — process_id=%d | title=%s",
+                process.id,
                 session_title,
             )
 
