@@ -224,7 +224,7 @@ _KB_CSS = """
 }
 .repair-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
     margin-top: 8px;
 }
@@ -348,7 +348,6 @@ def _render_repair_stats(repair_stats: dict):
     was_repaired = repair_stats.get("was_repaired", False)
     total        = repair_stats.get("total_fixes", 0)
     hyph         = repair_stats.get("hyphenation_fixes", 0)
-    spcd         = repair_stats.get("spaced_char_fixes", 0)
     ocr          = repair_stats.get("ocr_noise_fixes", 0)
     brkn         = repair_stats.get("broken_sentence_fixes", 0)
 
@@ -367,7 +366,6 @@ def _render_repair_stats(repair_stats: dict):
 
     items = [
         ("✂️", str(hyph), "Hyphenation",       "Suku kata terpotong"),
-        ("⠿", str(spcd), "Spaced Chars",       "Karakter terpisah spasi"),
         ("🔧", str(ocr),  "OCR Noise",          "Karakter noise / placeholder"),
         ("📎", str(brkn), "Broken Sentences",   "Kalimat terpecah baris"),
     ]
@@ -870,222 +868,6 @@ def _render_chunk_preview():
 
     st.json(filtered[:max_show])
 
-
-def _tab_similarity_test():
-    st.markdown(
-        '<div class="ac-label-step">UJI COBA RETRIEVAL & SIMILARITY</div>'
-        '<div class="ac-subheader" style="margin-bottom:6px;">'
-        'Uji pencarian dokumen menggunakan model embedding dan vector store secara langsung.'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-    st.caption("🤖 Model aktif: `paraphrase-multilingual-MiniLM-L12-v2` — mendukung Bahasa Indonesia & 50+ bahasa lainnya")
-    st.markdown("")
-
-    # Ambil daftar KB
-    kb_list = get_knowledgebase_list()
-    if not kb_list:
-        st.info("ℹ Belum ada Knowledge Base yang tersedia. Silakan upload & proses dokumen terlebih dahulu.")
-        return
-
-    # Form pencarian
-    col_kb, col_lim = st.columns([3, 1])
-    with col_kb:
-        selected_kb = st.selectbox(
-            "Pilih Knowledge Base", kb_list, key="kb_sim_selected"
-        )
-    with col_lim:
-        limit = st.number_input("Limit Hasil", min_value=1, max_value=20, value=5, step=1, key="kb_sim_limit")
-
-    query = st.text_input("Query Pencarian (Pertanyaan / Topik)", placeholder="Contoh: Apa kewenangan kepolisian?", key="kb_sim_query")
-    st.caption(
-        "💡 Tip: kalau ragu dengan nomor pasal yang Anda sebutkan, sertakan kata "
-        "seperti *'ragu'*, *'kurang yakin'*, *'tidak yakin'*, atau *'lupa pasal'* "
-        "di query — filter pasal otomatis akan dilewati, hasil murni berdasarkan "
-        "similarity semantik. Atau centang **'Saya ragu dengan nomor pasal ini'** "
-        "di Filter Tambahan di bawah."
-    )
-
-    # Filter Opsional (Expander)
-    with st.expander("Filter Tambahan (Opsional)"):
-        col_sec, col_pasal = st.columns(2)
-        with col_sec:
-            section_type = st.selectbox(
-                "Filter Bagian", ["Semua", "Konsiderans", "Batang Tubuh", "Penjelasan"], key="kb_sim_sec"
-            )
-        with col_pasal:
-            pasal_type = st.text_input(
-                "Filter Pasal (Angka saja)",
-                placeholder="Auto-terdeteksi dari query jika kosong",
-                key="kb_sim_pasal",
-                help="Kosongkan agar nomor pasal dideteksi otomatis dari teks query (mis. 'Pasal 5'), "
-                     "sama seperti perilaku pipeline integrasi. Isi manual untuk override.",
-            )
-        st.markdown("---")
-        score_threshold = st.slider(
-            "Score Threshold (Minimum Similarity)",
-            min_value=0.0, max_value=1.0, value=0.15, step=0.01,
-            key="kb_sim_threshold",
-            help="Turunkan nilai ini jika tidak ada hasil. Model MiniLM-L6 umumnya menghasilkan skor 0.1–0.5 untuk teks Bahasa Indonesia."
-        )
-        st.markdown("---")
-        doubt_pasal = st.checkbox(
-            "🤔 Saya ragu dengan nomor pasal ini",
-            key="kb_sim_doubt_pasal",
-            help="Centang untuk melewati filter pasal sama sekali (baik dari input manual "
-                 "maupun auto-detect) — hasil murni berdasarkan similarity semantik. Berguna "
-                 "kalau Anda tidak yakin nomor pasal yang disebutkan di query itu benar.",
-        )
-
-    # Tombol Cari
-    if st.button("🔍 Jalankan Pencarian", use_container_width=True, key="kb_sim_search_btn"):
-        if not query.strip():
-            st.warning("⚠️ Masukkan query pencarian terlebih dahulu!")
-            return
-
-        # Prioritas penentuan filter pasal:
-        #   1. Checkbox "Saya ragu dengan nomor pasal ini" dicentang -> bypass total,
-        #      apa pun isi field manual atau hasil auto-detect (aksi eksplisit user).
-        #   2. "Filter Pasal" diisi manual -> dipakai apa adanya (override eksplisit).
-        #   3. Kalimat ajaib ("ragu", "kurang yakin", dst) terdeteksi di teks query ->
-        #      bypass juga, sinyal lebih implisit jadi hanya berlaku kalau field
-        #      manual kosong (tidak menimpa override eksplisit di langkah 2).
-        #   4. Auto-detect regex dari teks query (tepat 1 nomor -> filter; 0/>1 -> ragu).
-        if doubt_pasal:
-            effective_pasal = None
-            st.caption(
-                "🤔 Anda menandai ragu dengan nomor pasal — filter pasal dilewati, "
-                "hasil murni berdasarkan similarity semantik."
-            )
-        elif pasal_type.strip():
-            effective_pasal = pasal_type.strip()
-        elif _has_doubt_phrase(query):
-            effective_pasal = None
-            st.caption(
-                "🤔 Terdeteksi kalimat keraguan di query — filter pasal otomatis "
-                "dilewati, hasil murni berdasarkan similarity semantik."
-            )
-        else:
-            detected_pasal, detected_all = _extract_pasal_from_query(query)
-            effective_pasal = detected_pasal
-            if detected_pasal:
-                st.caption(
-                    f"🔎 Pasal terdeteksi otomatis dari query: **Pasal {detected_pasal}** "
-                    f"— isi 'Filter Pasal' di atas untuk override manual."
-                )
-            elif len(detected_all) > 1:
-                # Ragu/ambigu — query menyebut lebih dari satu nomor pasal. Jangan
-                # paksakan filter ke salah satunya (bisa diam-diam salah pilih),
-                # tetap fokus ke similarity semantik murni tanpa filter pasal.
-                unique_pasal = sorted(set(detected_all), key=int)
-                st.caption(
-                    f"🤔 Terdeteksi beberapa nomor pasal di query (Pasal "
-                    f"{', '.join(unique_pasal)}) — filter otomatis **tidak** "
-                    f"diterapkan karena ambigu, hasil murni berdasarkan similarity "
-                    f"semantik. Isi 'Filter Pasal' di atas kalau ingin fokus ke "
-                    f"satu pasal tertentu."
-                )
-
-        with st.spinner("Mencari chunk paling relevan di Qdrant..."):
-            res = search_similarity(
-                base_name=selected_kb,
-                query=query,
-                section_type=section_type if section_type != "Semua" else None,
-                pasal_type=effective_pasal,
-                limit=int(limit),
-                score_threshold=score_threshold,
-            )
-
-        if not res.get("success"):
-            st.error(f"❌ Gagal mencari similarity: {res.get('error')}")
-            return
-
-        data = res.get("data", {})
-        results = data.get("results", [])
-        pasal_not_found = data.get("pasal_not_found", False)
-
-        if not results:
-            st.warning("⚠️ Tidak ada hasil yang ditemukan. Coba turunkan **Score Threshold** di Filter Tambahan (mis. ke 0.05).")
-            return
-
-        # Tampilkan kalau backend melakukan retry tanpa filter pasal — supaya
-        # user tahu hasil di bawah ini BUKAN exact match pasal yang di-filter
-        # (baik dari input manual maupun auto-detect), melainkan hasil koreksi
-        # dari pencarian semantik murni karena filter pasal aslinya skornya
-        # terlalu rendah / tidak ditemukan sama sekali.
-        if effective_pasal and pasal_not_found:
-            st.warning(
-                f"⚠️ Filter **Pasal {effective_pasal}** tidak menghasilkan kecocokan yang cukup "
-                f"relevan (skor terlalu rendah atau pasal tidak ditemukan). Hasil di bawah ini "
-                f"adalah pencarian semantik **tanpa filter pasal** — periksa apakah pasal yang "
-                f"benar-benar cocok sudah muncul di sini."
-            )
-
-        st.caption(f"Ditemukan **{len(results)}** hasil retrieval untuk query: `{query}`")
-        st.markdown("---")
-
-        # Render setiap hasil dengan Streamlit native components
-        for idx, item in enumerate(results):
-            score = item.get("score", 0.0)
-            child = item.get("child", {})
-            parent = item.get("parent", {})
-
-            child_id    = child.get("chunk_id") or "—"
-            child_sec   = child.get("section") or "—"
-            child_pasal = child.get("pasal")
-            child_ayat  = child.get("ayat")
-            child_text  = child.get("content") or "—"
-
-            parent_id    = parent.get("chunk_id") or "—"
-            parent_title = parent.get("title") or parent_id
-            parent_text  = parent.get("content") or "—"
-
-            # ── Score header ──────────────────────────────────────
-            col_lbl, col_score = st.columns([5, 1])
-            with col_lbl:
-                st.markdown(f"**Hasil #{idx + 1}**")
-            with col_score:
-                # Warna badge berdasarkan skor
-                if score >= 0.4:
-                    badge_color = "#2eb87a"
-                elif score >= 0.2:
-                    badge_color = "#d4a853"
-                else:
-                    badge_color = "#888"
-                st.markdown(
-                    f'<span style="background:{badge_color};color:#fff;font-size:11px;'
-                    f'font-weight:700;padding:3px 10px;border-radius:6px;">'
-                    f'{score:.4f}</span>',
-                    unsafe_allow_html=True,
-                )
-
-            # ── Child chunk ───────────────────────────────────────
-            with st.container(border=True):
-                meta_parts = [child_sec]
-                if child_pasal:
-                    meta_parts.append(f"Pasal {child_pasal}")
-                if child_ayat:
-                    meta_parts.append(f"Ayat {child_ayat}")
-                st.markdown(
-                    f"🟢 **Child Chunk**  \n"
-                    f"<small style='color:#888;'>ID: `{child_id}` &nbsp;|&nbsp; {' · '.join(meta_parts)}</small>",
-                    unsafe_allow_html=True,
-                )
-                st.text(child_text[:600] + ("…" if len(child_text) > 600 else ""))
-
-                st.markdown("<hr style='margin:8px 0;opacity:.3;'>", unsafe_allow_html=True)
-
-                # ── Parent chunk ──────────────────────────────────
-                st.markdown(
-                    f"🟡 **Parent Chunk (Context)**  \n"
-                    f"<small style='color:#888;'>ID: `{parent_id}` &nbsp;|&nbsp; {parent_title}</small>",
-                    unsafe_allow_html=True,
-                )
-                st.text(parent_text[:800] + ("…" if len(parent_text) > 800 else ""))
-
-            st.markdown("")  # spacing
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN RENDER
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1102,10 +884,9 @@ def render_knowledgebase_tab():
     )
     st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
 
-    tab_mon, tab_up, tab_sim = st.tabs([
+    tab_mon, tab_up,  = st.tabs([
         "  📊  Monitoring  ", 
         "  📤  Upload & Proses  ", 
-        "  🔍  Similarity Test  "
     ])
 
     with tab_mon:
@@ -1114,5 +895,4 @@ def render_knowledgebase_tab():
     with tab_up:
         _tab_upload()
 
-    with tab_sim:
-        _tab_similarity_test()
+
