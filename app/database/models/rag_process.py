@@ -19,6 +19,11 @@ class RAGProcess(Base):
         index=True,
     )
 
+    # Judul per-item (independen dari RAGSession.session_title). Kalau NULL
+    # (baris lama sebelum migrasi ini), fallback ke session_title di
+    # history_router._serialize_process.
+    title = Column(String, nullable=True)
+
     raw_transcribe = Column(Text, nullable=True)
     repaired_text = Column(Text, nullable=True)
     search_query = Column(Text, nullable=True)
