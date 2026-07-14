@@ -295,15 +295,12 @@ def render_audio_controls():
         record_bytes = st.session_state.get(_KEY_RECORD_BYTES)
         if record_bytes:
             st.audio(record_bytes, format="audio/wav")
-            col_rag, col_stt, col_clear = st.columns([3, 2, 1])
-            with col_rag:
-                process_rag_rec = st.button(
-                    _rag_btn_label, use_container_width=True,
-                    key="btn_rag_record", type="primary",
-                )
+            col_stt, col_clear = st.columns([4, 1])
             with col_stt:
                 transcribe_record = st.button(
-                    "📝  Transkripsi Saja", use_container_width=True, key="btn_transcribe_record",
+                    "📝  Lakukan transkripsi terlebih dahulu untuk melanjutkan ke proses analisis (RAG)",
+                    use_container_width=True,
+                    key="btn_transcribe_record", type="primary",
                 )
             with col_clear:
                 if st.button("🗑️", use_container_width=True, key="btn_clear_record", help="Hapus rekaman"):
@@ -311,9 +308,6 @@ def render_audio_controls():
                     st.session_state.pop(_KEY_TRANSCRIPTION, None)
                     st.rerun()
 
-            if process_rag_rec:
-                _run_rag_pipeline(record_bytes, "recording.wav",
-                                  provider, knowledge_base, auto_eval)
             if transcribe_record:
                 st.session_state.pop(_KEY_TRANSCRIPTION, None)
                 with st.spinner("Sedang memproses transkripsi rekaman..."):
