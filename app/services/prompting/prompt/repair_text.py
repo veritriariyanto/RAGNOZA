@@ -244,6 +244,13 @@ class TextRefinerService:
         # Guard: jika input adalah pertanyaan/query, skip LLM repair
         if self._is_question_input(raw_text):
             cleaned = raw_text.strip()
+            # PERBAIKAN: passthrough sebelumnya tidak membersihkan filler/elipsis
+            # sama sekali (cuma .strip()) — pertanyaan lisan yang gagap ("anu...
+            # eh...") jadi ikut ke-embed apa adanya sebagai search_query. Cleanup
+            # ini murni regex deterministik (bukan LLM), aman diterapkan ke
+            # pertanyaan tanpa risiko LLM "menjawab" alih-alih membersihkan.
+            if self._has_filler_disfluency(cleaned):
+                cleaned = self._basic_disfluency_cleanup(cleaned)
             # Ekstrak pasal/ayat/huruf via regex agar tetap relevan meski tanpa LLM
             pasal_number = self._extract_pasal_number(cleaned)
             ayat_number = self._extract_ayat_number(cleaned)
