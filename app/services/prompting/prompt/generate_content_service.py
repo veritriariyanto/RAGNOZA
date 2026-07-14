@@ -4,6 +4,7 @@ import logging
 import groq
 from app.core.llm_provider import llm
 from app.schemas.prompting.generate_content import MaterialRequest, MaterialResponse
+from app.services.prompting.prompt.repair_text import _all_pasal_numbers
 # pyrefly: ignore [missing-import]
 from langchain_core.messages import SystemMessage, HumanMessage
 # pyrefly: ignore [missing-import]
@@ -40,10 +41,23 @@ def build_output_instructions() -> str:
         "sama-sama relevan (misal pasal utama + pasal pendukung).\n\n"
 
         "2. INTI SARI RINGKASAN (ringkasan_pembuka + ringkasan)\n"
-        "   - ringkasan_pembuka: WAJIB isi 1-2 kalimat pembuka yang menjelaskan secara UMUM "
-        "pasal utama ini membahas/mengatur tentang apa (mis. 'Pasal 5 UU X mengatur tentang "
-        "syarat dan tata cara pembentukan Y.'), SEBELUM masuk ke poin-poin detail. Ini adalah "
-        "kalimat topik/pengantar, BUKAN pengulangan salah satu poin ringkasan.\n"
+        "   - ringkasan_pembuka: WAJIB isi 1-2 kalimat pembuka yang LANGSUNG MENJAWAB "
+        "pertanyaan/skenario pengguna (bukan sekadar deskripsi topik pasal secara umum), "
+        "sesuai salah satu dari 3 kondisi berikut:\n"
+        "     a) User menyebut nomor pasal yang SALAH/tidak ada di Konteks: WAJIB awali "
+        "dengan koreksi eksplisit dan konsisten dengan 'catatan_validasi', mis. 'Pasal yang "
+        "Anda sebutkan (Pasal 6) tidak tepat/tidak ditemukan pada dokumen referensi ini. "
+        "Pasal yang sesuai adalah Pasal 5, yang mengatur tentang syarat dan tata cara "
+        "pembentukan Y.'\n"
+        "     b) User menyebut nomor pasal yang BENAR (ada di Konteks): konfirmasi "
+        "kesesuaiannya sambil menjawab, mis. 'Benar, Pasal 5 mengatur tentang syarat dan "
+        "tata cara pembentukan Y, sesuai dengan yang Anda tanyakan.'\n"
+        "     c) User TIDAK menyebut nomor pasal sama sekali: jelaskan secara umum pasal "
+        "paling relevan itu mengatur tentang apa, sekaligus menjawab inti pertanyaan/"
+        "skenario user, mis. 'Pasal 5 UU X mengatur tentang syarat dan tata cara "
+        "pembentukan Y, yang relevan dengan skenario yang Anda sampaikan.'\n"
+        "   - Tetap 1-2 kalimat pembuka SEBELUM masuk ke poin-poin detail, BUKAN "
+        "pengulangan salah satu poin ringkasan.\n"
         "   - ringkasan: Pecah isi pasal/ayat yang kaku menjadi beberapa poin (bullet points) yang mudah "
         "dipahami orang awam.\n"
         "   - CAKUPAN WAJIB LENGKAP: buat SATU POIN untuk SETIAP ayat/huruf yang ada pada "
@@ -191,15 +205,25 @@ class MaterialGeneratorService:
             "mengikuti schema yang diberikan."
         )
 
-        human_prompt = (
+        base_human_prompt = (
             f"Konteks teks Dokumen Hukum (Referensi):\n{data.context_text}\n\n"
             f"Pertanyaan/Skenario Pengguna:\n{data.user_scenario}\n\n"
             + build_output_instructions()
             + f"\n{self.json_parser.get_format_instructions()}"
         )
 
+        # Deteksi deterministik (regex, bukan LLM): apakah user menyebut nomor
+        # pasal yang TIDAK ADA di konteks? Model kecil (llama-3.1-8b-instant)
+        # terbukti tidak konsisten menangkap ini sendiri kalau nomor pasal
+        # disisipkan alami dalam kalimat tanya (mis. "Apakah benar Pasal 6
+        # mengatur...") — jadi divalidasi di sini, bukan cuma diserahkan ke LLM.
+        wrong_pasal_nums = set(_all_pasal_numbers(data.user_scenario)) - set(
+            _all_pasal_numbers(data.context_text)
+        )
+
         max_attempts = 2
         last_error = None
+        human_prompt = base_human_prompt
 
         for attempt in range(1, max_attempts + 1):
             try:
@@ -212,7 +236,32 @@ class MaterialGeneratorService:
                 if response is None:
                     raise ValueError("LLM mengembalikan respons kosong/tidak valid.")
 
-                return MaterialResponse.model_validate(response)
+                result = MaterialResponse.model_validate(response)
+
+                if wrong_pasal_nums and attempt < max_attempts:
+                    already_corrected = any(
+                        dh.catatan_validasi and dh.catatan_validasi != "-"
+                        for dh in result.dasar_hukum
+                    )
+                    if not already_corrected:
+                        logger.warning(
+                            f"MaterialGeneratorService: user menyebut Pasal "
+                            f"{sorted(wrong_pasal_nums)} yang tidak ada di konteks, "
+                            "tapi LLM tidak mengoreksinya. Retry dengan hint eksplisit."
+                        )
+                        human_prompt = base_human_prompt + (
+                            "\n\nPERHATIAN KHUSUS (WAJIB DIPATUHI): Pengguna menyebut "
+                            f"Pasal {', '.join(sorted(wrong_pasal_nums))} di pertanyaan/"
+                            "skenarionya, namun nomor pasal tersebut TIDAK ADA di dalam "
+                            "'Konteks teks Dokumen Hukum' di atas. WAJIB koreksi ini "
+                            "secara eksplisit: isi 'catatan_validasi' pada item "
+                            "'dasar_hukum' yang relevan, DAN awali 'ringkasan_pembuka' "
+                            "dengan koreksi tersebut (jangan berpura-pura nomor pasal "
+                            "yang disebut user itu benar)."
+                        )
+                        continue
+
+                return result
 
             except Exception as e:
                 last_error = e

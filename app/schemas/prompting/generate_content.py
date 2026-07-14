@@ -44,8 +44,11 @@ class MaterialResponse(BaseModel):
     dasar_hukum: list[DasarHukum] = Field(default_factory=list)
     ringkasan_pembuka: str = Field(
         default="-",
-        description="1-2 kalimat pembuka yang menjelaskan secara umum pasal utama "
-                    "ini membahas/mengatur tentang apa, sebelum masuk ke poin-poin detail."
+        description="1-2 kalimat pembuka yang LANGSUNG MENJAWAB pertanyaan/skenario user "
+                    "(bukan sekadar deskripsi topik umum): jika user sebut pasal yang salah, "
+                    "wajib koreksi eksplisit di sini (konsisten dengan catatan_validasi); jika "
+                    "pasal yang disebut benar, konfirmasi sambil menjawab; jika user tidak "
+                    "sebut pasal sama sekali, jelaskan pasal relevan sambil menjawab skenarionya."
     )
     ringkasan: list[RingkasanPoint] = Field(default_factory=list)
     konteks_tambahan: str = Field(default="-")
