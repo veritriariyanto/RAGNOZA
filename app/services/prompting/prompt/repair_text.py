@@ -28,6 +28,14 @@ _PASAL_CONNECTOR_PATTERN = re.compile(
 )
 _NUMBER_PATTERN = re.compile(r"^\d+")
 
+# Penanda transkrip lisan gagap/berpikir (hm, eh, anu, apa ya, ...) — sinyal
+# kuat ini transkrip STT mentah yang butuh repair, BUKAN pertanyaan tertulis,
+# meski teksnya pendek & tidak menyebut kata kunci hukum eksplisit apapun.
+_FILLER_PATTERN = re.compile(
+    r"\b(?:hm+|e+m+|eh+|anu|apa\s*ya|gimana\s*ya)\b",
+    re.IGNORECASE,
+)
+
 
 def _all_pasal_numbers(text: str) -> list[str]:
     """Ambil SEMUA nomor pasal yang disebut di teks, termasuk daftar singkat
@@ -60,6 +68,16 @@ class TextRefinerService:
     def _has_doubt_phrase(text: str) -> bool:
         """Deteksi kalimat yang menandakan user ragu dengan pasal yang ia sebutkan."""
         return bool(_DOUBT_PATTERN.search(text))
+
+    @staticmethod
+    def _has_filler_disfluency(text: str) -> bool:
+        """Deteksi tanda gagap/berpikir ('hm', 'eh', 'anu', 'apa ya', atau
+        banyak elipsis '...') — dipakai untuk mencegah transkrip lisan mentah
+        salah dianggap 'pertanyaan' hanya karena pendek & tanpa kata kunci
+        hukum eksplisit (lihat _is_question_input)."""
+        if _FILLER_PATTERN.search(text):
+            return True
+        return text.count("...") >= 3
 
     @staticmethod
     def _is_ambiguous_pasal(text: str) -> bool:
@@ -155,6 +173,12 @@ class TextRefinerService:
         # Cek apakah teks terlalu pendek untuk jadi dokumen hukum (< 20 kata)
         word_count = len(cleaned.split())
         if word_count < 20:
+            # Transkrip lisan gagap/berpikir ("hm... apa ya... eh...") — meski
+            # pendek & tanpa kata kunci hukum eksplisit, ini BUKAN pertanyaan
+            # tertulis, jadi tetap harus lewat repair LLM, bukan di-passthrough.
+            if self._has_filler_disfluency(cleaned):
+                return False
+
             # Teks pendek yang tidak mengandung kata kunci dokumen hukum
             legal_keywords = (
                 "pasal", "ayat", "huruf", "undang-undang", "peraturan",
@@ -164,7 +188,7 @@ class TextRefinerService:
             has_legal_keyword = any(kw in lower for kw in legal_keywords)
             if not has_legal_keyword:
                 return True
-        
+
         return False
 
     def _apply_doubt_bypass(self, raw_text: str, pasal_number, ayat_number):

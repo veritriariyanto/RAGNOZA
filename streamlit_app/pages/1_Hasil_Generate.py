@@ -12,6 +12,20 @@ from components.evaluation_ui import render_evaluation_section
 # Inisialisasi session state agar sidebar tidak error saat properti belum ada
 init_session_state()
 
+# Label tampilan untuk kode provider mentah yang disimpan di database
+# (lihat app/routes/prompting/integration_router.py & rag_integration_service.py)
+_STT_PROVIDER_LABELS = {
+    "whisper": "🎧 Groq Whisper (whisper-large-v3)",
+    "elevenlabs": "🎙️ ElevenLabs (scribe_v1)",
+    "text_input": "✏️ Input Teks (tanpa STT)",
+}
+
+
+def _format_stt_provider(raw_provider: str | None) -> str:
+    if not raw_provider:
+        return "-"
+    return _STT_PROVIDER_LABELS.get(raw_provider, raw_provider)
+
 # =========================================
 # PAGE CONFIG
 # =========================================
@@ -67,7 +81,7 @@ if session_id:
             'session_title') or 'Analisis Tanpa Judul'
         st.subheader(f"📁 {case_title}")
         st.caption(
-            f"Waktu Eksekusi: {data.get('created_at')} | STT Provider: {data.get('provider')}")
+            f"Waktu Eksekusi: {data.get('created_at')} | STT Provider: {_format_stt_provider(data.get('provider'))}")
 
         st.divider()
 
