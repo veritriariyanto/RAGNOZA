@@ -124,6 +124,10 @@ if session_id:
             else:
                 if "dasar_hukum" in material or "ringkasan" in material:
                     # Render new structure
+                    ringkasan_pembuka = material.get("ringkasan_pembuka")
+                    if ringkasan_pembuka and ringkasan_pembuka != "-":
+                        st.markdown(ringkasan_pembuka)
+
                     st.markdown("#### **Poin-Poin Penting:**")
                     ringkasan_list = material.get("ringkasan") or []
                     if ringkasan_list:

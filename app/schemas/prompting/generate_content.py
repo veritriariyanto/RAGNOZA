@@ -42,6 +42,11 @@ class QAPair(BaseModel):
 
 class MaterialResponse(BaseModel):
     dasar_hukum: list[DasarHukum] = Field(default_factory=list)
+    ringkasan_pembuka: str = Field(
+        default="-",
+        description="1-2 kalimat pembuka yang menjelaskan secara umum pasal utama "
+                    "ini membahas/mengatur tentang apa, sebelum masuk ke poin-poin detail."
+    )
     ringkasan: list[RingkasanPoint] = Field(default_factory=list)
     konteks_tambahan: str = Field(default="-")
     analisa_risiko: list[ContohPelanggaran] = Field(default_factory=list)
