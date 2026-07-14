@@ -377,7 +377,7 @@ def render_audio_controls():
     # ── Hasil transkripsi (STT only) ─────────────────────────────────────────
     transcription = st.session_state.get(_KEY_TRANSCRIPTION)
     if transcription is not None:
-        _handle_transcription_success(transcription, knowledge_base)
+        _handle_transcription_success(transcription, knowledge_base, provider=provider)
 
 
 # =============================================================================
@@ -416,8 +416,13 @@ def _run_rag_pipeline(audio_bytes: bytes, filename: str, provider: str, knowledg
     _handle_pipeline_success(rag_response, knowledge_base)
 
 
-def _run_text_pipeline(text: str, knowledge_base: str, auto_evaluate: bool = False):
-    """Run RAG pipeline from existing transcription text (no STT)."""
+def _run_text_pipeline(text: str, knowledge_base: str, auto_evaluate: bool = False, stt_provider: str | None = None):
+    """Run RAG pipeline from existing transcription text (no STT).
+
+    stt_provider: isi 'whisper'/'elevenlabs' kalau `text` berasal dari hasil
+        transkripsi audio (supaya histori mencatat provider STT yang benar,
+        bukan selalu "text_input"), biarkan None kalau teks diketik manual.
+    """
     status_label = "⏳ Menjalankan Pipeline RAG & Evaluasi..." if auto_evaluate else "⏳ Menjalankan Pipeline RAG..."
 
     # PERBAIKAN: Seluruh proses harus dikurung di dalam block status sampai selesai!
@@ -430,6 +435,7 @@ def _run_text_pipeline(text: str, knowledge_base: str, auto_evaluate: bool = Fal
             knowledge_base=knowledge_base,
             auto_evaluate=auto_evaluate,
             session_id=get_rag_session_id(),
+            stt_provider=stt_provider,
         )
 
         if rag_response.get("status") == "error":
@@ -490,8 +496,13 @@ def _handle_pipeline_success(rag_response: dict, knowledge_base: str):
 # =============================================================================
 
 
-def _handle_transcription_success(transcription: str, knowledge_base: str):
-    """Show editable transcription result with a button to run the full pipeline."""
+def _handle_transcription_success(transcription: str, knowledge_base: str, provider: str | None = None):
+    """Show editable transcription result with a button to run the full pipeline.
+
+    provider: provider STT ('whisper'/'elevenlabs') yang menghasilkan `transcription`
+        ini, diteruskan ke pipeline supaya histori mencatat provider STT yang benar
+        (bukan selalu "text_input") saat user lanjut lewat tombol "Proses dari Transkripsi".
+    """
     st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
     st.success("✅ Transkripsi berhasil!")
 
@@ -552,4 +563,4 @@ def _handle_transcription_success(transcription: str, knowledge_base: str):
             st.warning("⚠️ Teks transkripsi kosong, tidak bisa diproses.")
         else:
             auto_eval = st.session_state.get("toggle_auto_evaluate", False)
-            _run_text_pipeline(text_to_process, knowledge_base, auto_eval)
+            _run_text_pipeline(text_to_process, knowledge_base, auto_eval, stt_provider=provider)

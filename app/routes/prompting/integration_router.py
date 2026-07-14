@@ -200,7 +200,7 @@ async def process_text_rag(
 
         return {
             "status": "success",
-            "provider": "text_input",
+            "provider": request.stt_provider or "text_input",
             "knowledge_base": request.knowledge_base,
             "data": {
                 "transcription": {

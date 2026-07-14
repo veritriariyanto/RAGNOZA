@@ -46,3 +46,8 @@ class TextIntegrationRequest(BaseModel):
     auto_evaluate: bool = Field(
         True, description="Run RAGAS evaluation in background")
     session_id: Optional[int] = Field(None, description="Existing session ID")
+    stt_provider: Optional[str] = Field(
+        None,
+        description="Provider STT yang menghasilkan teks ini ('whisper'/'elevenlabs'), "
+                    "jika teks berasal dari transkripsi audio. None jika teks diketik manual.",
+    )
