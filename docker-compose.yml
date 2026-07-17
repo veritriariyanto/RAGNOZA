@@ -40,7 +40,7 @@ services:
       context: ./evaluator
       dockerfile: Dockerfile
     container_name: ragnoza_evaluator
-    restart: unless-stopped
+    restart: no
     ports:
       - "8001:8001"
     environment:
@@ -55,7 +55,7 @@ services:
       context: ./streamlit_app
       dockerfile: Dockerfile
     container_name: ragnoza_streamlit
-    restart: unless-stopped
+    restart: no
     ports:
       - "8501:8501"
     environment:
