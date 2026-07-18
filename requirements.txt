@@ -1,10 +1,31 @@
+# requirements.txt
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+
 fastapi
-uvicorn
+uvicorn[standard]
 sqlalchemy
 psycopg2-binary
 qdrant-client
 langchain
 langchain-groq
 langchain-community
+langchain-huggingface
 sentence-transformers
+elevenlabs
 python-dotenv
+python-multipart
+pypdf
+pdfplumber
+pymupdf
+regex
+nltk
+langdetect
+unicodedata2
+pydantic
+pydantic-settings
+aiofiles
+httpx
+PyPDF2
+alembic

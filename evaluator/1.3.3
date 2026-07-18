@@ -1,0 +1,77 @@
+Requirement already satisfied: langchain-core in c:\ta new uud\ragnoza\venv\lib\site-packages (0.1.53)
+Collecting langchain-core
+  Obtaining dependency information for langchain-core from https://files.pythonhosted.org/packages/0f/1a/86c38c27b81913a1c6c12448cab55defb5a1097c7dc9a4cea83f55477a2d/langchain_core-1.4.0-py3-none-any.whl.metadata
+  Using cached langchain_core-1.4.0-py3-none-any.whl.metadata (4.5 kB)
+Requirement already satisfied: langchain-groq in c:\ta new uud\ragnoza\venv\lib\site-packages (1.1.2)
+Requirement already satisfied: langchain-huggingface in c:\ta new uud\ragnoza\venv\lib\site-packages (1.2.2)
+Requirement already satisfied: langchain-classic in c:\ta new uud\ragnoza\venv\lib\site-packages (1.0.7)
+Requirement already satisfied: jsonpatch<2.0.0,>=1.33.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-core) (1.33)
+Requirement already satisfied: langchain-protocol>=0.0.14 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-core) (0.0.16)
+Collecting langsmith<1.0.0,>=0.3.45 (from langchain-core)
+  Obtaining dependency information for langsmith<1.0.0,>=0.3.45 from https://files.pythonhosted.org/packages/8d/71/94a8f2b573278a0b0b7dfd37663c0ddd36867f9e2bba69addd183de0cd56/langsmith-0.8.8-py3-none-any.whl.metadata
+  Downloading langsmith-0.8.8-py3-none-any.whl.metadata (15 kB)
+Requirement already satisfied: packaging>=23.2.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-core) (23.2)
+Requirement already satisfied: pydantic<3.0.0,>=2.7.4 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-core) (2.13.4)
+Requirement already satisfied: pyyaml<7.0.0,>=5.3.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-core) (6.0.3)
+Requirement already satisfied: tenacity!=8.4.0,<10.0.0,>=8.1.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-core) (8.5.0)
+Requirement already satisfied: typing-extensions<5.0.0,>=4.7.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-core) (4.15.0)
+Requirement already satisfied: uuid-utils<1.0,>=0.12.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-core) (0.16.0)
+Requirement already satisfied: groq<1.0.0,>=0.30.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-groq) (0.37.1)
+Requirement already satisfied: huggingface-hub<2.0.0,>=0.33.4 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-huggingface) (1.17.0)
+Requirement already satisfied: tokenizers<1.0.0,>=0.19.1 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-huggingface) (0.22.2)
+Collecting langchain-text-splitters<2.0.0,>=1.1.2 (from langchain-classic)
+  Obtaining dependency information for langchain-text-splitters<2.0.0,>=1.1.2 from https://files.pythonhosted.org/packages/d3/26/1ef06f56198d631296d646a6223de35bcc6cf9795ceb2442816bc963b84c/langchain_text_splitters-1.1.2-py3-none-any.whl.metadata
+  Using cached langchain_text_splitters-1.1.2-py3-none-any.whl.metadata (3.3 kB)
+Requirement already satisfied: requests<3.0.0,>=2.0.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-classic) (2.34.2)
+Requirement already satisfied: sqlalchemy<3.0.0,>=1.4.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langchain-classic) (2.0.50)
+Requirement already satisfied: anyio<5,>=3.5.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from groq<1.0.0,>=0.30.0->langchain-groq) (4.13.0)
+Requirement already satisfied: distro<2,>=1.7.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from groq<1.0.0,>=0.30.0->langchain-groq) (1.9.0)
+Requirement already satisfied: httpx<1,>=0.23.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from groq<1.0.0,>=0.30.0->langchain-groq) (0.28.1)
+Requirement already satisfied: sniffio in c:\ta new uud\ragnoza\venv\lib\site-packages (from groq<1.0.0,>=0.30.0->langchain-groq) (1.3.1)
+Requirement already satisfied: click>=8.4.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (8.4.1)
+Requirement already satisfied: filelock>=3.10.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (3.29.0)
+Requirement already satisfied: fsspec>=2023.5.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (2026.2.0)
+Requirement already satisfied: hf-xet<2.0.0,>=1.4.3 in c:\ta new uud\ragnoza\venv\lib\site-packages (from huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (1.5.0)
+Requirement already satisfied: tqdm>=4.42.1 in c:\ta new uud\ragnoza\venv\lib\site-packages (from huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (4.67.3)
+Requirement already satisfied: typer<0.26.0,>=0.20.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (0.25.1)
+Requirement already satisfied: jsonpointer>=1.9 in c:\ta new uud\ragnoza\venv\lib\site-packages (from jsonpatch<2.0.0,>=1.33.0->langchain-core) (3.1.1)
+Requirement already satisfied: orjson>=3.9.14 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langsmith<1.0.0,>=0.3.45->langchain-core) (3.11.9)
+Requirement already satisfied: requests-toolbelt>=1.0.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langsmith<1.0.0,>=0.3.45->langchain-core) (1.0.0)
+Requirement already satisfied: websockets>=15.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langsmith<1.0.0,>=0.3.45->langchain-core) (16.0)
+Requirement already satisfied: xxhash>=3.0.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langsmith<1.0.0,>=0.3.45->langchain-core) (3.7.0)
+Requirement already satisfied: zstandard>=0.23.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from langsmith<1.0.0,>=0.3.45->langchain-core) (0.25.0)
+Requirement already satisfied: annotated-types>=0.6.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from pydantic<3.0.0,>=2.7.4->langchain-core) (0.7.0)
+Requirement already satisfied: pydantic-core==2.46.4 in c:\ta new uud\ragnoza\venv\lib\site-packages (from pydantic<3.0.0,>=2.7.4->langchain-core) (2.46.4)
+Requirement already satisfied: typing-inspection>=0.4.2 in c:\ta new uud\ragnoza\venv\lib\site-packages (from pydantic<3.0.0,>=2.7.4->langchain-core) (0.4.2)
+Requirement already satisfied: charset_normalizer<4,>=2 in c:\ta new uud\ragnoza\venv\lib\site-packages (from requests<3.0.0,>=2.0.0->langchain-classic) (3.4.7)
+Requirement already satisfied: idna<4,>=2.5 in c:\ta new uud\ragnoza\venv\lib\site-packages (from requests<3.0.0,>=2.0.0->langchain-classic) (3.17)
+Requirement already satisfied: urllib3<3,>=1.26 in c:\ta new uud\ragnoza\venv\lib\site-packages (from requests<3.0.0,>=2.0.0->langchain-classic) (2.7.0)
+Requirement already satisfied: certifi>=2023.5.7 in c:\ta new uud\ragnoza\venv\lib\site-packages (from requests<3.0.0,>=2.0.0->langchain-classic) (2026.5.20)
+Requirement already satisfied: greenlet>=1 in c:\ta new uud\ragnoza\venv\lib\site-packages (from sqlalchemy<3.0.0,>=1.4.0->langchain-classic) (3.5.1)
+Requirement already satisfied: colorama in c:\ta new uud\ragnoza\venv\lib\site-packages (from click>=8.4.0->huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (0.4.6)
+Requirement already satisfied: httpcore==1.* in c:\ta new uud\ragnoza\venv\lib\site-packages (from httpx<1,>=0.23.0->groq<1.0.0,>=0.30.0->langchain-groq) (1.0.9)
+Requirement already satisfied: h11>=0.16 in c:\ta new uud\ragnoza\venv\lib\site-packages (from httpcore==1.*->httpx<1,>=0.23.0->groq<1.0.0,>=0.30.0->langchain-groq) (0.16.0)
+Requirement already satisfied: shellingham>=1.3.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (1.5.4)
+Requirement already satisfied: rich>=13.8.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (14.3.4)
+Requirement already satisfied: annotated-doc>=0.0.2 in c:\ta new uud\ragnoza\venv\lib\site-packages (from typer<0.26.0,>=0.20.0->huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (0.0.4)
+Requirement already satisfied: markdown-it-py>=2.2.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from rich>=13.8.0->typer<0.26.0,>=0.20.0->huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (4.2.0)
+Requirement already satisfied: pygments<3.0.0,>=2.13.0 in c:\ta new uud\ragnoza\venv\lib\site-packages (from rich>=13.8.0->typer<0.26.0,>=0.20.0->huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (2.20.0)
+Requirement already satisfied: mdurl~=0.1 in c:\ta new uud\ragnoza\venv\lib\site-packages (from markdown-it-py>=2.2.0->rich>=13.8.0->typer<0.26.0,>=0.20.0->huggingface-hub<2.0.0,>=0.33.4->langchain-huggingface) (0.1.2)
+Using cached langchain_core-1.4.0-py3-none-any.whl (548 kB)
+Using cached langchain_text_splitters-1.1.2-py3-none-any.whl (35 kB)
+Downloading langsmith-0.8.8-py3-none-any.whl (402 kB)
+   ---------------------------------------- 402.7/402.7 kB 2.3 MB/s eta 0:00:00
+Installing collected packages: langsmith, langchain-core, langchain-text-splitters
+  Attempting uninstall: langsmith
+    Found existing installation: langsmith 0.1.147
+    Uninstalling langsmith-0.1.147:
+      Successfully uninstalled langsmith-0.1.147
+  Attempting uninstall: langchain-core
+    Found existing installation: langchain-core 0.1.53
+    Uninstalling langchain-core-0.1.53:
+      Successfully uninstalled langchain-core-0.1.53
+  Attempting uninstall: langchain-text-splitters
+    Found existing installation: langchain-text-splitters 0.0.2
+    Uninstalling langchain-text-splitters-0.0.2:
+      Successfully uninstalled langchain-text-splitters-0.0.2
+Successfully installed langchain-core-1.4.0 langchain-text-splitters-1.1.2 langsmith-0.8.8
