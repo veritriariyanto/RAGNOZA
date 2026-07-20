@@ -29,3 +29,4 @@ aiofiles
 httpx
 PyPDF2
 alembic
+pandas
