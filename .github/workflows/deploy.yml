@@ -1,0 +1,94 @@
+name: Build and Push to GHCR
+
+on:
+  push:
+    branches:
+      - main
+
+    paths:
+      - "src/**"
+      - "evaluator/**"
+      - "streamlit_app/**"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/**"
+
+env:
+  REGISTRY: ghcr.io
+  # Menggunakan nama repository lowercase otomatis (misal: username/repo-name)
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Normalize image name
+        shell: bash
+        run: echo "IMAGE_NAME=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (Tags & Labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=sha,format=short
+
+      # ── 1. Build & Push Service: APP ──
+      - name: Build and push 'app' image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/app:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/app:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── 2. Build & Push Service: EVALUATOR ──
+      - name: Build and push 'evaluator' image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./evaluator
+          file: ./evaluator/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/evaluator:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/evaluator:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── 3. Build & Push Service: STREAMLIT ──
+      - name: Build and push 'streamlit' image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./streamlit_app
+          file: ./streamlit_app/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/streamlit:${{ github.ref_name }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/streamlit:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

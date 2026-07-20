@@ -1,0 +1,417 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500;600&display=swap');
+
+        /* ── Root Variables — Dark Theme ── */
+        :root {
+            --gold:        #D4A853;
+            --gold-light:  #F0CC80;
+            --gold-dim:    #C49A3C;
+            --gold-glow:   rgba(212,168,83,0.18);
+            --text-primary:   #F0EDE8;
+            --text-secondary: #A89F93;
+            --text-muted:     #6B6460;
+            --surface-0:   #0D0D0D;
+            --surface-1:   #161616;
+            --surface-2:   #1E1E1E;
+            --surface-3:   #272727;
+            --border:      rgba(212,168,83,0.22);
+            --border-soft: rgba(240,237,232,0.08);
+            --shadow:      0 4px 24px rgba(0,0,0,0.5);
+            --shadow-lg:   0 12px 48px rgba(0,0,0,0.7);
+            --green:       #5DBE8A;
+            --orange:      #E8934A;
+            --red:         #E06070;
+            --green-bg:    rgba(93,190,138,0.12);
+            --orange-bg:   rgba(232,147,74,0.12);
+            --red-bg:      rgba(224,96,112,0.12);
+            --radius: 12px;
+        }
+
+        /* ── Section Header ── */
+        .ac-header {
+            font-family: 'DM Serif Display', Georgia, serif;
+            font-size: 1.55rem;
+            color: var(--text-primary);
+            letter-spacing: -0.02em;
+            margin-bottom: 2px;
+            line-height: 1.2;
+        }
+        .ac-subheader {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.82rem;
+            color: #F0EDE8;
+            font-weight: 400;
+            margin-bottom: 18px;
+            letter-spacing: 0.01em;
+        }
+
+        /* ── Divider ── */
+        .ac-divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent, var(--gold), transparent);
+            margin: 20px 0;
+            opacity: 0.6;
+        }
+
+        /* ── Card wrapper ── */
+        .ac-card {
+            background: var(--surface-1);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 20px 22px;
+            box-shadow: var(--shadow);
+            margin-bottom: 16px;
+        }
+
+        /* ── Select label override ── */
+        .ac-label {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--gold-dim);
+            margin-bottom: 4px;
+        }
+
+        /* ── Action buttons ── */
+        div[data-testid="stButton"] > button {
+            font-family: 'DM Sans', sans-serif !important;
+            font-weight: 500 !important;
+            letter-spacing: 0.02em !important;
+            border-radius: 8px !important;
+            transition: all 0.18s ease !important;
+        }
+        div[data-testid="stButton"] > button[kind="primary"] {
+            background: linear-gradient(135deg, #D4A853 0%, #B8873A 100%) !important;
+            border: none !important;
+            color: #0D0D0D !important;
+            font-weight: 700 !important;
+            box-shadow: 0 2px 16px rgba(212,168,83,0.4) !important;
+        }
+        div[data-testid="stButton"] > button[kind="primary"]:hover {
+            box-shadow: 0 4px 28px rgba(212,168,83,0.6) !important;
+            transform: translateY(-1px) !important;
+        }
+        div[data-testid="stButton"] > button:not([kind="primary"]) {
+            background: var(--surface-2) !important;
+            border: 1px solid var(--border-soft) !important;
+            color: var(--text-secondary) !important;
+        }
+        div[data-testid="stButton"] > button:not([kind="primary"]):hover {
+            border-color: var(--gold) !important;
+            color: var(--text-primary) !important;
+            background: var(--surface-3) !important;
+        }
+
+        /* ── Tabs ── */
+        div[data-testid="stTabs"] button[role="tab"] {
+            font-family: 'DM Sans', sans-serif !important;
+            font-size: 0.82rem !important;
+            font-weight: 500 !important;
+            letter-spacing: 0.04em !important;
+            color: var(--text-muted) !important;
+        }
+        div[data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+            color: var(--gold-light) !important;
+            border-bottom: 2px solid var(--gold) !important;
+        }
+
+        /* ── Analysis section header ── */
+        .result-header {
+            font-family: 'DM Serif Display', serif;
+            font-size: 1.25rem;
+            color: var(--text-primary);
+            letter-spacing: -0.01em;
+            padding: 14px 0 6px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 14px;
+        }
+
+        /* ── RAGAS strip ── */
+        .ragas-strip {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 16px;
+            margin-top: 12px;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 12px;
+        }
+        .ragas-label {
+            color: var(--text-secondary);
+            font-weight: 600;
+            letter-spacing: 0.05em;
+            margin-right: 4px;
+        }
+        .badge {
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 11.5px;
+            letter-spacing: 0.02em;
+        }
+        .badge-green  { background: var(--green-bg);  color: var(--green);  border: 1px solid rgba(93,190,138,0.25); }
+        .badge-orange { background: var(--orange-bg); color: var(--orange); border: 1px solid rgba(232,147,74,0.25); }
+        .badge-red    { background: var(--red-bg);    color: var(--red);    border: 1px solid rgba(224,96,112,0.25); }
+        .badge-gray   { background: rgba(255,255,255,0.06); color: var(--text-secondary); border: 1px solid var(--border-soft); }
+        .ragas-meta {
+            color: var(--text-muted);
+            margin-left: auto;
+            font-size: 10.5px;
+        }
+
+        /* ── Metric cards ── */
+        .metric-row {
+            display: flex;
+            gap: 12px;
+            margin: 12px 0;
+        }
+        .metric-card {
+            flex: 1;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 14px;
+            text-align: center;
+        }
+        .metric-card .metric-label {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+        .metric-card .metric-value {
+            font-family: 'DM Serif Display', serif;
+            font-size: 1.4rem;
+            color: var(--text-primary);
+        }
+
+        /* ── Section label inside results ── */
+        .section-label {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--gold);
+            margin: 16px 0 6px 0;
+        }
+
+        /* ── Info pill ── */
+        .info-pill {
+            display: inline-block;
+            background: var(--gold-glow);
+            border: 1px solid rgba(212,168,83,0.35);
+            color: var(--gold-light);
+            border-radius: 20px;
+            padding: 3px 12px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 11.5px;
+            font-weight: 500;
+            margin-right: 6px;
+            margin-bottom: 4px;
+        }
+
+        /* ── Expander override ── */
+        details summary {
+            font-family: 'DM Sans', sans-serif !important;
+            font-weight: 500 !important;
+            font-size: 0.88rem !important;
+            color: var(--text-secondary) !important;
+        }
+
+        /* ── Text area ── */
+        div[data-testid="stTextArea"] textarea {
+            font-family: 'DM Sans', sans-serif !important;
+            font-size: 0.9rem !important;
+            border-radius: 8px !important;
+            border-color: var(--border-soft) !important;
+            background: var(--surface-2) !important;
+            color: var(--text-primary) !important;
+        }
+        div[data-testid="stTextArea"] textarea:focus {
+            border-color: var(--gold) !important;
+            box-shadow: 0 0 0 2px rgba(212,168,83,0.2) !important;
+        }
+
+        /* ── File uploader ── */
+        div[data-testid="stFileUploader"] {
+            border-radius: var(--radius) !important;
+        }
+        div[data-testid="stFileUploadDropzone"] {
+            border: 2px dashed rgba(212,168,83,0.3) !important;
+            border-radius: var(--radius) !important;
+            background: var(--surface-1) !important;
+            transition: border-color 0.2s, background 0.2s !important;
+        }
+        div[data-testid="stFileUploadDropzone"]:hover {
+            border-color: var(--gold) !important;
+            background: var(--gold-glow) !important;
+        }
+
+        /* ── Selectbox ── */
+        div[data-testid="stSelectbox"] > div > div {
+            border-radius: 8px !important;
+            border-color: var(--border-soft) !important;
+            background-color: var(--surface-2) !important;
+            color: var(--text-primary) !important;
+            font-family: 'DM Sans', sans-serif !important;
+        }
+
+        /* ── Progress bar ── */
+        div[data-testid="stProgress"] > div > div {
+            background: linear-gradient(90deg, var(--gold), var(--gold-dim)) !important;
+            border-radius: 4px !important;
+        }
+        div[data-testid="stProgress"] > div {
+            background: var(--surface-3) !important;
+            border-radius: 4px !important;
+        }
+
+        /* ── Caption override ── */
+        div[data-testid="stCaptionContainer"] p {
+            font-family: 'DM Sans', sans-serif !important;
+            font-size: 0.78rem !important;
+            color: var(--text-muted) !important;
+        }
+
+        /* ── Audio player ── */
+        div[data-testid="stAudio"] audio {
+            border-radius: 8px !important;
+            width: 100% !important;
+        }
+
+        /* ── Alert boxes ── */
+        div[data-testid="stAlert"] {
+            border-radius: 10px !important;
+            font-family: 'DM Sans', sans-serif !important;
+            border-left-color: var(--gold) !important;
+        }
+
+        /* ── Metric widget ── */
+        div[data-testid="stMetric"] label {
+            color: var(--text-muted) !important;
+            font-family: 'DM Sans', sans-serif !important;
+            font-size: 0.75rem !important;
+            letter-spacing: 0.06em !important;
+            text-transform: uppercase !important;
+        }
+        div[data-testid="stMetricValue"] {
+            color: var(--text-primary) !important;
+            font-family: 'DM Serif Display', serif !important;
+        }
+
+        /* ── Spinner ── */
+        div[data-testid="stSpinner"] p {
+            color: var(--text-secondary) !important;
+            font-family: 'DM Sans', sans-serif !important;
+        }
+
+        .gt-header {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 0.95rem;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            color: #D4A853;
+            margin: 16px 0 6px 0;
+        }
+
+        .info-box {
+            background: rgba(212,168,83,0.08);
+            border: 1px solid rgba(212,168,83,0.25);
+            border-radius: 10px;
+            padding: 16px 20px;
+            font-family: 'DM Sans', sans-serif;
+            color: #A89F93;
+            font-size: 0.88rem;
+        }
+
+        .ragas-badge {
+            padding: 2px 10px;
+            border-radius: 5px;
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .info-pill-container {
+            margin-bottom: 14px;
+        }
+
+        .summary-title {
+            font-family: 'DM Serif Display', serif;
+            font-size: 1.1rem;
+            color: #F0EDE8;
+            margin: 0 0 8px 0;
+        }
+
+        .segment-pill {
+            background: rgba(212,168,83,0.12);
+            color: #D4A853;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-family: 'DM Sans', sans-serif;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .history-empty {
+            text-align: center;
+            padding: 4rem 1rem;
+        }
+
+        .history-empty-text {
+            font-family: 'DM Sans', sans-serif;
+            font-size: 1rem;
+            color: #6B6460;
+            margin-top: 0.5rem;
+            letter-spacing: 0.02em;
+        }
+        /* Semua tab */
+        .stTabs button[role="tab"] {
+            color: #FFFFFF !important;
+            background: transparent !important;
+        }
+
+        /* Teks di dalam tab */
+        .stTabs button[role="tab"] p {
+            color: #FFFFFF !important;
+        }
+
+        /* Tab aktif */
+        .stTabs button[role="tab"][aria-selected="true"] {
+            color: #D4A853 !important;
+            background: transparent !important;
+        }
+
+        /* Teks tab aktif */
+        .stTabs button[role="tab"][aria-selected="true"] p {
+            color: #D4A853 !important;
+        }
+        
+        .white-caption {
+            color: white;
+            font-size: 0.875rem;
+            opacity: 0.9;
+        }
+
+        /* Label metric */
+        [data-testid="stMetricLabel"] * {
+            color: white !important;
+        }
+
+        /* Value metric */
+        [data-testid="stMetricValue"] * {
+            color: white !important;
+        }
+
+        /* Delta metric (jika ada) */
+        [data-testid="stMetricDelta"] * {
+            color: white !important;
+        }
