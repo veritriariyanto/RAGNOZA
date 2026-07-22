@@ -93,6 +93,72 @@ def process_and_chunk(
         return {"success": False, "error": str(e)}
 
 
+def upload_and_clean_multi(files: list) -> dict:
+    """POST /api/v1/knowledgebase/chunking/upload-multi — cleaning beberapa PDF.
+
+    Args:
+        files: List of (filename, pdf_bytes) tuples.
+    """
+    try:
+        multipart_files = [
+            ("files", (name, data, "application/pdf"))
+            for name, data in files
+        ]
+        response = requests.post(
+            f"{BASE_URL}/knowledgebase/chunking/upload-multi",
+            files=multipart_files,
+            timeout=300,
+        )
+        if response.status_code == 200:
+            return {"success": True, "data": response.json()}
+        else:
+            detail = response.json().get("detail", response.text)
+            return {"success": False, "error": detail}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def process_and_chunk_multi(
+    files: list,
+    embed: bool = False,
+    collection: str | None = None,
+    include_raw_chunks: bool = True,
+) -> dict:
+    """POST /api/v1/knowledgebase/chunking/process-multi — full pipeline beberapa PDF.
+
+    Args:
+        files: List of (filename, pdf_bytes) tuples.
+        embed: Jika True, chunk di-embed dan diindeks ke Qdrant.
+        collection: Nama collection (opsional, auto dari nama file jika None).
+        include_raw_chunks: Jika True, sertakan seluruh raw chunks dalam response.
+    """
+    try:
+        params = {
+            "include_raw_chunks": str(include_raw_chunks).lower(),
+            "embed": str(embed).lower(),
+        }
+        if collection:
+            params["collection"] = collection
+
+        multipart_files = [
+            ("files", (name, data, "application/pdf"))
+            for name, data in files
+        ]
+        response = requests.post(
+            f"{BASE_URL}/knowledgebase/chunking/process-multi",
+            files=multipart_files,
+            params=params,
+            timeout=600,
+        )
+        if response.status_code == 200:
+            return {"success": True, "data": response.json()}
+        else:
+            detail = response.json().get("detail", response.text)
+            return {"success": False, "error": detail}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 def delete_knowledgebase(base_name: str) -> dict:
     """DELETE /api/v1/knowledgebase/qdran/delete/{base_name}"""
     try:
