@@ -27,6 +27,15 @@ _PASAL_CONNECTOR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _NUMBER_PATTERN = re.compile(r"^\d+")
+_AYAT_FINDALL_PATTERN = re.compile(r"ayat\s*\(?(\d+)\)?", re.IGNORECASE)
+
+# Penanda transkrip lisan gagap/berpikir (hm, eh, anu, apa ya, ...) — sinyal
+# kuat ini transkrip STT mentah yang butuh repair, BUKAN pertanyaan tertulis,
+# meski teksnya pendek & tidak menyebut kata kunci hukum eksplisit apapun.
+_FILLER_PATTERN = re.compile(
+    r"\b(?:hm+|e+m+|eh+|anu|apa\s*ya|gimana\s*ya)\b",
+    re.IGNORECASE,
+)
 
 
 def _all_pasal_numbers(text: str) -> list[str]:
@@ -49,6 +58,11 @@ def _all_pasal_numbers(text: str) -> list[str]:
     return numbers
 
 
+def _all_ayat_numbers(text: str) -> list[str]:
+    """Ambil SEMUA nomor ayat yang disebut di teks (mis. 'ayat (2)', 'ayat 2')."""
+    return _AYAT_FINDALL_PATTERN.findall(text)
+
+
 class TextRefinerService:
     def __init__(self):
         self.engine = llm
@@ -60,6 +74,31 @@ class TextRefinerService:
     def _has_doubt_phrase(text: str) -> bool:
         """Deteksi kalimat yang menandakan user ragu dengan pasal yang ia sebutkan."""
         return bool(_DOUBT_PATTERN.search(text))
+
+    @staticmethod
+    def _basic_disfluency_cleanup(text: str) -> str:
+        """Bersihkan filler ('hm', 'eh', 'anu', ...) & elipsis secara
+        deterministik (regex, TANPA LLM). Dipakai sebagai jaring pengaman
+        terakhir kalau LLM repair gagal berulang kali — supaya user tidak
+        pernah melihat '...'/'hm'/'eh' mentah, meski hasilnya tidak serapi
+        restrukturisasi LLM (nomor pasal/ayat dijamin tidak hilang karena
+        cuma noise yang dibuang, bukan kalimat yang ditulis ulang)."""
+        cleaned = _FILLER_PATTERN.sub(" ", text)
+        cleaned = re.sub(r"\.{2,}", " ", cleaned)
+        cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        cleaned = re.sub(r"^[,.\s]+", "", cleaned)
+        return cleaned
+
+    @staticmethod
+    def _has_filler_disfluency(text: str) -> bool:
+        """Deteksi tanda gagap/berpikir ('hm', 'eh', 'anu', 'apa ya', atau
+        banyak elipsis '...') — dipakai untuk mencegah transkrip lisan mentah
+        salah dianggap 'pertanyaan' hanya karena pendek & tanpa kata kunci
+        hukum eksplisit (lihat _is_question_input)."""
+        if _FILLER_PATTERN.search(text):
+            return True
+        return text.count("...") >= 3
 
     @staticmethod
     def _is_ambiguous_pasal(text: str) -> bool:
@@ -155,6 +194,12 @@ class TextRefinerService:
         # Cek apakah teks terlalu pendek untuk jadi dokumen hukum (< 20 kata)
         word_count = len(cleaned.split())
         if word_count < 20:
+            # Transkrip lisan gagap/berpikir ("hm... apa ya... eh...") — meski
+            # pendek & tanpa kata kunci hukum eksplisit, ini BUKAN pertanyaan
+            # tertulis, jadi tetap harus lewat repair LLM, bukan di-passthrough.
+            if self._has_filler_disfluency(cleaned):
+                return False
+
             # Teks pendek yang tidak mengandung kata kunci dokumen hukum
             legal_keywords = (
                 "pasal", "ayat", "huruf", "undang-undang", "peraturan",
@@ -164,7 +209,7 @@ class TextRefinerService:
             has_legal_keyword = any(kw in lower for kw in legal_keywords)
             if not has_legal_keyword:
                 return True
-        
+
         return False
 
     def _apply_doubt_bypass(self, raw_text: str, pasal_number, ayat_number):
@@ -199,6 +244,13 @@ class TextRefinerService:
         # Guard: jika input adalah pertanyaan/query, skip LLM repair
         if self._is_question_input(raw_text):
             cleaned = raw_text.strip()
+            # PERBAIKAN: passthrough sebelumnya tidak membersihkan filler/elipsis
+            # sama sekali (cuma .strip()) — pertanyaan lisan yang gagap ("anu...
+            # eh...") jadi ikut ke-embed apa adanya sebagai search_query. Cleanup
+            # ini murni regex deterministik (bukan LLM), aman diterapkan ke
+            # pertanyaan tanpa risiko LLM "menjawab" alih-alih membersihkan.
+            if self._has_filler_disfluency(cleaned):
+                cleaned = self._basic_disfluency_cleanup(cleaned)
             # Ekstrak pasal/ayat/huruf via regex agar tetap relevan meski tanpa LLM
             pasal_number = self._extract_pasal_number(cleaned)
             ayat_number = self._extract_ayat_number(cleaned)
@@ -226,7 +278,6 @@ class TextRefinerService:
         ayat_fallback = self._extract_ayat_number(raw_text)
         pasal_fallback, ayat_fallback = self._apply_doubt_bypass(raw_text, pasal_fallback, ayat_fallback)
         huruf_fallback = self._extract_huruf(raw_text)
-        search_fallback = self._clean_query(raw_text.strip())
 
         system_prompt = (
             "Anda adalah editor naskah hukum dan analis teks spesialis peraturan perundang-undangan Indonesia. "
@@ -238,6 +289,18 @@ class TextRefinerService:
             "Contoh: jika teks menyebut 'Pasal 15 ayat (2) huruf f', search_query harus mengandung 'Pasal 15 ayat (2) huruf f'.\n"
             "5. Ekstrak 'pasal_number': nomor pasal yang disebut dalam teks (integer), atau null jika tidak ada.\n"
             "6. Ekstrak 'ayat_number': nomor ayat yang disebut (integer), atau null jika tidak ada.\n\n"
+            "PENTING SOAL KOREKSI DIRI LISAN: pembicara sering mengoreksi diri saat "
+            "menyebut nomor pasal/ayat, mis. 'pasal berapa ya... oh iya pasal 19' atau "
+            "'pasal 5... eh maksud saya pasal 6'. Pola koreksi diri itu BUKAN noise "
+            "yang boleh dibuang begitu saja — nomor FINAL yang disebut (yang terakhir/"
+            "dikonfirmasi) WAJIB tetap muncul di 'repaired_text' sebagai bagian dari "
+            "kalimat utuh, BUKAN cuma dimasukkan ke 'search_query' saja.\n"
+            "   Contoh input: 'Di pasal berapa ya... oh iya pasal 15 yang mengatur "
+            "soal wewenang... pejabat berwenang melakukan penyelidikan.'\n"
+            "   Contoh repaired_text BENAR: 'Pasal 15 mengatur bahwa pejabat "
+            "berwenang melakukan penyelidikan.' (nomor pasal tetap ada)\n"
+            "   Contoh repaired_text SALAH: 'Pejabat berwenang melakukan "
+            "penyelidikan.' (nomor pasal hilang meski sempat disebut di input)\n\n"
             "PENTING: Input yang kamu terima SELALU berupa fragmen teks dokumen hukum, bukan pertanyaan. "
             "JANGAN menghasilkan jawaban atas apapun. Tugasmu HANYA memperbaiki teks yang diberikan dan mengembalikannya.\n\n"
             "WAJIB kembalikan HANYA JSON valid dengan skema yang diminta. Tanpa markdown code block."
@@ -263,13 +326,35 @@ class TextRefinerService:
                 if not isinstance(response, dict) or "repaired_text" not in response or "search_query" not in response:
                     raise ValueError("Output LLM tidak sesuai skema JSON")
 
-                # Validasi tambahan: pastikan LLM tidak menghallusinasi jawaban
-                # Jika repaired_text jauh lebih panjang dari input asli (>2x), kemungkinan LLM menjawab
+                # Validasi tambahan: pastikan LLM tidak menghallusinasi jawaban.
+                # Jika repaired_text jauh lebih panjang dari input asli (>2x),
+                # kemungkinan LLM menjawab — minta LLM coba ulang (raise → retry)
+                # alih-alih diam-diam dipakai apa adanya.
                 original_word_count = len(raw_text.split())
                 repaired_word_count = len(response["repaired_text"].split())
                 if repaired_word_count > original_word_count * 2.5:
-                    print(f"[Warning] TextRefinerService: repaired_text terdeteksi terlalu panjang (kemungkinan hallusinasi). Fallback ke teks asli.")
-                    response["repaired_text"] = raw_text.strip()
+                    raise ValueError(
+                        "repaired_text terlalu panjang dari asli (kemungkinan hallusinasi)"
+                    )
+
+                # Validasi tambahan: pastikan LLM TIDAK membuang referensi pasal/
+                # ayat yang eksplisit ada di teks asli. Model kecil (8B) kadang
+                # "merapikan" kalimat yang strukturnya patah-patah (banyak jeda/
+                # gagap) dengan cara menghapus klausa pasal/ayat supaya kalimatnya
+                # terdengar mulus — melanggar instruksi #3 di system prompt. Di-raise
+                # (bukan langsung fallback diam-diam) supaya dapat kesempatan retry
+                # dulu — percobaan lain sering berhasil mempertahankan referensinya.
+                raw_pasal_nums = set(_all_pasal_numbers(raw_text))
+                raw_ayat_nums = set(_all_ayat_numbers(raw_text))
+                repaired_pasal_nums = set(_all_pasal_numbers(response["repaired_text"]))
+                repaired_ayat_nums = set(_all_ayat_numbers(response["repaired_text"]))
+                if (raw_pasal_nums and not raw_pasal_nums.issubset(repaired_pasal_nums)) or \
+                   (raw_ayat_nums and not raw_ayat_nums.issubset(repaired_ayat_nums)):
+                    raise ValueError(
+                        "repaired_text kehilangan referensi pasal/ayat asli "
+                        f"(pasal={raw_pasal_nums - repaired_pasal_nums}, "
+                        f"ayat={raw_ayat_nums - repaired_ayat_nums})"
+                    )
 
                 # Bersihkan search_query dengan langsung mengambil dari repaired_text
                 # agar format tanda kurung dst tetap terjaga identik.
@@ -302,15 +387,36 @@ class TextRefinerService:
                     await asyncio.sleep(retry_delay)
                     continue
 
-                print(f"[Error] TextRefinerService internal: {error_msg}")
-                break
+                # PERBAIKAN: dulu non-429 langsung `break` (menyerah di percobaan
+                # pertama, max_retries jadi tidak berlaku sama sekali untuk error
+                # jenis ini). Padahal output LLM tidak deterministik walau
+                # temperature rendah — percobaan ulang sering berhasil. Sekarang
+                # retry juga, sama seperti kasus rate limit.
+                print(
+                    f"[Warning] TextRefinerService: percobaan {attempt + 1}/{max_retries} "
+                    f"gagal ({error_msg})."
+                    + (" Mencoba ulang..." if attempt < max_retries - 1 else "")
+                )
+                continue
 
-        # Fallback aman jika seluruh retry gagal atau terjadi error non-429
-        # PERBAIKAN: Gunakan regex fallback yang sudah diekstrak
+        # Fallback aman jika seluruh retry gagal atau terjadi error non-429.
+        # Kalau teks asli mengandung tanda gagap/elipsis, bersihkan dulu secara
+        # deterministik (regex) — supaya user TIDAK PERNAH melihat "..."/"hm"/
+        # "eh" mentah walau LLM repair gagal total. Bukan serapi hasil LLM,
+        # tapi nomor pasal/ayat dijamin utuh karena cuma noise yang dibuang.
         print(f"[Warning] TextRefinerService: Seluruh retry gagal. Fallback ke regex extraction.")
+        fallback_text = raw_text.strip()
+        if self._has_filler_disfluency(fallback_text):
+            fallback_text = self._basic_disfluency_cleanup(fallback_text)
         return {
-            "repaired_text": raw_text.strip(),
-            "search_query": search_fallback,
+            "repaired_text": fallback_text,
+            # PERBAIKAN: search_query WAJIB diturunkan dari fallback_text yang
+            # sudah dibersihkan (sama seperti jalur sukses LLM di baris ~330:
+            # `_clean_query(response["repaired_text"])`), BUKAN dari
+            # `search_fallback` yang dihitung sebelum pembersihan disfluensi —
+            # kalau tidak, query yang di-embed untuk pencarian Qdrant tetap
+            # mengandung "...", "eh", dll meski repaired_text sudah bersih.
+            "search_query": self._clean_query(fallback_text),
             "pasal_number": pasal_fallback,
             "ayat_number": ayat_fallback,
             "huruf": huruf_fallback,

@@ -104,12 +104,18 @@ def process_text_integrated(
     style: str = "formal",
     auto_evaluate: bool = False,
     session_id: int | None = None,
+    stt_provider: str | None = None,
 ) -> dict:
     """
     Kirim teks (hasil transkripsi) ke pipeline RAG terintegrasi.
     Endpoint: POST /prompting/integration/process-text-integrated
 
     Returns dict sama seperti process_audio_integrated.
+
+    Args:
+        stt_provider: isi 'whisper'/'elevenlabs' jika `text` berasal dari hasil
+            transkripsi audio (agar histori mencatat provider STT yang benar),
+            biarkan None jika teks diketik manual.
     """
     try:
         payload = {
@@ -120,6 +126,8 @@ def process_text_integrated(
         }
         if session_id is not None:
             payload["session_id"] = session_id
+        if stt_provider is not None:
+            payload["stt_provider"] = stt_provider
 
         response = requests.post(
             f"{BASE_URL}/prompting/integration/process-text-integrated",

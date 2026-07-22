@@ -12,6 +12,12 @@ PERUBAHAN ARSITEKTUR V2:
     Telah di-update untuk mendukung ekstraksi segmen material (Summary, QA, Risk)
     sebelum menembak HTTP POST ke evaluator service (port 8001).
 
+FIX #8 (efisiensi token dataset_eval_reference):
+    Tambah parameter skip_answer_relevancy + existing_answer_relevancy, diteruskan
+    apa adanya ke payload evaluator. Dipakai saat question & answer identik dengan
+    evaluasi sebelumnya (mis. dataset_eval_reference vs dataset_eval_live) — hanya
+    context yang berbeda — supaya answer_relevancy (yang tidak bergantung context)
+    tidak dihitung ulang dengan LLM call yang sia-sia.
 
 Alur:
     User Question
@@ -52,12 +58,21 @@ async def trigger_auto_evaluation(
     source_label: str = "rag_pipeline",
     history_id: Optional[int] = None,
     context_chunks: Optional[list[str]] = None,   # ← tambah ini
+    skip_answer_relevancy: bool = False,           # ← FIX #8
+    existing_answer_relevancy: Optional[float] = None,   # ← FIX #8
     # CATATAN: jangan terima 'db' dari request — buat session baru di dalam
 ) -> dict:
     """
     Fungsi Entry-Point utama (Hook) untuk memicu evaluasi otomatis RAGAS secara asinkron.
     Fungsi ini dieksekusi sebagai FastAPI BackgroundTask agar user di frontend tidak perlu 
     menunggu proses hitung LLM yang lama saat selesai men-generate materi hukum.
+
+    FIX #8: skip_answer_relevancy=True (dengan existing_answer_relevancy terisi)
+    membuat evaluator melewati perhitungan answer_relevancy dan memakai nilai
+    existing sebagai gantinya — faithfulness_summary/qa, risk_faithfulness,
+    context_precision/recall TETAP dihitung penuh seperti biasa. Cocok dipakai
+    saat question & answer sama persis dengan evaluasi sebelumnya, hanya
+    context yang berubah (mis. dataset_eval_reference setelah dataset_eval_live).
     """
     # 1. SEGMENTASI TEKS HUKUM:
     # Memecah objek MaterialResponse yang kompleks menjadi komponen teks spesifik 
@@ -68,8 +83,9 @@ async def trigger_auto_evaluation(
     full_answer = material_to_text(material)
 
     logger.info(
-        "[AutoEval:%s] Mengirim data tersegmentasi ke evaluator | q=%d chars | ctx=%d chars | ans_full=%d chars",
+        "[AutoEval:%s] Mengirim data tersegmentasi ke evaluator | q=%d chars | ctx=%d chars | ans_full=%d chars%s",
         source_label, len(question), len(context), len(full_answer),
+        " | skip_answer_relevancy=True" if skip_answer_relevancy else "",
     )
 
     # 3. STRUKTURISASI PAYLOAD JSON:
@@ -86,6 +102,10 @@ async def trigger_auto_evaluation(
         "ground_truth": ground_truth,
         "source_label": source_label,
         "context_chunks": context_chunks or [],   # ← tambah ini
+
+        # FIX #8 — efisiensi token: reuse answer_relevancy, tidak dihitung ulang
+        "skip_answer_relevancy": skip_answer_relevancy,
+        "existing_answer_relevancy": existing_answer_relevancy,
     }
 
     # Tambahkan di dalam _build_payload_from_material sebelum return dict
@@ -110,12 +130,13 @@ async def trigger_auto_evaluation(
         # (selalu None dari full eval) — log lama menampilkannya sebagai 0.0000
         # yang menyesatkan (terlihat seperti gagal total). Gunakan skor per-segmen.
         logger.info(
-            "[AutoEval:%s] ✅ Selesai | faith_summary=%s | faith_qa=%s | relevancy=%.4f | "
+            "[AutoEval:%s] ✅ Selesai | faith_summary=%s | faith_qa=%s | relevancy=%.4f%s | "
             "risk_faith=%s | precision=%s | recall=%s | segments=%s",
             source_label,
             f"{metrics['faithfulness_summary']:.4f}" if metrics.get("faithfulness_summary") is not None else "N/A",
             f"{metrics['faithfulness_qa']:.4f}" if metrics.get("faithfulness_qa") is not None else "N/A",
             metrics.get("answer_relevancy") or 0.0,
+            " (reused)" if skip_answer_relevancy else "",
             f"{metrics['risk_faithfulness']:.4f}" if metrics.get("risk_faithfulness") is not None else "N/A",
             f"{metrics['context_precision']:.4f}" if metrics.get("context_precision") else "N/A",
             f"{metrics['context_recall']:.4f}"    if metrics.get("context_recall")    else "N/A",

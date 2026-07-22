@@ -473,6 +473,11 @@ class QdrantService:
                     qmodels.FieldCondition(key="pasal_number", match=qmodels.MatchValue(value=pasal)),
                 ])
             )
+        # Simpan filter TANPA ayat secara terpisah — dipakai sebagai fallback
+        # pertengahan (lihat blok retry di bawah) untuk KB yang menyimpan chunk
+        # utuh per pasal (ayat_number selalu null), di mana filter pasal+ayat
+        # gabungan gagal total meski pasalnya sendiri jelas ada.
+        conditions_without_ayat = list(conditions)
         if ayat is not None:
             conditions.append(
                 qmodels.Filter(should=[
@@ -497,6 +502,34 @@ class QdrantService:
         )
 
         pasal_not_found = False
+
+        # ── Fallback pertengahan: pasal+ayat kosong → coba pasal SAJA ──────────
+        # Sebagian KB menyimpan chunk utuh per pasal (ayat_number selalu null,
+        # tidak dipecah per ayat). Kalau user menyebut ayat (mis. kutipan ulang
+        # "sebagaimana dimaksud dalam ayat 1" dari isi pasalnya sendiri), filter
+        # gabungan pasal+ayat gagal total meski pasalnya jelas ada di DB — jangan
+        # langsung dianggap "pasal tidak ditemukan", coba dulu pasal saja.
+        if not search_resp.points and pasal is not None and ayat is not None:
+            pasal_only_filter = (
+                qmodels.Filter(must=conditions_without_ayat)
+                if conditions_without_ayat else None
+            )
+            pasal_only_resp = await client.query_points(
+                collection_name=child_col,
+                query=query_vector,
+                limit=fetch_limit,
+                query_filter=pasal_only_filter,
+                with_payload=True,
+                score_threshold=score_threshold,
+            )
+            if pasal_only_resp.points:
+                logger.info(
+                    "[QDRANT] Filter pasal=%s+ayat=%s kosong, tapi pasal=%s SAJA "
+                    "ketemu (%d hasil) — KB ini kemungkinan menyimpan chunk utuh "
+                    "per pasal. Pakai hasil pasal-saja, TIDAK ditandai pasal_not_found.",
+                    pasal, ayat, pasal, len(pasal_only_resp.points),
+                )
+                search_resp = pasal_only_resp
 
         # ── Retry conditions ─────────────────────────────────────────────────
         # Retry tanpa filter jika:

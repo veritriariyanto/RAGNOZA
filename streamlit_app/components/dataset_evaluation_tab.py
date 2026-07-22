@@ -44,7 +44,8 @@ def _card_stat(value, label: str, color: str = "var(--text-primary)"):
 
 
 def _get_dataset_options() -> list[dict]:
-    res = list_datasets()
+    with st.spinner("Memuat daftar dataset..."):
+        res = list_datasets()
     if res.get("status") != "success":
         st.error(f"❌ Gagal memuat daftar dataset: {res.get('error')}")
         return []
@@ -88,6 +89,7 @@ def _subtab_kelola():
                 res = create_dataset(name.strip(), desc.strip() or None)
             if res.get("status") == "success":
                 st.success(f"✅ Dataset '{name}' berhasil dibuat.")
+                st.toast(f"Dataset '{name}' siap digunakan.", icon="✅")
                 st.rerun()
             else:
                 st.error(f"❌ Gagal membuat dataset: {res.get('error')}")
@@ -142,6 +144,7 @@ def _subtab_kelola():
                 res = add_items(dataset_id, [item])
             if res.get("status") == "success":
                 st.success("✅ Soal berhasil ditambahkan.")
+                st.toast("Soal baru tersimpan.", icon="✅")
                 st.rerun()
             else:
                 st.error(f"❌ Gagal menambah soal: {res.get('error')}")
@@ -182,11 +185,27 @@ def _subtab_upload_csv():
 
             if res.get("status") != "success":
                 st.error(f"❌ Upload gagal: {res.get('error')}")
+                st.toast("Upload gagal diproses.", icon="❌")
             else:
                 result = res["data"]
                 inserted = result.get("inserted_count", 0)
                 skipped = result.get("skipped_count", 0)
                 errors = result.get("errors", [])
+
+                # Notifikasi eksplisit bahwa proses upload sudah SELESAI diproses,
+                # tidak hanya mengandalkan angka pada kartu statistik.
+                if inserted > 0 and skipped == 0:
+                    st.success(f"✅ Upload selesai diproses — {inserted} soal berhasil ditambahkan.")
+                    st.toast(f"{inserted} soal berhasil ditambahkan.", icon="✅")
+                elif inserted > 0 and skipped > 0:
+                    st.warning(
+                        f"⚠️ Upload selesai diproses dengan sebagian error — "
+                        f"{inserted} berhasil, {skipped} dilewati. Lihat detail di bawah."
+                    )
+                    st.toast(f"Upload selesai: {inserted} berhasil, {skipped} dilewati.", icon="⚠️")
+                else:
+                    st.error("❌ Upload selesai diproses, tetapi tidak ada soal yang berhasil ditambahkan.")
+                    st.toast("Tidak ada soal yang berhasil ditambahkan.", icon="❌")
 
                 col1, col2 = st.columns(2)
                 with col1:
@@ -206,7 +225,8 @@ def _subtab_upload_csv():
     st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="ac-label-step">PREVIEW ISI DATASET</div>', unsafe_allow_html=True)
 
-    res_items = list_items(dataset_id)
+    with st.spinner("Memuat isi dataset..."):
+        res_items = list_items(dataset_id)
     if res_items.get("status") != "success":
         st.error(f"❌ Gagal memuat item: {res_items.get('error')}")
         return
@@ -273,14 +293,17 @@ def _subtab_run():
                 run_data = res["data"]
                 st.session_state["_dataset_eval_active_run_id"] = run_data["id"]
                 st.success(f"✅ Run #{run_data['id']} dimulai — status: {run_data['status']}.")
+                st.toast(f"Run #{run_data['id']} dimulai.", icon="▶️")
                 st.rerun()
             else:
                 st.error(f"❌ Gagal memulai run: {res.get('error')}")
+                st.toast("Gagal memulai run.", icon="❌")
 
     st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
     st.markdown('<div class="ac-label-step">STATUS & LAPORAN RUN</div>', unsafe_allow_html=True)
 
-    res_runs = list_runs(dataset_id)
+    with st.spinner("Memuat riwayat run..."):
+        res_runs = list_runs(dataset_id)
     if res_runs.get("status") != "success":
         st.error(f"❌ Gagal memuat riwayat run: {res_runs.get('error')}")
         return
@@ -328,10 +351,18 @@ def _subtab_run():
     with col_auto:
         auto_refresh = st.toggle("🔁 Auto-refresh (5 detik)", key=toggle_key)
 
-    res_report = get_run_report(selected_run_id)
+    with st.spinner("Memuat laporan run..."):
+        res_report = get_run_report(selected_run_id)
+
     if res_report.get("status") != "success":
         st.error(f"❌ Gagal memuat laporan run: {res_report.get('error')}")
         return
+
+    # Notifikasi eksplisit khusus saat user klik refresh manual, supaya user
+    # tahu proses cek status sudah selesai (tidak dipakai saat auto-refresh
+    # agar toast tidak muncul berulang setiap 5 detik).
+    if check_now:
+        st.toast("Status run diperbarui.", icon="🔄")
 
     report = res_report["data"]
     status = report["status"]
@@ -348,10 +379,19 @@ def _subtab_run():
         st.session_state["_dataset_eval_toggle_version"] = toggle_version + 1
         if active_run_id == selected_run_id:
             st.session_state.pop("_dataset_eval_active_run_id", None)
+            if status == "completed":
+                st.toast(f"Run #{report['run_id']} selesai.", icon="✅")
+            else:
+                st.toast(f"Run #{report['run_id']} gagal.", icon="❌")
 
     if report["total_items"] == 0:
         st.info("⏳ Evaluasi sedang berjalan di background, belum ada hasil. Klik 'Refresh Status', atau aktifkan Auto-refresh.")
     else:
+        if status == "completed":
+            st.success(f"✅ Run #{report['run_id']} selesai — {report['total_items']} item berhasil dievaluasi.")
+        elif status == "failed":
+            st.error(f"❌ Run #{report['run_id']} gagal diproses.")
+
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
         _render_metric_row(report["aggregate_live"], "📊 Agregat — Live Retrieval")
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
@@ -371,7 +411,10 @@ def _subtab_run():
                         "Item ID": it["dataset_item_id"],
                         "Pertanyaan": (it["question"][:60] + "…") if len(it["question"]) > 60 else it["question"],
                         "Tipe Eval": it["evaluation_type"],
+                        "category": it.get("category") or "-",
                         "Faithfulness (QA)": it.get("faithfulness_qa"),
+                        "Faithfulness (Summary)": it.get("faithfulness_summary"),
+                        "Faithfulness (Risk)": it.get("risk_faithfulness"),
                         "Answer Relevancy": it.get("answer_relevancy"),
                         "Context Precision": it.get("context_precision"),
                         "Context Recall": it.get("context_recall"),
@@ -383,6 +426,7 @@ def _subtab_run():
             )
 
     if auto_refresh and status not in ("completed", "failed"):
+        st.caption("🔁 Auto-refresh aktif — memperbarui dalam 5 detik...")
         time.sleep(5)
         st.rerun()
 

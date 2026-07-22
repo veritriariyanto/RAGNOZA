@@ -22,6 +22,18 @@ ALUR YANG BENAR:
         → is_reeval=True + history_id wajib
         → hitung HANYA precision + recall
         → merge ke skor di DB (tidak overwrite faith/relevancy/risk)
+
+FIX #8 — Efisiensi dataset_eval_reference (skip_answer_relevancy).
+    MASALAH: dataset_eval_reference menjalankan _run_full_eval dari nol,
+    termasuk menghitung ulang answer_relevancy — padahal question & answer
+    IDENTIK dengan dataset_eval_live (hanya context yang beda), dan
+    answer_relevancy tidak bergantung pada context sama sekali. Ini membuang
+    ~3 LLM call/soal tanpa nilai tambah (hasilnya pasti sama).
+
+    SOLUSI: flag `skip_answer_relevancy=True` + `existing_answer_relevancy`.
+    Beda dengan is_reeval (skip faithfulness+relevancy+risk semua), di sini
+    HANYA answer_relevancy yang di-skip — faithfulness_summary/qa, risk,
+    precision, recall tetap dihitung penuh karena memang bergantung context.
 """
 
 import logging
@@ -33,6 +45,8 @@ from app.schemas.evaluation_schemas import EvaluationMetrics, EvaluationResponse
 from app.services.ragas_service import ragas_service
 
 logger = logging.getLogger(__name__)
+
+logging.getLogger("ragas").setLevel(logging.DEBUG)
 
 _eval_semaphore = asyncio.Semaphore(1)
 
@@ -73,6 +87,7 @@ class EvaluationService:
         context_chunks: Optional[list[str]] = None,
         existing_faithfulness_summary: Optional[float] = None,   # ← FIX #7 (Prioritas 4)
         existing_faithfulness_qa: Optional[float] = None,        # ← FIX #7 (Prioritas 4)
+        skip_answer_relevancy: bool = False,                     # ← FIX #8
     ) -> EvaluationResponse:
 
         input_payload = {
@@ -102,6 +117,16 @@ class EvaluationService:
                 error="is_reeval=True membutuhkan ground_truth. Isi ground_truth terlebih dahulu.",
                 input=input_payload,
             )
+
+        # FIX #8 — Guard: skip_answer_relevancy butuh existing_answer_relevancy,
+        # kalau tidak ada tidak masuk akal untuk di-skip (tidak ada nilai pengganti).
+        if skip_answer_relevancy and existing_answer_relevancy is None:
+            logger.warning(
+                "[EvalService:%s] skip_answer_relevancy=True tapi existing_answer_relevancy "
+                "kosong — answer_relevancy akan tetap dihitung ulang sebagai fallback aman.",
+                source_label,
+            )
+            skip_answer_relevancy = False
 
         # Guard: semua segmen "-" hanya diblock saat bukan is_reeval
         if not is_reeval:
@@ -157,6 +182,8 @@ class EvaluationService:
 
                 # ─────────────────────────────────────────────────────────────
                 # MODE B: FULL EVAL — semua metrik (Path A / auto eval)
+                # FIX #8: skip_answer_relevancy bisa mengurangi 1 metrik di
+                # dalam mode ini tanpa mengubah metrik lain (beda dengan is_reeval).
                 # ─────────────────────────────────────────────────────────────
                 return await self._run_full_eval(
                     question=question,
@@ -169,6 +196,8 @@ class EvaluationService:
                     source_label=source_label,
                     input_payload=input_payload,
                     context_chunks=context_chunks,
+                    skip_answer_relevancy=skip_answer_relevancy,           # ← FIX #8
+                    existing_answer_relevancy=existing_answer_relevancy,   # ← FIX #8
                 )
 
         except Exception as exc:
@@ -195,10 +224,18 @@ class EvaluationService:
         source_label, 
         input_payload,
         context_chunks: Optional[list[str]] = None, 
+        skip_answer_relevancy: bool = False,                      # ← FIX #8
+        existing_answer_relevancy: Optional[float] = None,        # ← FIX #8
     ) -> EvaluationResponse:
         """
         Evaluasi lengkap: faithfulness (summary) + relevancy (qa) + risk_faithfulness (risk).
         Jika ground_truth ada, tambah precision + recall pada segmen QA.
+
+        FIX #8: jika skip_answer_relevancy=True, JALUR 2 hanya menghitung
+        faithfulness segmen QA (1 metrik, bukan 2) — answer_relevancy diambil
+        dari existing_answer_relevancy tanpa panggilan LLM tambahan. Berguna
+        saat question & answer identik dengan evaluasi sebelumnya dan hanya
+        context yang berubah (relevancy tidak bergantung context).
         """
         evaluated_segments = []
 
@@ -230,21 +267,41 @@ class EvaluationService:
             faithfulness_score = result.to_pandas().to_dict(orient="records")[0].get("faithfulness")
             evaluated_segments.append("faithfulness")
 
-        # JALUR 2: QA → Faithfulness + Relevancy (context PENUH)
+        # JALUR 2: QA → Faithfulness (+ Relevancy, kecuali di-skip) (context PENUH)
         answer_relevancy_score = qa_faithfulness_score = None
         if answer_qa.strip() not in ("-", "", "None"):
-            logger.info("[EvalService][full] [2/3] Faithfulness + Relevancy segmen QA (context penuh)...")
-            result = await ragas_service.evaluate_rag_custom(
-                question=question,
-                context=context,
-                answer=answer_qa,
-                metric_types=["faithfulness", "answer_relevancy"],
-                ground_truth=ground_truth,
-                context_chunks=None,
-            )
-            scores = result.to_pandas().to_dict(orient="records")[0]
-            qa_faithfulness_score  = scores.get("faithfulness")
-            answer_relevancy_score = scores.get("answer_relevancy")
+            if skip_answer_relevancy:
+                # FIX #8: hanya faithfulness_qa yang dihitung — 1 metrik saja,
+                # bukan 2 — answer_relevancy di-reuse dari evaluasi sebelumnya.
+                logger.info(
+                    "[EvalService][full] [2/3] Faithfulness segmen QA saja "
+                    "(answer_relevancy di-reuse=%.4f, tidak dihitung ulang)...",
+                    existing_answer_relevancy or 0.0,
+                )
+                result = await ragas_service.evaluate_rag_custom(
+                    question=question,
+                    context=context,
+                    answer=answer_qa,
+                    metric_types=["faithfulness"],
+                    ground_truth=ground_truth,
+                    context_chunks=None,
+                )
+                scores = result.to_pandas().to_dict(orient="records")[0]
+                qa_faithfulness_score  = scores.get("faithfulness")
+                answer_relevancy_score = existing_answer_relevancy
+            else:
+                logger.info("[EvalService][full] [2/3] Faithfulness + Relevancy segmen QA (context penuh)...")
+                result = await ragas_service.evaluate_rag_custom(
+                    question=question,
+                    context=context,
+                    answer=answer_qa,
+                    metric_types=["faithfulness", "answer_relevancy"],
+                    ground_truth=ground_truth,
+                    context_chunks=None,
+                )
+                scores = result.to_pandas().to_dict(orient="records")[0]
+                qa_faithfulness_score  = scores.get("faithfulness")
+                answer_relevancy_score = scores.get("answer_relevancy")
             evaluated_segments.append("qa")
 
         context_precision_score = context_recall_score = None
@@ -317,12 +374,13 @@ class EvaluationService:
         f_qa      = _safe_round(qa_faithfulness_score)
 
         logger.info(
-            "[EvalService:%s][full] faith_summary=%s | faith_qa=%s | rel=%.4f | risk_faith=%s | "
+            "[EvalService:%s][full] faith_summary=%s | faith_qa=%s | rel=%.4f%s | risk_faith=%s | "
             "prec=%s | rec=%s",
             source_label,
             f"{f_summary:.4f}" if f_summary is not None else "N/A",
             f"{f_qa:.4f}" if f_qa is not None else "N/A",
             r or 0,
+            " (reused)" if skip_answer_relevancy else "",
             f"{rf:.4f}" if rf is not None else "N/A",   # FIX: None ≠ 0.0 — jangan disamakan
             f"{p:.4f}" if p else "N/A",
             f"{c:.4f}" if c else "N/A",

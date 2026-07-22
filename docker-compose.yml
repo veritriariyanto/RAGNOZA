@@ -1,7 +1,6 @@
-version: '3.8'
+version: "3.8"
 
 services:
-
   # ── Service utama — RAG pipeline, LangChain 1.3.x, port 8000 ──────────────
   app:
     build:
@@ -11,6 +10,8 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
       GROQ_API_KEY: ${GROQ_API_KEY}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY}
@@ -41,14 +42,37 @@ services:
       context: ./evaluator
       dockerfile: Dockerfile
     container_name: ragnoza_evaluator
-    restart: unless-stopped
+    restart: no
     ports:
       - "8001:8001"
+    env_file:
+      - .env
     environment:
       GROQ_API_KEY: ${GROQ_API_KEY}
       # Evaluator tidak butuh akses Qdrant atau Postgres langsung
       # (data sudah dikirim oleh service utama via HTTP payload)
     # Evaluator TIDAK depends_on postgres/qdrant karena tidak akses langsung
+
+  # ── Streamlit UI — Frontend dashboard, port 8501 ─────────────────────────────
+  streamlit:
+    build:
+      context: ./streamlit_app
+      dockerfile: Dockerfile
+    container_name: ragnoza_streamlit
+    restart: no
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    environment:
+      API_BASE_URL: http://app:8000/api/v1
+      EVALUATOR_BASE_URL: http://evaluator:8001/api/v1
+      PROJECT_NAME: RAGNOZA AI
+      DEBUG: "True"
+    depends_on:
+      - app
+    volumes:
+      - ./streamlit_app:/app
 
   # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:

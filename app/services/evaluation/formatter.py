@@ -16,9 +16,13 @@ def material_to_text(material: MaterialResponse) -> str:
         dasar_hukum_list.append(f"- {item.nama_peraturan} {item.pasal} {item.ayat or ''}{catatan}".strip())
     dasar_hukum_text = "\n".join(dasar_hukum_list) if dasar_hukum_list else "-"
 
-    # 2. Format ringkasan
+    # 2. Format ringkasan (kalimat pembuka + poin-poin)
     ringkasan_list = [f"- {item.poin}" for item in material.ringkasan]
-    ringkasan_text = "\n".join(ringkasan_list) if ringkasan_list else "-"
+    ringkasan_points_text = "\n".join(ringkasan_list) if ringkasan_list else "-"
+    pembuka = material.ringkasan_pembuka or "-"
+    ringkasan_text = (
+        f"{pembuka}\n{ringkasan_points_text}" if pembuka != "-" else ringkasan_points_text
+    )
 
     # 3. Konteks tambahan
     konteks_tambahan_text = material.konteks_tambahan or "-"
@@ -62,9 +66,11 @@ def extract_segments_for_ragas(material: MaterialResponse) -> dict:
     dasar_hukum_text = " | ".join(dasar_hukum_list) if dasar_hukum_list else "-"
     ringkasan_text = " | ".join(item.poin for item in material.ringkasan) if material.ringkasan else "-"
     konteks_tambahan_text = material.konteks_tambahan or "-"
+    pembuka_text = material.ringkasan_pembuka or "-"
 
     segment_faithfulness = (
         f"Dasar Hukum: {dasar_hukum_text}\n"
+        f"Ringkasan Pembuka: {pembuka_text}\n"
         f"Ringkasan: {ringkasan_text}\n"
         f"Konteks Tambahan: {konteks_tambahan_text}"
     )

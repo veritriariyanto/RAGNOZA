@@ -57,6 +57,7 @@ async def evaluate(request: EvaluationRequest) -> EvaluationResponse:
             context_chunks=request.context_chunks or [], 
             existing_faithfulness_summary=request.existing_faithfulness_summary,   # ← FIX #7
             existing_faithfulness_qa=request.existing_faithfulness_qa,
+            skip_answer_relevancy=request.skip_answer_relevancy,   # ← FIX #8
         )
         return result
 

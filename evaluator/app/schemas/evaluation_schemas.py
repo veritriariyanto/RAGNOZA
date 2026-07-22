@@ -2,6 +2,15 @@
 #
 # FIX #3: tambah is_reeval + existing_* fields di EvaluationRequest
 # agar evaluator tahu kapan harus skip faithfulness/relevancy/risk.
+#
+# FIX #8 (efisiensi token dataset_eval_reference): tambah skip_answer_relevancy.
+# Berbeda dengan is_reeval (yang skip faithfulness+relevancy+risk sekaligus,
+# hanya hitung precision+recall), skip_answer_relevancy HANYA melewati
+# answer_relevancy saja — faithfulness_summary/qa/risk/precision/recall
+# tetap dihitung ulang seperti biasa. Dipakai khusus oleh dataset_eval_reference:
+# pertanyaan & jawaban identik dengan dataset_eval_live (context beda), dan
+# answer_relevancy secara definisi tidak bergantung pada context sama sekali
+# — menghitungnya ulang hanya membuang ~3 LLM call/soal tanpa nilai tambah.
 
 from pydantic import BaseModel, Field
 from typing import Optional, List
@@ -14,6 +23,12 @@ class EvaluationRequest(BaseModel):
     FIX #3 — field baru:
         is_reeval         : True = user baru input ground_truth, hitung precision+recall saja
         existing_*        : skor dari auto eval sebelumnya untuk di-merge
+
+    FIX #8 — field baru:
+        skip_answer_relevancy : True = jangan hitung ulang answer_relevancy,
+                                 pakai existing_answer_relevancy sebagai gantinya.
+                                 Faithfulness/precision/recall/risk TETAP dihitung
+                                 (beda dengan is_reeval).
     """
     question: str
     context: str
@@ -52,6 +67,21 @@ class EvaluationRequest(BaseModel):
     )
     existing_faithfulness_qa: Optional[float] = Field(
         None, description="Skor faithfulness segmen QA dari auto eval sebelumnya"
+    )
+
+    # FIX #8 — skip answer_relevancy saja (granular, beda dengan is_reeval)
+    skip_answer_relevancy: bool = Field(
+        default=False,
+        description=(
+            "True jika answer_relevancy tidak perlu dihitung ulang — dipakai saat "
+            "question & answer identik dengan evaluasi sebelumnya dan hanya context "
+            "yang berubah (mis. dataset_eval_reference vs dataset_eval_live). "
+            "answer_relevancy tidak bergantung pada context sama sekali, jadi hasil "
+            "akan selalu identik — menghitung ulang hanya boros token. Nilai "
+            "existing_answer_relevancy dipakai sebagai pengganti. Metrik lain "
+            "(faithfulness_summary/qa, risk_faithfulness, precision, recall) TETAP "
+            "dihitung penuh seperti biasa."
+        ),
     )
 
 

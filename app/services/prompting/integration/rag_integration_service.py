@@ -18,6 +18,7 @@ from app.schemas.prompting.generate_content import (
     RingkasanPoint,
     ContohPelanggaran,
     QAPair,
+    DasarHukum,
 )
 from app.schemas.prompting.integration import RAGIntegrationResponse, TEXT_INPUT_MAX_CHARS
 
@@ -95,7 +96,7 @@ class RAGIntegrationService:
         pasal_number,
         ayat_number,
         log_prefix: str,
-    ) -> tuple[dict, list, bool, Optional[str], Optional[str]]:
+    ) -> tuple[dict, list, list, bool, Optional[str], Optional[str]]:
         """
         Semantic search ke Qdrant (Child-Parent) lalu ekstraksi & filter konteks.
 
@@ -105,7 +106,9 @@ class RAGIntegrationService:
         pasal/ayat menghasilkan 0 hasil → flag pasal_not_found dikembalikan.
 
         Return:
-            (kb_results, contexts, pasal_not_found, pasal_filter, low_confidence_message)
+            (kb_results, contexts, context_meta, pasal_not_found, pasal_filter, low_confidence_message)
+            context_meta berisi {"pasal", "ayat", "is_exact"} sejajar index dengan contexts —
+            dipakai untuk menyusun dasar_hukum dari metadata retrieval, bukan dari tebakan LLM.
         """
         pasal_filter = str(pasal_number) if pasal_number is not None else None
         ayat_filter = str(ayat_number) if ayat_number is not None else None
@@ -134,6 +137,7 @@ class RAGIntegrationService:
         seen_parents = set()
         contexts: list = []
         context_confidences: list = []
+        context_meta: list = []
         has_exact_match = False
 
         for res in kb_results.get("results", []):
@@ -186,6 +190,11 @@ class RAGIntegrationService:
             if content:
                 contexts.append(content)
                 context_confidences.append(res.get("rerank_score"))
+                context_meta.append({
+                    "pasal": child_pasal,
+                    "ayat": res.get("child", {}).get("ayat"),
+                    "is_exact": is_exact,
+                })
                 if is_exact:
                     has_exact_match = True
             else:
@@ -216,6 +225,7 @@ class RAGIntegrationService:
             )
             contexts = [contexts[best_idx]]
             context_confidences = [context_confidences[best_idx]]
+            context_meta = [context_meta[best_idx]]
 
         # ── Gate kepercayaan berbasis rerank_score ─────────────────────────
         # Konteks yang lolos filter di atas tapi skor rerank tertingginya masih
@@ -242,8 +252,9 @@ class RAGIntegrationService:
                     "nomor pasal secara spesifik."
                 )
                 contexts = []
+                context_meta = []
 
-        return kb_results, contexts, pasal_not_found, pasal_filter, low_confidence_message
+        return kb_results, contexts, context_meta, pasal_not_found, pasal_filter, low_confidence_message
 
     # ── Helper bersama: Batasi Konteks per Budget Karakter + Fallback Message ──
     def _build_combined_context(
@@ -326,6 +337,75 @@ class RAGIntegrationService:
 
         return combined_context, fallback_message
 
+    # ── Helper bersama: Susun dasar_hukum dari metadata retrieval ──────────
+    # Sebelumnya pasal/ayat/catatan_validasi diserahkan sepenuhnya ke LLM
+    # untuk "membahas" apakah pasal yang disebut user benar/salah — LLM kadang
+    # tidak patuh skema (mis. menaruh narasi "tidak ditemukan" ke field pasal
+    # alih-alih catatan_validasi). Nomor pasal/ayat yang BENAR-BENAR terkirim
+    # ke LLM sudah pasti diketahui dari metadata Qdrant (context_meta), jadi
+    # field tersebut disusun deterministik di sini, bukan digenerate ulang.
+    # nama_peraturan tetap dari LLM karena metadata Qdrant tidak menyimpan
+    # nama resmi peraturan (lihat qdrant_service.py:_build_payload).
+    @staticmethod
+    def _build_catatan_validasi(
+        retrieved_pasal, retrieved_ayat, pasal_number, ayat_number,
+    ) -> str:
+        if pasal_number is None:
+            return "-"
+        if retrieved_pasal is not None and str(retrieved_pasal) == str(pasal_number):
+            if (
+                ayat_number is not None
+                and retrieved_ayat is not None
+                and str(retrieved_ayat) != str(ayat_number)
+            ):
+                return (
+                    f"Anda menyebut ayat ({ayat_number}), namun ayat yang relevan pada "
+                    f"Pasal {retrieved_pasal} adalah ayat ({retrieved_ayat})."
+                )
+            return "-"
+        if retrieved_pasal is not None:
+            return (
+                f"Anda menyebut Pasal {pasal_number}, namun berdasarkan pencarian di "
+                f"knowledge base, pasal yang paling relevan dengan pertanyaan Anda "
+                f"adalah Pasal {retrieved_pasal}."
+            )
+        return "-"
+
+    def _reconcile_dasar_hukum(
+        self,
+        llm_entries: list,
+        context_meta: list,
+        pasal_number,
+        ayat_number,
+    ) -> list:
+        """
+        Timpa pasal/ayat/catatan_validasi hasil LLM dengan nilai deterministik
+        dari context_meta (metadata retrieval), sejajar index dengan konteks
+        yang benar-benar dikirim ke LLM. nama_peraturan tetap dipakai dari LLM.
+        """
+        if not context_meta:
+            return llm_entries
+
+        reconciled = []
+        for i, meta in enumerate(context_meta):
+            retrieved_pasal = meta.get("pasal")
+            retrieved_ayat = meta.get("ayat")
+            llm_entry = llm_entries[i] if i < len(llm_entries) else None
+            nama_peraturan = (
+                llm_entry.nama_peraturan
+                if llm_entry and llm_entry.nama_peraturan and llm_entry.nama_peraturan != "-"
+                else "-"
+            )
+            reconciled.append(DasarHukum(
+                nama_peraturan=nama_peraturan,
+                pasal=f"Pasal {retrieved_pasal}" if retrieved_pasal is not None else "-",
+                ayat=f"ayat ({retrieved_ayat})" if retrieved_ayat is not None else "-",
+                catatan_validasi=self._build_catatan_validasi(
+                    retrieved_pasal, retrieved_ayat, pasal_number, ayat_number,
+                ),
+            ))
+        return reconciled
+
     async def process_audio_to_material(
         self,
         audio_bytes: bytes,
@@ -371,7 +451,7 @@ class RAGIntegrationService:
             ayat_number = refinement.get("ayat_number")
 
             # ── Tahap 3-4: Semantic Search + Ekstraksi & Filter Konteks ───────
-            kb_results, contexts, pasal_not_found, pasal_filter, low_confidence_message = await self._search_and_extract_context(
+            kb_results, contexts, context_meta, pasal_not_found, pasal_filter, low_confidence_message = await self._search_and_extract_context(
                 knowledge_base=knowledge_base,
                 search_query=search_query,
                 pasal_number=pasal_number,
@@ -406,6 +486,9 @@ class RAGIntegrationService:
                 )
                 final_material = await self.material_service.generate_legal_material(
                     material_payload
+                )
+                final_material.dasar_hukum = self._reconcile_dasar_hukum(
+                    final_material.dasar_hukum, context_meta, pasal_number, ayat_number,
                 )
             else:
                 final_material = MaterialResponse(
@@ -534,7 +617,7 @@ class RAGIntegrationService:
             ayat_number = refinement.get("ayat_number")
 
             # ── Tahap 2-3: Semantic Search + Ekstraksi & Filter Konteks ───────
-            kb_results, contexts, pasal_not_found, pasal_filter, low_confidence_message = await self._search_and_extract_context(
+            kb_results, contexts, context_meta, pasal_not_found, pasal_filter, low_confidence_message = await self._search_and_extract_context(
                 knowledge_base=knowledge_base,
                 search_query=search_query,
                 pasal_number=pasal_number,
@@ -565,6 +648,9 @@ class RAGIntegrationService:
                 )
                 final_material = await self.material_service.generate_legal_material(
                     material_payload
+                )
+                final_material.dasar_hukum = self._reconcile_dasar_hukum(
+                    final_material.dasar_hukum, context_meta, pasal_number, ayat_number,
                 )
             else:
                 final_material = MaterialResponse(

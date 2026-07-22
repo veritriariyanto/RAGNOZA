@@ -28,6 +28,5 @@ pydantic-settings
 aiofiles
 httpx
 PyPDF2
-streamlit
 alembic
-streamlit-mic-recorder
+pandas
