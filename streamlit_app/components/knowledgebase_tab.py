@@ -12,7 +12,9 @@ import streamlit as st
 from api.knowledge.knowledge_api import (
     get_knowledgebase_list,
     upload_and_clean,
+    upload_and_clean_multi,
     process_and_chunk,
+    process_and_chunk_multi,
     delete_knowledgebase,
     get_knowledgebase_preview,
     get_kb_monitor_data,
@@ -576,34 +578,60 @@ def _tab_monitoring():
 def _tab_upload():
     st.markdown('<div class="diff-bar"></div>', unsafe_allow_html=True)
 
-    # ── Upload widget ────────────────────────────────────────────────────────
-    uploaded = st.file_uploader(
+    # ── Upload widget (multi-file) ───────────────────────────────────────────
+    st.markdown(
+        '<div class="ac-label">Upload File PDF (bisa lebih dari satu)</div>',
+        unsafe_allow_html=True,
+    )
+    uploaded_files = st.file_uploader(
         "Upload file PDF Undang-Undang",
         type=["pdf"],
+        accept_multiple_files=True,
         key="kb_pdf_uploader",
-        help="Unggah file PDF dokumen hukum Indonesia (UU, PP, Perpres, dll.)",
+        help="Unggah satu atau beberapa file PDF dokumen hukum Indonesia (UU, PP, Perpres, dll.)",
+        label_visibility="collapsed",
     )
 
-    if uploaded is None:
+    if not uploaded_files:
         st.markdown(
             '<div style="text-align:center;padding:24px 0 8px 0;">'
             '<div style="font-size:11px;color:var(--text-muted);letter-spacing:.04em;">'
-            'Upload PDF untuk melihat preview cleaning &amp; chunking sebelum diindeks ke Qdrant.'
+            'Upload satu atau beberapa PDF untuk melihat preview cleaning &amp; chunking sebelum diindeks ke Qdrant.'
             '</div></div>',
             unsafe_allow_html=True,
         )
         return
 
-    pdf_bytes = uploaded.getvalue()
-    filename  = uploaded.name
-    size_kb   = len(pdf_bytes) // 1024
-
+    # ── Ringkasan file yang dipilih ─────────────────────────────────────────
+    total_size = sum(len(f.getvalue()) for f in uploaded_files)
     st.markdown(
-        f'<div class="info-pill">📄 {filename}</div>'
-        f'<div class="info-pill">💾 {size_kb:,} KB</div>',
+        f'<div class="info-pill">📂 {len(uploaded_files)} file dipilih</div>'
+        f'<div class="info-pill">💾 {total_size // 1024:,} KB total</div>',
         unsafe_allow_html=True,
     )
-    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+    # Tabel ringkasan file
+    with st.expander(f"📋 Daftar {len(uploaded_files)} File yang Dipilih", expanded=len(uploaded_files) <= 5):
+        rows_html = "".join(
+            f"<tr>"
+            f"<td style='padding:5px 10px;font-size:12px;color:var(--text-primary);'>{i+1}. {f.name}</td>"
+            f"<td style='padding:5px 10px;font-size:12px;color:var(--text-muted);text-align:right;'>{len(f.getvalue())//1024:,} KB</td>"
+            f"</tr>"
+            for i, f in enumerate(uploaded_files)
+        )
+        st.markdown(
+            f'<table style="width:100%;border-collapse:collapse;">'
+            f'<thead><tr>'
+            f'<th style="padding:5px 10px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);text-align:left;">Nama File</th>'
+            f'<th style="padding:5px 10px;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);text-align:right;">Ukuran</th>'
+            f'</tr></thead>'
+            f'<tbody>{rows_html}</tbody>'
+            f'</table>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
 
     # ── Config ───────────────────────────────────────────────────────────────
     col_cfg1, col_cfg2 = st.columns(2)
@@ -614,7 +642,7 @@ def _tab_upload():
             label_visibility="collapsed", key="kb_collection_name"
         )
     with col_cfg2:
-        st.markdown('<div class="ac-label">Embed & Index ke Qdrant</div>', unsafe_allow_html=True)
+        st.markdown('<div class="ac-label">Embed &amp; Index ke Qdrant</div>', unsafe_allow_html=True)
         do_embed = st.toggle(
             "Simpan ke Qdrant setelah chunking",
             value=False, key="kb_do_embed",
@@ -630,91 +658,303 @@ def _tab_upload():
         btn_clean = st.button(
             "🧹 Preview Cleaning",
             use_container_width=True, key="btn_cleaning_only",
-            help="Ekstrak & bersihkan teks PDF — tampilkan before/after"
+            help="Ekstrak &amp; bersihkan teks PDF — tampilkan before/after per file"
         )
     with col_btn2:
         btn_chunk = st.button(
             "⚙️ Cleaning + Chunking",
             use_container_width=True, key="btn_full_process",
             type="primary",
-            help="Cleaning → Chunking → tampilkan parent/child chunks"
+            help="Cleaning → Chunking → tampilkan parent/child chunks per file"
         )
+
+    is_multi = len(uploaded_files) > 1
 
     # ── CLEANING ONLY ────────────────────────────────────────────────────────
     if btn_clean:
-        with st.spinner("🧹 Mengekstrak & membersihkan teks PDF…"):
-            res = upload_and_clean(pdf_bytes, filename)
+        if is_multi:
+            # Mode multi-file
+            files_data = [(f.name, f.getvalue()) for f in uploaded_files]
+            with st.spinner(f"🧹 Mengekstrak & membersihkan {len(uploaded_files)} file PDF…"):
+                res = upload_and_clean_multi(files_data)
 
-        if not res.get("success"):
-            st.error(f"❌ Cleaning gagal: {res.get('error')}")
-            return
+            if not res.get("success"):
+                st.error(f"❌ Request gagal: {res.get('error')}")
+            else:
+                batch = res["data"]
+                _render_multi_clean_results(batch)
 
-        resp = res["data"]
-        doc_data = resp.get("data", {})
-        doc_id   = resp.get("document_id", "—")
+        else:
+            # Mode single-file (behaviour lama)
+            f = uploaded_files[0]
+            pdf_bytes = f.getvalue()
+            with st.spinner("🧹 Mengekstrak & membersihkan teks PDF…"):
+                res = upload_and_clean(pdf_bytes, f.name)
 
-        st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
-        st.markdown(
-            f'<div class="step-badge">✅ Step 1 — Cleaning Selesai</div>',
-            unsafe_allow_html=True,
-        )
+            if not res.get("success"):
+                st.error(f"❌ Cleaning gagal: {res.get('error')}")
+            else:
+                resp     = res["data"]
+                doc_data = resp.get("data", {})
+                doc_id   = resp.get("document_id", "—")
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown(
-                _card_stat(doc_data.get("total_pages", "—"), "Halaman"),
-                unsafe_allow_html=True,
-            )
-        with c2:
-            st.markdown(
-                _card_stat(f'{doc_data.get("total_words", 0):,}', "Kata (bersih)", color="var(--green)"),
-                unsafe_allow_html=True,
-            )
-        with c3:
-            st.markdown(
-                _card_stat(doc_id[:12] + "…" if len(str(doc_id)) > 12 else doc_id, "Doc ID", color="var(--text-muted)"),
-                unsafe_allow_html=True,
-            )
+                st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="step-badge">✅ Step 1 — Cleaning Selesai</div>',
+                    unsafe_allow_html=True,
+                )
 
-        # Simpan ke session untuk ditampilkan before/after
-        st.session_state["_kb_clean_result"] = res
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.markdown(_card_stat(doc_data.get("total_pages", "—"), "Halaman"), unsafe_allow_html=True)
+                with c2:
+                    st.markdown(_card_stat(f'{doc_data.get("total_words", 0):,}', "Kata (bersih)", color="var(--green)"), unsafe_allow_html=True)
+                with c3:
+                    doc_id_short = doc_id[:12] + "…" if len(str(doc_id)) > 12 else doc_id
+                    st.markdown(_card_stat(doc_id_short, "Doc ID", color="var(--text-muted)"), unsafe_allow_html=True)
 
-    # Tampilkan before/after jika ada di session (dari cleaning maupun chunking)
+                st.session_state["_kb_clean_result"] = res
+
+    # Tampilkan before/after jika ada di session (single-file cleaning)
     _render_clean_preview()
 
     # ── CLEANING + CHUNKING ──────────────────────────────────────────────────
     if btn_chunk:
-        with st.spinner("⚙️ Cleaning → Chunking (mungkin 10–60 detik)…"):
-            res = process_and_chunk(
-                pdf_bytes, filename,
-                include_raw_chunks=True,
-                embed=do_embed,
-                collection=collection_name,
-            )
+        if is_multi:
+            # Mode multi-file
+            files_data = [(f.name, f.getvalue()) for f in uploaded_files]
+            with st.spinner(f"⚙️ Memproses {len(uploaded_files)} file PDF (cleaning → chunking)…"):
+                res = process_and_chunk_multi(
+                    files_data,
+                    include_raw_chunks=True,
+                    embed=do_embed,
+                    collection=collection_name,
+                )
 
-        if not res.get("success"):
-            st.error(f"❌ Chunking gagal: {res.get('error')}")
-            return
+            if not res.get("success"):
+                st.error(f"❌ Request gagal: {res.get('error')}")
+            else:
+                batch = res["data"]
+                _render_multi_chunk_results(batch, do_embed)
 
-        resp      = res["data"]
-        doc_id    = resp.get("document_id", "—")
-        data_body = resp.get("data", {})
-        cl_stats  = data_body.get("cleaning_stats", {})
-        ck_stats  = data_body.get("chunking_stats", {})
-        raw_chunks = data_body.get("raw_chunks", [])
-        embed_info = data_body.get("embedding")
-        index_info = data_body.get("indexing")
+        else:
+            # Mode single-file (behaviour lama)
+            f = uploaded_files[0]
+            pdf_bytes = f.getvalue()
+            with st.spinner("⚙️ Cleaning → Chunking (mungkin 10–60 detik)…"):
+                res = process_and_chunk(
+                    pdf_bytes, f.name,
+                    include_raw_chunks=True,
+                    embed=do_embed,
+                    collection=collection_name,
+                )
 
-        # Simpan raw_chunks ke session
-        st.session_state["_kb_chunk_result"] = raw_chunks
-        st.session_state["_kb_chunk_stats"]  = ck_stats
-        st.session_state["_kb_clean_stats"]  = cl_stats
-        st.session_state["_kb_embed_done"]   = bool(embed_info and do_embed)
-        # Hapus clean-only result agar tidak tumpang tindih
-        st.session_state.pop("_kb_clean_result", None)
+            if not res.get("success"):
+                st.error(f"❌ Chunking gagal: {res.get('error')}")
+            else:
+                resp       = res["data"]
+                data_body  = resp.get("data", {})
+                cl_stats   = data_body.get("cleaning_stats", {})
+                ck_stats   = data_body.get("chunking_stats", {})
+                raw_chunks = data_body.get("raw_chunks", [])
+                embed_info = data_body.get("embedding")
 
-    # Tampilkan hasil chunking jika ada
+                st.session_state["_kb_chunk_result"] = raw_chunks
+                st.session_state["_kb_chunk_stats"]  = ck_stats
+                st.session_state["_kb_clean_stats"]  = cl_stats
+                st.session_state["_kb_embed_done"]   = bool(embed_info and do_embed)
+                st.session_state.pop("_kb_clean_result", None)
+
+    # Tampilkan hasil chunking single-file jika ada
     _render_chunk_preview()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MULTI-FILE RESULT RENDERERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _render_multi_clean_results(batch: dict):
+    """Tampilkan hasil cleaning untuk batch multi-file."""
+    total   = batch.get("total_files", 0)
+    success = batch.get("success_count", 0)
+    failed  = batch.get("failed_count", 0)
+    results = batch.get("results", [])
+
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+
+    # Ringkasan agregat
+    col_s1, col_s2, col_s3 = st.columns(3)
+    with col_s1:
+        st.markdown(_card_stat(total, "Total File"), unsafe_allow_html=True)
+    with col_s2:
+        st.markdown(_card_stat(success, "Berhasil", color="var(--green)"), unsafe_allow_html=True)
+    with col_s3:
+        color_fail = "var(--orange)" if failed > 0 else "var(--text-muted)"
+        st.markdown(_card_stat(failed, "Gagal", color=color_fail), unsafe_allow_html=True)
+
+    st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="step-badge">✅ Cleaning Selesai — Detail Per File</div>',
+        unsafe_allow_html=True,
+    )
+
+    for item in results:
+        fname   = item.get("filename", "—")
+        ok      = item.get("success", False)
+        err     = item.get("error")
+        data    = item.get("data") or {}
+        doc_id  = item.get("document_id", "—")
+
+        icon = "✅" if ok else "❌"
+        with st.expander(f"{icon} {fname}", expanded=not ok):
+            if not ok:
+                st.error(f"❌ {err}")
+                continue
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.markdown(_card_stat(data.get("total_pages", "—"), "Halaman"), unsafe_allow_html=True)
+            with c2:
+                st.markdown(_card_stat(f'{data.get("total_words", 0):,}', "Kata (bersih)", color="var(--green)"), unsafe_allow_html=True)
+            with c3:
+                short_id = str(doc_id)[:12] + "…" if len(str(doc_id)) > 12 else str(doc_id)
+                st.markdown(_card_stat(short_id, "Doc ID", color="var(--text-muted)"), unsafe_allow_html=True)
+
+            _render_repair_stats(data.get("repair_stats", {}))
+            raw_snip = data.get("raw_snippet", "")
+            cln_snip = data.get("clean_snippet", "")
+            if raw_snip or cln_snip:
+                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                _render_before_after(raw_snip or "(tidak tersedia)", cln_snip or "(tidak tersedia)")
+
+
+def _render_multi_chunk_results(batch: dict, do_embed: bool):
+    """Tampilkan hasil cleaning+chunking untuk batch multi-file."""
+    total   = batch.get("total_files", 0)
+    success = batch.get("success_count", 0)
+    failed  = batch.get("failed_count", 0)
+    results = batch.get("results", [])
+
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+
+    # Hitung total chunk keseluruhan
+    total_chunks = sum(
+        (item.get("data") or {}).get("chunking_stats", {}).get("total_chunks", 0)
+        for item in results if item.get("success")
+    )
+    total_embedded = sum(
+        (((item.get("data") or {}).get("embedding") or {}).get("embedded_chunks", 0))
+        for item in results if item.get("success")
+    )
+
+    # Ringkasan agregat
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    with col_s1:
+        st.markdown(_card_stat(total, "Total File"), unsafe_allow_html=True)
+    with col_s2:
+        st.markdown(_card_stat(success, "Berhasil", color="var(--green)"), unsafe_allow_html=True)
+    with col_s3:
+        color_fail = "var(--orange)" if failed > 0 else "var(--text-muted)"
+        st.markdown(_card_stat(failed, "Gagal", color=color_fail), unsafe_allow_html=True)
+    with col_s4:
+        st.markdown(_card_stat(total_chunks, "Total Chunks", color="var(--gold-light)"), unsafe_allow_html=True)
+
+    if do_embed and total_embedded > 0:
+        st.success(f"✅ {total_embedded:,} chunk berhasil di-embed dan diindeks ke Qdrant di semua file.")
+
+    st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="step-badge">✅ Chunking Selesai — Detail Per File</div>',
+        unsafe_allow_html=True,
+    )
+
+    for item in results:
+        fname    = item.get("filename", "—")
+        ok       = item.get("success", False)
+        err      = item.get("error")
+        data     = item.get("data") or {}
+        doc_id   = item.get("document_id", "—")
+        ck_stats = data.get("chunking_stats", {})
+        cl_stats = data.get("cleaning_stats", {})
+        raw_chunks = data.get("raw_chunks", [])
+        embed_info = data.get("embedding")
+        index_info = data.get("indexing")
+
+        icon        = "✅" if ok else "❌"
+        label_extra = f" — {ck_stats.get('total_chunks', 0)} chunks" if ok else ""
+        with st.expander(f"{icon} {fname}{label_extra}", expanded=not ok):
+            if not ok:
+                st.error(f"❌ {err}")
+                continue
+
+            # Stat cards
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.markdown(_card_stat(cl_stats.get("total_pages", "—"), "Halaman"), unsafe_allow_html=True)
+            with c2:
+                st.markdown(_card_stat(ck_stats.get("total_chunks", len(raw_chunks)), "Total Chunks"), unsafe_allow_html=True)
+            with c3:
+                st.markdown(_card_stat(ck_stats.get("parent_count", 0), "Parent", color="var(--gold-light)"), unsafe_allow_html=True)
+            with c4:
+                st.markdown(_card_stat(ck_stats.get("child_count", 0), "Child", color="var(--green)"), unsafe_allow_html=True)
+
+            # Embedding/indexing info
+            if do_embed:
+                if embed_info and not embed_info.get("error"):
+                    emb_count = embed_info.get("embedded_chunks", 0)
+                    st.success(f"✅ {emb_count} chunk di-embed ke Qdrant.")
+                elif embed_info and embed_info.get("error"):
+                    st.error(f"❌ Embed gagal: {embed_info['error']}")
+                if index_info and index_info.get("error"):
+                    st.warning(f"⚠️ Index: {index_info['error']}")
+
+            # Repair stats & before/after
+            _render_repair_stats(cl_stats.get("repair_stats", {}))
+            raw_snip = cl_stats.get("raw_snippet", "")
+            cln_snip = cl_stats.get("clean_snippet", "")
+            if raw_snip or cln_snip:
+                st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+                _render_before_after(raw_snip or "(tidak tersedia)", cln_snip or "(tidak tersedia)")
+
+            # Chunk preview
+            if raw_chunks:
+                st.markdown('<div class="ac-divider"></div>', unsafe_allow_html=True)
+                sections_avail = sorted({c.get("section", "") for c in raw_chunks if c.get("section")})
+                col_f1, col_f2, col_f3 = st.columns([3, 2, 2])
+                safe_key = fname.replace(".", "_").replace(" ", "_")
+                with col_f1:
+                    st.markdown('<div class="ac-label">Filter Bagian</div>', unsafe_allow_html=True)
+                    filter_sec = st.selectbox(
+                        "Bagian", ["Semua"] + sections_avail,
+                        label_visibility="collapsed",
+                        key=f"kb_chunk_filter_sec_{safe_key}",
+                    )
+                with col_f2:
+                    st.markdown('<div class="ac-label">Filter Tipe</div>', unsafe_allow_html=True)
+                    filter_type = st.selectbox(
+                        "Tipe", ["Semua", "parent", "child"],
+                        label_visibility="collapsed",
+                        key=f"kb_chunk_filter_type_{safe_key}",
+                    )
+                with col_f3:
+                    max_show = st.slider(
+                        "Maks chunk",
+                        min_value=2, max_value=30, value=6,
+                        key=f"kb_chunk_max_{safe_key}",
+                    )
+
+                filtered = [
+                    c for c in raw_chunks
+                    if (filter_sec == "Semua" or c.get("section") == filter_sec)
+                    and (filter_type == "Semua" or c.get("type") == filter_type)
+                ]
+                st.markdown(
+                    f'<div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;">'
+                    f'Menampilkan {min(max_show, len(filtered))} dari {len(filtered)} chunk'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                st.json(filtered[:max_show])
 
 
 def _render_clean_preview():

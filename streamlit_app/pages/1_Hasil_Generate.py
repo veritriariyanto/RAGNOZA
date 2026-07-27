@@ -330,7 +330,7 @@ if session_id:
                 retrieved_preview = data.get(
                     "retrieved_context_preview") or data.get("retrieved_context")
                 if retrieved_preview:
-                    st.write(f"**Query Pencarian:** `{data.get('search_query')}`")
+                    st.write(f"**Kata Kunci Pencarian:** `{data.get('search_query')}`")
                     st.markdown(retrieved_preview)
                 else:
                     st.warning("Tidak ada lampiran pasal spesifik.")
@@ -347,7 +347,7 @@ if session_id:
                     f"**✨ Hasil Perbaikan Teks (Repaired):**\n\n{data.get('repaired_text')}")
 
             st.divider()
-            st.markdown("#### 🔍 Query Pencarian")
+            st.markdown("#### 🔍 Kata Kunci Pencarian")
             st.code(data.get('search_query') or '-', language='text')
 
         
