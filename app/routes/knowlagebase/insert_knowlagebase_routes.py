@@ -65,6 +65,21 @@ class IngestResponse(BaseModel):
     message: str
 
 
+class MultiFileResult(BaseModel):
+    filename: str
+    success: bool
+    document_id: Optional[str] = None
+    error: Optional[str] = None
+    data: Optional[Dict] = None
+
+
+class MultiUploadResponse(BaseModel):
+    total_files: int
+    success_count: int
+    failed_count: int
+    results: List[MultiFileResult]
+
+
 class CollectionStats(BaseModel):
     name: str
     parent_count: int
@@ -113,6 +128,194 @@ async def upload_and_clean(file: UploadFile = File(..., description="File PDF un
             "raw_snippet":   raw_snippet,
             "clean_snippet": clean_snippet,
         }
+    })
+
+
+@router.post("/upload-multi", summary="Upload & cleaning beberapa PDF sekaligus", response_model=MultiUploadResponse)
+async def upload_and_clean_multi(
+    files: List[UploadFile] = File(..., description="Satu atau lebih file PDF undang-undang"),
+):
+    """
+    Upload dan cleaning beberapa file PDF secara berurutan.
+    Setiap file diproses independently — jika satu gagal, file lain tetap diproses.
+    """
+    results: List[Dict] = []
+    success_count = 0
+    failed_count = 0
+
+    for f in files:
+        if not f.filename.lower().endswith(".pdf"):
+            results.append(MultiFileResult(
+                filename=f.filename,
+                success=False,
+                error="Hanya file PDF yang diterima (.pdf)",
+            ).model_dump())
+            failed_count += 1
+            continue
+
+        pdf_bytes = await f.read()
+        try:
+            result = await run_in_threadpool(
+                get_cleaning_service().clean_from_bytes, pdf_bytes, f.filename
+            )
+
+            raw_snippet   = ""
+            clean_snippet = ""
+            if result.cleaned_pages:
+                first_page    = result.cleaned_pages[0]
+                raw_snippet   = (first_page.raw_text or "")[:600]
+                clean_snippet = (first_page.cleaned_text or "")[:600]
+
+            results.append(MultiFileResult(
+                filename=f.filename,
+                success=True,
+                document_id=result.document_id,
+                data={
+                    "total_pages":    result.total_pages,
+                    "total_words":    result.total_words,
+                    "metadata":       result.metadata,
+                    "repair_stats":   result.repair_stats,
+                    "raw_snippet":    raw_snippet,
+                    "clean_snippet":  clean_snippet,
+                },
+            ).model_dump())
+            success_count += 1
+
+        except Exception as e:
+            results.append(MultiFileResult(
+                filename=f.filename,
+                success=False,
+                error=f"Cleaning gagal: {str(e)}",
+            ).model_dump())
+            failed_count += 1
+
+    return JSONResponse(content={
+        "total_files":   len(files),
+        "success_count": success_count,
+        "failed_count":  failed_count,
+        "results":       results,
+    })
+
+
+@router.post("/process-multi", summary="Cleaning → Chunking (+embed opsional) untuk beberapa PDF")
+async def process_pdf_multi(
+    files: List[UploadFile] = File(..., description="Satu atau lebih file PDF undang-undang"),
+    embed: bool = Query(False),
+    collection: Optional[str] = Query(None),
+    include_raw_chunks: bool = Query(False, description="Sertakan seluruh raw chunks dalam response"),
+):
+    """
+    Proses full pipeline (cleaning → chunking → embed opsional) untuk setiap PDF.
+    File diproses berurutan; kegagalan satu file tidak menghentikan file berikutnya.
+    """
+    results: List[Dict] = []
+    success_count = 0
+    failed_count  = 0
+
+    for f in files:
+        if not f.filename.lower().endswith(".pdf"):
+            results.append(MultiFileResult(
+                filename=f.filename,
+                success=False,
+                error="Hanya file PDF yang diterima (.pdf)",
+            ).model_dump())
+            failed_count += 1
+            continue
+
+        pdf_bytes = await f.read()
+
+        # Tentukan nama collection per file
+        file_collection = collection or None
+
+        try:
+            cleaning_result = await run_in_threadpool(
+                get_cleaning_service().clean_from_bytes, pdf_bytes, f.filename
+            )
+        except Exception as e:
+            results.append(MultiFileResult(
+                filename=f.filename,
+                success=False,
+                error=f"Cleaning gagal: {str(e)}",
+            ).model_dump())
+            failed_count += 1
+            continue
+
+        try:
+            chunking_result = await get_chunking_service().chunk(cleaning_result)
+        except Exception as e:
+            results.append(MultiFileResult(
+                filename=f.filename,
+                success=False,
+                error=f"Chunking gagal: {str(e)}",
+            ).model_dump())
+            failed_count += 1
+            continue
+
+        all_chunks = chunking_result.all_chunks
+        raw_chunks = chunking_result.__dict__.get("raw_chunks", [])
+
+        raw_snippet   = ""
+        clean_snippet = ""
+        if cleaning_result.cleaned_pages:
+            fp            = cleaning_result.cleaned_pages[0]
+            raw_snippet   = (fp.raw_text or "")[:600]
+            clean_snippet = (fp.cleaned_text or "")[:600]
+
+        file_data: Dict = {
+            "cleaning_stats": {
+                "total_pages":   cleaning_result.total_pages,
+                "total_words":   cleaning_result.total_words,
+                "metadata":      cleaning_result.metadata,
+                "repair_stats":  cleaning_result.repair_stats,
+                "raw_snippet":   raw_snippet,
+                "clean_snippet": clean_snippet,
+            },
+            "chunking_stats": {
+                "total_chunks": chunking_result.total_chunks,
+                "level_0_count": len(chunking_result.level_0_chunks),
+                "level_1_count": len(chunking_result.level_1_chunks),
+                "level_2_count": len(chunking_result.level_2_chunks),
+                "level_3_count": len(chunking_result.level_3_chunks),
+                "parent_count": sum(1 for c in raw_chunks if c.get("type") == "parent"),
+                "child_count":  sum(1 for c in raw_chunks if c.get("type") == "child"),
+            },
+            "embedding": None,
+            "indexing":  None,
+        }
+
+        if include_raw_chunks:
+            file_data["raw_chunks"] = raw_chunks
+
+        if embed:
+            try:
+                embedded_chunks = await get_embedding_service().embed_chunks(all_chunks)
+                try:
+                    upsert_result = get_qdrant_service().upsert_chunks(
+                        embedded_chunks, collection_name=file_collection
+                    )
+                    file_data["indexing"] = upsert_result
+                except Exception as e:
+                    file_data["indexing"] = {"error": str(e)}
+                file_data["embedding"] = {
+                    "model": settings.embedding_model,
+                    "embedded_chunks": sum(1 for c in embedded_chunks if c.embedding is not None),
+                }
+            except Exception as e:
+                file_data["embedding"] = {"error": str(e)}
+
+        results.append(MultiFileResult(
+            filename=f.filename,
+            success=True,
+            document_id=chunking_result.document_id,
+            data=file_data,
+        ).model_dump())
+        success_count += 1
+
+    return JSONResponse(content={
+        "total_files":   len(files),
+        "success_count": success_count,
+        "failed_count":  failed_count,
+        "results":       results,
     })
 
 
