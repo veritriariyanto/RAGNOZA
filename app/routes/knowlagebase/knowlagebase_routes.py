@@ -28,7 +28,9 @@ _chunking_router = _AR()
 
 from app.routes.knowlagebase.insert_knowlagebase_routes import (
     upload_and_clean,
+    upload_and_clean_multi,
     process_pdf,
+    process_pdf_multi,
     process_and_get_chunks,
 )
 
@@ -45,6 +47,16 @@ _chunking_router.add_api_route(
     ),
 )
 _chunking_router.add_api_route(
+    "/upload-multi",
+    upload_and_clean_multi,
+    methods=["POST"],
+    summary="[1b] Upload & Cleaning Multi – Ekstrak & bersihkan beberapa teks PDF sekaligus",
+    description=(
+        "Upload beberapa file PDF undang-undang. Pipeline akan mengekstrak teks "
+        "mentah dari setiap file secara parallel/sekuensial dan mengembalikan statistik cleaning per file."
+    ),
+)
+_chunking_router.add_api_route(
     "/process",
     process_pdf,
     methods=["POST"],
@@ -53,6 +65,16 @@ _chunking_router.add_api_route(
         "Upload PDF → cleaning → chunking hierarki parent-child. "
         "Gunakan **include_chunks_preview=true** untuk melihat preview 20 chunk pertama. "
         "Gunakan **include_raw_chunks=true** untuk mendapat seluruh array chunk dalam response. "
+        "Gunakan **embed=true** untuk langsung meng-embed dan index ke Qdrant."
+    ),
+)
+_chunking_router.add_api_route(
+    "/process-multi",
+    process_pdf_multi,
+    methods=["POST"],
+    summary="[2b] Cleaning → Chunking Multi – Proses penuh beberapa PDF sekaligus",
+    description=(
+        "Upload beberapa PDF → cleaning → chunking hierarki parent-child untuk masing-masing dokumen. "
         "Gunakan **embed=true** untuk langsung meng-embed dan index ke Qdrant."
     ),
 )
@@ -74,4 +96,4 @@ knowlagebase_router.include_router(
     _chunking_router,
     prefix="/chunking",
     tags=["📄 Chunking Pipeline"],
-)
+)
