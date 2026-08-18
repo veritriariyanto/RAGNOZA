@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
     ELEVENLABS_API_KEY: str = ""
 
+    # ── Groq chat LLM ─────────────────────────────
+    GROQ_LLM_MODEL: str = "openai/gpt-oss-120b"
+
     # ── Chunking token limits ─────────────────────
     chunk_level_1_max_tokens: int = 1500
     chunk_level_2_max_tokens: int = 800
