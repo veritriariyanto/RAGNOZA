@@ -4,13 +4,6 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "src/**"
-      - "evaluator/**"
-      - "streamlit_app/**"
-      - "Dockerfile"
-      - "docker-compose.yml"
-      - ".github/workflows/**"
 
 env:
   REGISTRY: ghcr.io
