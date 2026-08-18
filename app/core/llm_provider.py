@@ -7,7 +7,7 @@ from app.core.config import settings
 llm = ChatGroq(
     temperature=0.1,
     groq_api_key=settings.GROQ_API_KEY, # Menggunakan Pydantic settings yang tadi
-    model_name="openai/gpt-oss-20b",
+    model_name=settings.GROQ_LLM_MODEL,
     max_retries=5,
     request_timeout=60,
 )
