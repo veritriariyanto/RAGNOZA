@@ -15,11 +15,11 @@ class EvaluatorSettings(BaseSettings):
     ELEVENLABS_API_KEY: str  # Ditambahkan agar siap digunakan jika dibutuhkan oleh service lain
 
     # Model untuk RAG pipeline (generate jawaban)
-    EVALUATOR_LLM_MODEL: str = "llama-3.1-8b-instant"
+    EVALUATOR_LLM_MODEL: str = "openai/gpt-oss-20b"
     EVALUATOR_LLM_TEMPERATURE: float = 0.0
 
     # Model terpisah khusus untuk RAGAS evaluator
-    RAGAS_LLM_MODEL: str = "llama-3.3-70b-versatile"
+    RAGAS_LLM_MODEL: str = "openai/gpt-oss-120b"
     RAGAS_LLM_TEMPERATURE: float = 0.0
 
     # Konfigurasi Embedding & Sistem

@@ -189,7 +189,7 @@ class _SlidingWindowThrottle:
 
 
 # FIX: sebelumnya SATU instance _throttle dipakai bersama oleh SEMUA model
-# (llama-3.1-8b-instant TPM riil 6000, llama-3.3-70b-versatile TPM riil 12000).
+# (dulu llama-3.1-8b-instant TPM riil 6000, llama-3.3-70b-versatile TPM riil 12000).
 # Akibatnya kedua model saling mengunci window yang sama meski kuota Groq
 # keduanya independen — dan buffer 4500 yang aman untuk 8b terlalu konservatif
 # untuk 70b, sekaligus tidak melindungi 8b dari 413 (request tunggal > limit)
@@ -198,24 +198,28 @@ _throttles: dict[str, "_SlidingWindowThrottle"] = {}
 _throttles_lock = threading.Lock()
 
 # Buffer di bawah limit riil masing-masing model (lihat dashboard Groq).
+# NOTE: llama-3.1-8b-instant & llama-3.3-70b-versatile sudah retired di Groq
+# (404 model_not_found) → diganti openai/gpt-oss-20b & openai/gpt-oss-120b.
+# Angka limit di bawah masih warisan dari model llama lama, BELUM diverifikasi
+# ke limit riil gpt-oss di dashboard Groq (Settings → Limits) — cek ulang.
 _MODEL_TPM_LIMITS = {
-    "llama-3.1-8b-instant": 4500,      # riil 6000
-    "llama-3.3-70b-versatile": 10500,   # riil 12000
+    "openai/gpt-oss-20b": 4500,      # riil 6000 (warisan llama-3.1-8b, cek ulang)
+    "openai/gpt-oss-120b": 10500,    # riil 12000 (warisan llama-3.3-70b, cek ulang)
 }
 _MODEL_RPM_LIMITS = {
-    "llama-3.1-8b-instant": 25,        # riil 30, sama untuk kedua model
-    "llama-3.3-70b-versatile": 25,     # riil 30
+    "openai/gpt-oss-20b": 25,        # riil 30, sama untuk kedua model
+    "openai/gpt-oss-120b": 25,       # riil 30
 }
 
 # TODO: isi berdasarkan dashboard Groq Anda (Settings → Limits) per model.
 # Nilai di bawah adalah estimasi awal dari log produksi (70b: TPD riil 100000).
 _MODEL_TPD_LIMITS = {
-    "llama-3.1-8b-instant": 450000,     # riil 500.000
-    "llama-3.3-70b-versatile": 90000,   # riil 100.000
+    "openai/gpt-oss-20b": 450000,     # riil 500.000 (warisan llama-3.1-8b, cek ulang)
+    "openai/gpt-oss-120b": 90000,     # riil 100.000 (warisan llama-3.3-70b, cek ulang)
 }
 _MODEL_RPD_LIMITS = {
-    "llama-3.1-8b-instant": 13000,      # riil 14.400
-    "llama-3.3-70b-versatile": 900,     # riil 1.000
+    "openai/gpt-oss-20b": 13000,      # riil 14.400 (warisan llama-3.1-8b, cek ulang)
+    "openai/gpt-oss-120b": 900,       # riil 1.000 (warisan llama-3.3-70b, cek ulang)
 }
 
 def _get_throttle(model_name: str) -> "_SlidingWindowThrottle":

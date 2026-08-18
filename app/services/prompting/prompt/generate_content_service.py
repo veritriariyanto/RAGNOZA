@@ -220,7 +220,7 @@ class MaterialGeneratorService:
         )
 
         # Deteksi deterministik (regex, bukan LLM): apakah user menyebut nomor
-        # pasal yang TIDAK ADA di konteks? Model kecil (llama-3.1-8b-instant)
+        # pasal yang TIDAK ADA di konteks? Model kecil (openai/gpt-oss-20b)
         # terbukti tidak konsisten menangkap ini sendiri kalau nomor pasal
         # disisipkan alami dalam kalimat tanya (mis. "Apakah benar Pasal 6
         # mengatur...") — jadi divalidasi di sini, bukan cuma diserahkan ke LLM.
