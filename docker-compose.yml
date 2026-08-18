@@ -18,7 +18,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       # URL evaluator service — gunakan nama Docker service (bukan localhost)
       EVALUATOR_URL: http://evaluator:8001
-      EVALUATOR_TIMEOUT_SECONDS: "120"
+      EVALUATOR_TIMEOUT_SECONDS: "900"
       # Database
       PGHOST: postgres
       PGPORT: 5432
