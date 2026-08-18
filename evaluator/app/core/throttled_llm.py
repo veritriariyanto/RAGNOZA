@@ -200,26 +200,27 @@ _throttles_lock = threading.Lock()
 # Buffer di bawah limit riil masing-masing model (lihat dashboard Groq).
 # NOTE: llama-3.1-8b-instant & llama-3.3-70b-versatile sudah retired di Groq
 # (404 model_not_found) → diganti openai/gpt-oss-20b & openai/gpt-oss-120b.
-# Angka limit di bawah masih warisan dari model llama lama, BELUM diverifikasi
-# ke limit riil gpt-oss di dashboard Groq (Settings → Limits) — cek ulang.
+# Diverifikasi 2026-08-18 via response header Groq (x-ratelimit-limit-*):
+# TPM riil = 8000, RPD riil = 1000, SAMA untuk kedua model (free tier).
+# Angka lama (10500 utk 120b) MELEBIHI limit riil 8000 → itu penyebab badai
+# 429 saat evaluasi (throttle sendiri gagal melindungi karena kuota yang
+# dikira lebih besar dari yang Groq benar-benar berikan).
 _MODEL_TPM_LIMITS = {
-    "openai/gpt-oss-20b": 4500,      # riil 6000 (warisan llama-3.1-8b, cek ulang)
-    "openai/gpt-oss-120b": 10500,    # riil 12000 (warisan llama-3.3-70b, cek ulang)
+    "openai/gpt-oss-20b": 6800,      # riil 8000
+    "openai/gpt-oss-120b": 6800,     # riil 8000
 }
 _MODEL_RPM_LIMITS = {
-    "openai/gpt-oss-20b": 25,        # riil 30, sama untuk kedua model
-    "openai/gpt-oss-120b": 25,       # riil 30
+    "openai/gpt-oss-20b": 25,        # belum ada header RPM eksplisit, tetap konservatif
+    "openai/gpt-oss-120b": 25,
 }
 
-# TODO: isi berdasarkan dashboard Groq Anda (Settings → Limits) per model.
-# Nilai di bawah adalah estimasi awal dari log produksi (70b: TPD riil 100000).
 _MODEL_TPD_LIMITS = {
-    "openai/gpt-oss-20b": 450000,     # riil 500.000 (warisan llama-3.1-8b, cek ulang)
-    "openai/gpt-oss-120b": 90000,     # riil 100.000 (warisan llama-3.3-70b, cek ulang)
+    "openai/gpt-oss-20b": 450000,     # belum diverifikasi, TPD tidak muncul di header
+    "openai/gpt-oss-120b": 450000,
 }
 _MODEL_RPD_LIMITS = {
-    "openai/gpt-oss-20b": 13000,      # riil 14.400 (warisan llama-3.1-8b, cek ulang)
-    "openai/gpt-oss-120b": 900,       # riil 1.000 (warisan llama-3.3-70b, cek ulang)
+    "openai/gpt-oss-20b": 900,        # riil 1000
+    "openai/gpt-oss-120b": 900,       # riil 1000
 }
 
 def _get_throttle(model_name: str) -> "_SlidingWindowThrottle":
