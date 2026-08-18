@@ -40,7 +40,7 @@ class RagasService:
             eval_llm_raw = ThrottledChatGroq(
                 temperature=settings.RAGAS_LLM_TEMPERATURE,
                 groq_api_key=settings.GROQ_API_KEY,
-                model_name=settings.RAGAS_LLM_MODEL,       # llama-3.1-70b-versatile
+                model_name=settings.RAGAS_LLM_MODEL,       # openai/gpt-oss-120b
             )
 
             # Tidak perlu wrapper tambahan — throttle sudah di dalam llm
